@@ -1,0 +1,40 @@
+{
+  "name": "md-live-editor",
+  "version": "1.2.2",
+  "description": "Dependency-free live inline markdown editor web component with slash commands, smart editing, form integration, source fallback, and no built-in toolbar.",
+  "type": "module",
+  "main": "./md-live-editor.js",
+  "module": "./md-live-editor.js",
+  "exports": {
+    ".": "./md-live-editor.js"
+  },
+  "files": [
+    "md-live-editor.js",
+    "index.html",
+    "standalone.html",
+    "tests.html",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "dev-server.mjs",
+    "serve.sh",
+    "start-local.command",
+    "start-local.bat"
+  ],
+  "keywords": [
+    "web-component",
+    "markdown",
+    "editor",
+    "custom-elements",
+    "slash-commands",
+    "live-preview"
+  ],
+  "license": "MIT",
+  "sideEffects": true,
+  "scripts": {
+    "start": "node dev-server.mjs --open=index.html",
+    "serve": "node dev-server.mjs",
+    "test:browser": "node dev-server.mjs --open=tests.html",
+    "check": "node --check md-live-editor.js && node --check dev-server.mjs"
+  }
+}

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>&lt;md-live-editor&gt; Live Inline Browser Tests</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 24px; background: Canvas; color: CanvasText; }
+    main { max-width: 1160px; margin: auto; }
+    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+    th, td { border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas 80%); padding: 8px; vertical-align: top; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    pre { margin: 0; white-space: pre-wrap; }
+    .file-warning { display: none; border: 1px solid #b45309; background: color-mix(in srgb, #f59e0b 16%, Canvas 84%); border-radius: 10px; padding: 12px 14px; }
+    html.file-protocol .file-warning { display: block; }
+    .pass { color: #097a2d; }
+    .fail { color: #b00020; }
+    md-live-editor { position: absolute; left: -9999px; top: -9999px; width: 800px; --md-editor-min-height: 300px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>&lt;md-live-editor&gt; live inline browser tests</h1>
+    <p>Serve this file over <code>http://localhost</code>. The test harness exercises action fixtures and verifies rendered live-editor structure.</p>
+    <div class="file-warning" role="alert">This test harness imports <code>md-live-editor.js</code> as an ES module, so it cannot run from <code>file://</code>.</div>
+    <md-live-editor id="editor" mode="live" preview="none"></md-live-editor>
+    <div id="summary"></div>
+    <table>
+      <thead><tr><th>Result</th><th>Name</th><th>Expected</th><th>Actual</th></tr></thead>
+      <tbody id="results"></tbody>
+    </table>
+  </main>
+
+  <script type="module">
+    if (location.protocol === "file:") {
+      document.documentElement.classList.add("file-protocol");
+      throw new Error("Serve tests.html over http://localhost.");
+    }
+    await import("./md-live-editor.js");
+    await customElements.whenDefined('md-live-editor');
+    const editor = document.querySelector('#editor');
+    const fixtures = [
+      { name: 'continues bullet list', before: '- one|', action: 'editor.smartEnter', after: '- one\n- |' },
+      { name: 'exits empty bullet list', before: '- one\n- |', action: 'editor.smartEnter', after: '- one\n|' },
+      { name: 'continues ordered list and increments', before: '3. alpha|', action: 'editor.smartEnter', after: '3. alpha\n4. |' },
+      { name: 'exits empty ordered list', before: '1. alpha\n2. |', action: 'editor.smartEnter', after: '1. alpha\n|' },
+      { name: 'continues checked task as unchecked', before: '- [x] done|', action: 'editor.smartEnter', after: '- [x] done\n- [ ] |' },
+      { name: 'exits empty task list', before: '- [ ] |', action: 'editor.smartEnter', after: '|' },
+      { name: 'continues blockquote', before: '> quoted|', action: 'editor.smartEnter', after: '> quoted\n> |' },
+      { name: 'exits empty blockquote', before: '> |', action: 'editor.smartEnter', after: '|' },
+      { name: 'heading enter creates paragraph break', before: '## title|', action: 'editor.smartEnter', after: '## title\n\n|' },
+      { name: 'enter inside code fence is raw newline', before: '```\nconst x = 1;|\n```', action: 'editor.smartEnter', after: '```\nconst x = 1;\n|\n```' },
+      { name: 'opening code fence auto-closes', before: '```python|', action: 'editor.smartEnter', after: '```python\n|\n```' },
+      { name: 'tab indents list item', before: '- a\n- b|', action: 'editor.smartTab', after: '- a\n  - b|' },
+      { name: 'shift tab outdents list item', before: '- a\n  - b|', action: 'editor.smartOutdent', after: '- a\n- b|' },
+      { name: 'backspace removes list marker', before: '- |item', action: 'editor.smartBackspace', after: '|item' },
+      { name: 'backspace at start of paragraph joins previous line', before: 'alpha\n|beta', action: 'editor.smartBackspace', after: 'alpha|beta' },
+      { name: 'backspace at empty line start joins previous line', before: 'alpha\n|', action: 'editor.smartBackspace', after: 'alpha|' },
+      { name: 'delete at end of line joins next line', before: 'alpha|\nbeta', action: 'editor.smartDelete', after: 'alpha|beta' },
+      { name: 'markdown shortcut converts task brackets', before: '[]|', action: 'editor.markdownShortcut', after: '- [ ] |' },
+      { name: 'markdown shortcut adds heading space', before: '##|', action: 'editor.markdownShortcut', after: '## |' },
+      { name: 'bold insertion no selection', before: 'hello |', action: 'inline.bold', after: 'hello **|**' },
+      { name: 'bold wraps selection', before: 'hello [world]', action: 'inline.bold', after: 'hello **world**|' },
+      { name: 'link wraps selection with pasted URL', before: '[OpenAI]', action: 'inline.link', args: { url: 'https://openai.com' }, after: '[OpenAI](https://openai.com)|' },
+      { name: 'code fence wraps selection', before: '[const x = 1;]', action: 'block.codeFence', after: '```\nconst x = 1;\n```|' },
+      { name: 'table insertion includes delimiter and body row', before: '|', action: 'block.table', args: { rows: 1, cols: 2 }, after: '| [Column 1] | Column 2 |\n| --- | --- |\n| Cell 1 | Cell 2 |' },
+      { name: 'delete selection removes selected markdown', before: '[# Title\n\nBody]', action: 'editor.deleteSelection', after: '|' },
+      { name: 'smart delete removes selected markdown', before: '[# Title\n\nBody]', action: 'editor.smartDelete', after: '|' },
+      { name: 'smart backspace removes selected markdown', before: '[# Title\n\nBody]', action: 'editor.smartBackspace', after: '|' }
+    ];
+
+    const results = fixtures.map(fixture => editor.runFixture(fixture));
+
+    const visualChecks = [];
+    editor.value = '# H1\n\n## H2\n\n**bold** and *italic* and `code`\n\n---\n\n| A | B |\n| --- | --- |\n| C | D |\n\n```python\nprint(1)\n```\n\n- [ ] task';
+    await new Promise(requestAnimationFrame);
+    const root = editor.shadowRoot;
+    visualChecks.push({ name: 'live editor renders H1 class', passed: Boolean(root.querySelector('.md-h1')) });
+    visualChecks.push({ name: 'live editor renders H2 class', passed: Boolean(root.querySelector('.md-h2')) });
+    visualChecks.push({ name: 'live editor decorates bold', passed: Boolean(root.querySelector('strong')) });
+    visualChecks.push({ name: 'live editor decorates italic', passed: Boolean(root.querySelector('em')) });
+    visualChecks.push({ name: 'live editor decorates inline code', passed: Boolean(root.querySelector('.md-line code')) });
+    visualChecks.push({ name: 'live editor renders table grid', passed: Boolean(root.querySelector('.md-table')) });
+    visualChecks.push({ name: 'live editor renders code block', passed: Boolean(root.querySelector('.md-code-block')) });
+    visualChecks.push({ name: 'live code block hides raw fence markers', passed: !(root.querySelector('.md-code-block')?.textContent || '').includes('```') });
+    visualChecks.push({ name: 'live code block renders language header', passed: (root.querySelector('.md-code-label')?.textContent || '') === 'python' });
+    visualChecks.push({ name: 'live editor renders task checkbox', passed: Boolean(root.querySelector('[data-task-checkbox]')) });
+    visualChecks.push({ name: 'live horizontal rule renders divider', passed: Boolean(root.querySelector('.md-hr-line')) });
+    visualChecks.push({ name: 'live horizontal rule hides raw marker text', passed: ((root.querySelector('.md-hr-line')?.innerText || root.querySelector('.md-hr-line')?.textContent || '').trim() === '') });
+    const focusedLine = root.querySelector('.md-line');
+    focusedLine?.focus();
+    visualChecks.push({ name: 'active live line has no default blue inset focus ring', passed: focusedLine ? getComputedStyle(focusedLine).boxShadow === 'none' : false });
+    editor.setSelectionRange(1, 1);
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({ name: 'component renders no global toolbar', passed: !root.querySelector('[part=\"toolbar\"]') && !root.querySelector('[part=\"mobile-toolbar\"]') });
+    visualChecks.push({ name: 'code block renders no embedded action buttons', passed: !root.querySelector('[data-code-copy]') && !root.querySelector('[data-code-lang]') });
+    visualChecks.push({ name: 'table renders no embedded table controls', passed: !root.querySelector('[data-table-action]') });
+
+    editor.value = '```';
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({ name: 'unfinished single fence line stays source-editable until Enter', passed: !editor.shadowRoot.querySelector('.md-code-block') });
+
+    editor.value = '| A | B |\n| --- | --- |\n| Cell 1 | Cell 2 |';
+    const tableCellOffset = editor.value.indexOf('Cell 2') + 'Cell 2'.length;
+    editor.setSelectionRange(tableCellOffset, tableCellOffset);
+    editor.exec('editor.smartEnter');
+    visualChecks.push({
+      name: 'Enter in table source inserts row below instead of inside cell',
+      passed: editor.value === '| A | B |\n| --- | --- |\n| Cell 1 | Cell 2 |\n|  |  |'
+    });
+    visualChecks.push({
+      name: 'Enter in table source places cursor in new first cell',
+      passed: editor.selectionStart === editor.value.lastIndexOf('|  |  |') + 2 && editor.selectionEnd === editor.selectionStart
+    });
+
+    editor.value = '# Section\n\nParagraph text\n\n## Child\n\nChild text\n\n# Next\n\nEnd';
+    const paraStart = editor.value.indexOf('Paragraph');
+    const paraEnd = paraStart + 'Paragraph text'.length;
+    editor.setSelectionRange(paraStart, paraStart);
+    editor.exec('editor.selectAllExpand');
+    const firstSelectIsBlock = editor.selectionStart === paraStart && editor.selectionEnd === paraEnd;
+    editor.exec('editor.selectAllExpand');
+    const secondSelectIsSection = editor.selectionStart === 0 && editor.selectionEnd === editor.value.indexOf('# Next');
+    editor.exec('editor.selectAllExpand');
+    const thirdSelectIsDocument = editor.selectionStart === 0 && editor.selectionEnd === editor.value.length;
+    visualChecks.push({ name: 'Cmd/Ctrl+A expansion first selects current block', passed: firstSelectIsBlock });
+    visualChecks.push({ name: 'Cmd/Ctrl+A expansion then selects current heading section', passed: secondSelectIsSection });
+    visualChecks.push({ name: 'Cmd/Ctrl+A expansion then selects full document', passed: thirdSelectIsDocument });
+
+    editor.value = `# Delete Me
+
+Paragraph
+
+| A | B |
+| --- | --- |
+| C | D |`;
+    editor.select();
+    editor.shadowRoot.querySelector('.live-editor').dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+    visualChecks.push({ name: 'programmatic select all then Delete clears live editor source', passed: editor.value === '' && editor.selectionStart === 0 && editor.selectionEnd === 0 });
+
+    editor.value = `# Delete Me
+
+Paragraph`;
+    editor.setSelectionRange(0, editor.value.length);
+    editor.shadowRoot.querySelector('.live-editor').dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
+    visualChecks.push({ name: 'full live selection then Backspace clears source', passed: editor.value === '' });
+
+    editor.value = 'one two one';
+    const found = editor.find('two');
+    visualChecks.push({ name: 'find selects matching source range', passed: found?.start === 4 && editor.selectionStart === 4 && editor.selectionEnd === 7 });
+    const replaced = editor.replace('two', 'three');
+    visualChecks.push({ name: 'replace changes selected match', passed: replaced === 1 && editor.value === 'one three one' });
+    const replacedAll = editor.replaceAll('one', '1');
+    visualChecks.push({ name: 'replaceAll changes all matches', passed: replacedAll === 2 && editor.value === '1 three 1' });
+
+    function fakeClipboard(data) {
+      return { files: [], getData(type) { return data[type] || ''; }, setData(type, value) { data[type] = value; } };
+    }
+    function pasteIntoEditor(data) {
+      let prevented = false;
+      editor._onPaste({ clipboardData: fakeClipboard(data), preventDefault() { prevented = true; } });
+      return prevented;
+    }
+    function copyFromEditor() {
+      const out = {};
+      let prevented = false;
+      editor._onLiveCopy({ clipboardData: fakeClipboard(out), preventDefault() { prevented = true; } });
+      return { prevented, out };
+    }
+
+    editor.value = '';
+    editor.setSelectionRange(0, 0);
+    const markdownPastePrevented = pasteIntoEditor({ 'text/plain': '# Pasted\n\n**bold**' });
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({ name: 'live paste intercepts plain Markdown and inserts canonical source', passed: markdownPastePrevented && editor.value === '# Pasted\n\n**bold**' });
+    visualChecks.push({ name: 'pasted Markdown renders immediately in live mode', passed: Boolean(editor.shadowRoot.querySelector('.md-h1')) && Boolean(editor.shadowRoot.querySelector('strong')) });
+
+    editor.value = 'before after';
+    editor.setSelectionRange('before'.length, 'before'.length);
+    pasteIntoEditor({ 'text/plain': '# Block' });
+    visualChecks.push({ name: 'block Markdown paste separates from surrounding inline text', passed: editor.value === 'before\n# Block\n after' });
+
+    editor.value = '';
+    editor.setSelectionRange(0, 0);
+    pasteIntoEditor({ 'text/plain': 'Name\tAge\nAda\t37' });
+    visualChecks.push({ name: 'tab-separated paste converts to Markdown table', passed: editor.value === '| Name | Age |\n| --- | --- |\n| Ada | 37 |' });
+
+    editor.value = '';
+    editor.setSelectionRange(0, 0);
+    pasteIntoEditor({ 'text/plain': 'Bold site', 'text/html': '<p><strong>Bold</strong> <a href="https://example.com">site</a></p>' });
+    visualChecks.push({ name: 'rich HTML paste converts to Markdown when plain text is not Markdown-like', passed: editor.value === '**Bold** [site](https://example.com)' });
+
+    editor.value = '**bold** and [site](https://example.com) and `code`';
+    editor.setSelectionRange(2, 6);
+    const boldCopy = copyFromEditor();
+    visualChecks.push({ name: 'copying visible bold text includes Markdown delimiters', passed: boldCopy.prevented && boldCopy.out['text/plain'] === '**bold**' && boldCopy.out['text/markdown'] === '**bold**' && boldCopy.out['text/x-markdown'] === '**bold**' });
+
+    const labelStart = editor.value.indexOf('site');
+    editor.setSelectionRange(labelStart, labelStart + 'site'.length);
+    const linkCopy = copyFromEditor();
+    visualChecks.push({ name: 'copying visible link label includes Markdown link target', passed: linkCopy.out['text/plain'] === '[site](https://example.com)' });
+
+    const codeStart = editor.value.indexOf('code');
+    editor.setSelectionRange(codeStart, codeStart + 'code'.length);
+    const codeCopy = copyFromEditor();
+    visualChecks.push({ name: 'copying visible inline code includes backticks', passed: codeCopy.out['text/plain'] === '`code`' });
+
+    editor.value = `alpha
+beta`;
+    editor.setSelectionRange(6, 6);
+    editor.shadowRoot.querySelector('.live-editor').dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
+    visualChecks.push({ name: 'Backspace at live line start joins with previous line', passed: editor.value === 'alphabeta' && editor.selectionStart === 5 && editor.selectionEnd === 5 });
+
+    for (const check of visualChecks) {
+      results.push({ name: check.name, expected: 'true', actual: String(check.passed), passed: check.passed });
+    }
+
+    const passed = results.filter(result => result.passed).length;
+    const summary = document.querySelector('#summary');
+    summary.innerHTML = `<h2 id="test-summary" class="${passed === results.length ? 'pass' : 'fail'}">${passed}/${results.length} passing</h2>`;
+    const tbody = document.querySelector('#results');
+    tbody.innerHTML = results.map(result => `
+      <tr>
+        <td class="${result.passed ? 'pass' : 'fail'}">${result.passed ? 'PASS' : 'FAIL'}</td>
+        <td>${escapeHtml(result.name)}</td>
+        <td><pre>${escapeHtml(result.expected)}</pre></td>
+        <td><pre>${escapeHtml(result.actual)}</pre></td>
+      </tr>
+    `).join('');
+    document.body.dataset.passed = String(passed);
+    document.body.dataset.total = String(results.length);
+    document.body.dataset.ok = String(passed === results.length);
+
+    function escapeHtml(value) {
+      return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+  </script>
+</body>
+</html>

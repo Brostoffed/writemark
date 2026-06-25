@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>&lt;md-live-editor&gt; v1.2.2 Live Inline Demo</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
+    body { margin: 0; padding: 32px; background: Canvas; color: CanvasText; }
+    main { max-width: 1200px; margin: 0 auto; display: grid; gap: 20px; }
+    h1 { margin-bottom: 0; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    button, select { font: inherit; border-radius: 8px; border: 1px solid color-mix(in srgb, CanvasText 22%, Canvas 78%); background: Canvas; color: CanvasText; padding: 8px 10px; }
+    .file-warning { display: none; border: 1px solid #b45309; background: color-mix(in srgb, #f59e0b 16%, Canvas 84%); border-radius: 10px; padding: 12px 14px; }
+    html.file-protocol .file-warning { display: block; }
+    pre.log { white-space: pre-wrap; border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas 82%); border-radius: 8px; padding: 12px; min-height: 80px; max-height: 220px; overflow: auto; }
+    md-live-editor { --md-editor-min-height: 420px; }
+    /* Active-line/cell focus outline is off by default. Re-enable with:
+       md-live-editor { --md-editor-active-line-ring: inset 0 0 0 2px color-mix(in srgb, Highlight 35%, transparent); }
+    */
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>&lt;md-live-editor&gt; live inline editor</h1>
+      <p>Dependency-free markdown web component. The default mode is inline/live: headings, inline formatting, tables, code blocks, task checkboxes, and lists render inside the editor itself while markdown source remains canonical. There is no built-in toolbar; use Markdown shortcuts, slash commands, keyboard shortcuts, or the public action API.</p>
+      <div class="file-warning" role="alert">
+        This module demo must be served over <code>http://localhost</code>. Do not open <code>index.html</code> with <code>file://</code>. Run <code>./serve.sh</code>, double-click <code>start-local.command</code> on macOS, run <code>npm start</code>, or open <code>standalone.html</code> directly.
+      </div>
+    </header>
+
+    <div class="controls" aria-label="Demo controls">
+      <label>
+        Mode
+        <select id="mode">
+          <option value="live" selected>live</option>
+          <option value="source">source</option>
+          <option value="split">split</option>
+          <option value="preview">preview</option>
+        </select>
+      </label>
+      <label>
+        Extra preview
+        <select id="preview-mode">
+          <option value="none" selected>none</option>
+          <option value="below">below</option>
+          <option value="side">side</option>
+        </select>
+      </label>
+      <label>
+        Tab behavior
+        <select id="tab-behavior">
+          <option value="accessibility-first" selected>accessibility-first</option>
+          <option value="editor-first">editor-first</option>
+        </select>
+      </label>
+      <button type="button" id="insert-demo">Insert demo content</button>
+      <button type="button" id="select-expand">Expand selection</button>
+      <button type="button" id="get-html">Log HTML</button>
+      <button type="button" id="get-text">Log text</button>
+    </div>
+
+    <form id="demo-form">
+      <md-live-editor
+        id="editor"
+        name="body"
+        label="Body"
+        mode="live"
+        preview="none"
+        placeholder="Type / for commands. Try #, -, 1., >, or [ ] then Space. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
+        required
+        maxlength="50000"
+        spellcheck="true"
+      ></md-live-editor>
+      <p><button type="submit">Submit form</button></p>
+    </form>
+
+    <section aria-labelledby="log-title">
+      <h2 id="log-title">Event log</h2>
+      <pre id="log" class="log" aria-live="polite"></pre>
+    </section>
+  </main>
+
+  <script type="module">
+    if (location.protocol === "file:") {
+      document.documentElement.classList.add("file-protocol");
+      throw new Error("Open standalone.html directly, or serve index.html over http://localhost.");
+    }
+    await import("./md-live-editor.js");
+
+    const editor = document.querySelector('#editor');
+    const log = document.querySelector('#log');
+    const previewMode = document.querySelector('#preview-mode');
+    const mode = document.querySelector('#mode');
+    const tabBehavior = document.querySelector('#tab-behavior');
+
+    const demoMarkdown = `# Live inline markdown editor
+
+Type \`/\` at the start of a line for slash commands. Headings are sized inside the editor. Inline **bold**, *italic*, \`code\`, and ~~strikethrough~~ are styled in place while the markdown delimiters remain editable.
+
+## Smart shortcuts
+
+Type these at the start of a line and press Space: \`#\`, \`##\`, \`-\`, \`1.\`, \`>\`, or \`[ ]\`.
+
+## Smart lists
+
+- Press Enter to continue
+- Press Tab to indent
+  - Press Shift+Tab to outdent
+- Press Enter on an empty item to exit
+
+## Task lists
+
+- [x] Built as a web component
+- [ ] Click this checkbox inside the editor
+
+## Divider
+
+---
+
+## Table
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Slash commands | Works | Type /table |
+| Live inline rendering | Works | No separate preview required |
+| Source value | Preserved | Forms submit markdown |
+| Table navigation | Fixed | Enter adds rows; Shift+Enter/Escape exits |
+| Toolbar | Removed | Use slash commands, Markdown shortcuts, and keyboard shortcuts |
+
+## Code
+
+Code fences render as clean blocks in Live mode; the backtick fences stay in Source mode:
+
+\`\`\`python
+print("hello")
+\`\`\`
+`;
+
+    function writeLog(message, data = null) {
+      const line = `[${new Date().toLocaleTimeString()}] ${message}${data ? `\n${JSON.stringify(data, null, 2)}` : ''}\n\n`;
+      log.textContent = line + log.textContent;
+    }
+
+    editor.value = demoMarkdown;
+
+    mode.addEventListener('change', () => editor.mode = mode.value);
+    previewMode.addEventListener('change', () => editor.preview = previewMode.value);
+    tabBehavior.addEventListener('change', () => editor.tabBehavior = tabBehavior.value);
+    document.querySelector('#insert-demo').addEventListener('click', () => { editor.value = demoMarkdown; editor.focus(); });
+    document.querySelector('#select-expand').addEventListener('click', () => { editor.exec('editor.selectAllExpand'); editor.focus(); });
+    document.querySelector('#get-html').addEventListener('click', () => writeLog('HTML', { html: editor.getHTML() }));
+    document.querySelector('#get-text').addEventListener('click', () => writeLog('Text', { text: editor.getText() }));
+
+    editor.addEventListener('md-before-change', event => writeLog('md-before-change', { actionId: event.detail.transaction?.actionId, nextLength: event.detail.nextValue.length }));
+    editor.addEventListener('md-copy', event => writeLog('md-copy', { length: event.detail.markdown.length }));
+    editor.addEventListener('md-cut', event => writeLog('md-cut', { length: event.detail.markdown.length }));
+    editor.addEventListener('md-paste', event => writeLog('md-paste', { kind: event.detail.kind, length: event.detail.markdown.length }));
+    editor.addEventListener('md-input', event => writeLog('md-input', { length: event.detail.value.length, source: event.detail.source }));
+    editor.addEventListener('md-action', event => writeLog('md-action', { actionId: event.detail.actionId, source: event.detail.source }));
+    editor.addEventListener('md-completion-accept', event => writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label }));
+    editor.addEventListener('md-error', event => writeLog('md-error', { phase: event.detail.phase, recoverable: event.detail.recoverable, message: String(event.detail.error?.message || event.detail.error) }));
+    document.querySelector('#demo-form').addEventListener('submit', event => { event.preventDefault(); writeLog('form submit', Object.fromEntries(new FormData(event.currentTarget))); });
+  </script>
+</body>
+</html>
