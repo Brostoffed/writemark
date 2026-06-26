@@ -6,7 +6,7 @@ The default experience is **inline/live editing**: headings, inline formatting, 
 
 ## Run locally
 
-Do not open `index.html` directly with `file://` unless you use `standalone.html`. ES modules loaded from local files are blocked by browser security rules.
+Open `index.html` directly in a browser, or serve it locally:
 
 ```sh
 cd writemark-editor-v1
@@ -19,27 +19,24 @@ Then open:
 http://127.0.0.1:5173/index.html
 ```
 
-No npm install is required. The dev server uses Node's built-in HTTP module.
-
-Alternatives:
-
-```sh
-./serve.sh
-```
-
-On macOS, double-click:
-
-```text
-start-local.command
-```
-
-For direct file opening, use:
-
-```text
-standalone.html
-```
+No npm install is required. The dev server uses Node's built-in HTTP module and is only needed for module-based test and performance pages.
 
 ## Basic usage
+
+For direct browser usage without a module server:
+
+```html
+<script src="./writemark-editor.global.js"></script>
+
+<writemark-editor
+  name="body"
+  label="Body"
+  mode="live"
+  placeholder="Type / for commands"
+></writemark-editor>
+```
+
+For ESM/npm usage:
 
 ```html
 <script type="module" src="./writemark-editor.js"></script>
@@ -51,6 +48,8 @@ standalone.html
   placeholder="Type / for commands"
 ></writemark-editor>
 ```
+
+`writemark-editor.global.js` is generated from `writemark-editor.js` with `npm run build`; do not edit the generated file directly.
 
 Compatibility: `md-live-editor.js` and `<md-live-editor>` are still registered as legacy aliases for existing demos or consumers.
 

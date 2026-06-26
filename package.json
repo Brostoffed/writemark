@@ -8,23 +8,16 @@
   "exports": {
     ".": "./writemark-editor.js",
     "./writemark-editor.js": "./writemark-editor.js",
+    "./writemark-editor.global.js": "./writemark-editor.global.js",
     "./md-live-editor.js": "./md-live-editor.js"
   },
   "files": [
     "writemark-editor.js",
+    "writemark-editor.global.js",
     "md-live-editor.js",
-    "demo-controls.js",
-    "index.html",
-    "standalone.html",
-    "tests.html",
-    "perf.html",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE",
-    "dev-server.mjs",
-    "serve.sh",
-    "start-local.command",
-    "start-local.bat"
+    "LICENSE"
   ],
   "keywords": [
     "web-component",
@@ -45,10 +38,11 @@
   "homepage": "https://github.com/Brostoffed/writemark#readme",
   "sideEffects": true,
   "scripts": {
+    "build": "node scripts/build-global.mjs",
     "start": "node dev-server.mjs --open=index.html",
     "serve": "node dev-server.mjs",
     "test:browser": "node dev-server.mjs --open=tests.html",
     "perf": "node dev-server.mjs --open=perf.html",
-    "check": "node --check writemark-editor.js && node --check md-live-editor.js && node --check demo-controls.js && node --check dev-server.mjs"
+    "check": "node scripts/build-global.mjs --check && node --check writemark-editor.js && node --check writemark-editor.global.js && node --check md-live-editor.js && node --check demo-controls.js && node --check dev-server.mjs && node --check scripts/build-global.mjs"
   }
 }
