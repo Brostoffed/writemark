@@ -6,6 +6,7 @@
 - Removed embedded code-block Copy/Language buttons and table row/column buttons from live-rendered blocks.
 - Kept all formatting, table, code, history, mode, and editing capabilities available through slash commands, Markdown shortcuts, keyboard shortcuts, and `editor.exec(...)`.
 - Reduced per-instance DOM, event listeners, CSS, and UI surface area for cleaner multi-instance pages.
+- Organized the repository into `src/`, `dist/`, `demo/`, `tests/`, `perf/`, and `scripts/`.
 - Updated tests, README, demo, generated browser build, and package version.
 
 ## 1.2.1

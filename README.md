@@ -6,7 +6,7 @@ The default experience is **inline/live editing**: headings, inline formatting, 
 
 ## Run locally
 
-Open `index.html` directly in a browser, or serve it locally:
+Open `demo/index.html` directly in a browser, or serve it locally:
 
 ```sh
 cd writemark-editor-v1
@@ -16,17 +16,28 @@ npm start
 Then open:
 
 ```text
-http://127.0.0.1:5173/index.html
+http://127.0.0.1:5173/demo/index.html
 ```
 
 No npm install is required. The dev server uses Node's built-in HTTP module and is only needed for module-based test and performance pages.
+
+## Repo layout
+
+```text
+src/      Canonical editor source.
+dist/     Generated package/browser files.
+demo/     Direct-open browser demo.
+tests/    Browser test harness.
+perf/     Performance harness.
+scripts/  Build and local server utilities.
+```
 
 ## Basic usage
 
 For direct browser usage without a module server:
 
 ```html
-<script src="./writemark-editor.global.js"></script>
+<script src="./dist/writemark-editor.global.js"></script>
 
 <writemark-editor
   name="body"
@@ -39,7 +50,7 @@ For direct browser usage without a module server:
 For ESM/npm usage:
 
 ```html
-<script type="module" src="./writemark-editor.js"></script>
+<script type="module" src="./dist/writemark-editor.js"></script>
 
 <writemark-editor
   name="body"
@@ -49,7 +60,7 @@ For ESM/npm usage:
 ></writemark-editor>
 ```
 
-`writemark-editor.global.js` is generated from `writemark-editor.js` with `npm run build`; do not edit the generated file directly.
+`dist/` is generated from `src/writemark-editor.js` with `npm run build`; do not edit generated files directly.
 
 Compatibility: `md-live-editor.js` and `<md-live-editor>` are still registered as legacy aliases for existing demos or consumers.
 
@@ -352,7 +363,7 @@ npm run serve
 Then open:
 
 ```text
-http://127.0.0.1:5173/tests.html
+http://127.0.0.1:5173/tests/browser.html
 ```
 
 The test harness verifies action fixtures and live-rendered structure.

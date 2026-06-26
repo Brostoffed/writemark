@@ -3,18 +3,16 @@
   "version": "1.2.2",
   "description": "Writemark is a dependency-free live inline Markdown editor web component with slash commands, smart editing, form integration, source fallback, and no built-in toolbar.",
   "type": "module",
-  "main": "./writemark-editor.js",
-  "module": "./writemark-editor.js",
+  "main": "./dist/writemark-editor.js",
+  "module": "./dist/writemark-editor.js",
   "exports": {
-    ".": "./writemark-editor.js",
-    "./writemark-editor.js": "./writemark-editor.js",
-    "./writemark-editor.global.js": "./writemark-editor.global.js",
-    "./md-live-editor.js": "./md-live-editor.js"
+    ".": "./dist/writemark-editor.js",
+    "./writemark-editor.js": "./dist/writemark-editor.js",
+    "./writemark-editor.global.js": "./dist/writemark-editor.global.js",
+    "./md-live-editor.js": "./dist/md-live-editor.js"
   },
   "files": [
-    "writemark-editor.js",
-    "writemark-editor.global.js",
-    "md-live-editor.js",
+    "dist",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -38,11 +36,11 @@
   "homepage": "https://github.com/Brostoffed/writemark#readme",
   "sideEffects": true,
   "scripts": {
-    "build": "node scripts/build-global.mjs",
-    "start": "node dev-server.mjs --open=index.html",
-    "serve": "node dev-server.mjs",
-    "test:browser": "node dev-server.mjs --open=tests.html",
-    "perf": "node dev-server.mjs --open=perf.html",
-    "check": "node scripts/build-global.mjs --check && node --check writemark-editor.js && node --check writemark-editor.global.js && node --check md-live-editor.js && node --check demo-controls.js && node --check dev-server.mjs && node --check scripts/build-global.mjs"
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/dev-server.mjs --open=demo/index.html",
+    "serve": "node scripts/dev-server.mjs",
+    "test:browser": "node scripts/dev-server.mjs --open=tests/browser.html",
+    "perf": "node scripts/dev-server.mjs --open=perf/index.html",
+    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check dist/md-live-editor.js && node --check scripts/demo-controls.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs"
   }
 }

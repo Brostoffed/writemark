@@ -6,12 +6,12 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
+const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const args = new Set(process.argv.slice(2));
 const portArg = process.argv.find(arg => arg.startsWith('--port='));
 const openArg = process.argv.find(arg => arg.startsWith('--open='));
 const port = Number(portArg?.split('=')[1] || process.env.PORT || 5173);
-const openPath = openArg?.split('=')[1] || (args.has('--open') ? 'index.html' : null);
+const openPath = openArg?.split('=')[1] || (args.has('--open') ? 'demo/index.html' : null);
 
 const mime = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -33,7 +33,7 @@ const mime = new Map([
 function safePathFromUrl(url) {
   const parsed = new URL(url, 'http://localhost');
   let pathname = decodeURIComponent(parsed.pathname);
-  if (pathname === '/') pathname = '/index.html';
+  if (pathname === '/') pathname = '/demo/index.html';
   const candidate = normalize(join(root, pathname));
   if (candidate !== root && !candidate.startsWith(root + sep)) return null;
   return candidate;
@@ -89,8 +89,9 @@ function openBrowser(url) {
 server.listen(port, '127.0.0.1', () => {
   const baseUrl = `http://127.0.0.1:${port}`;
   console.log(`Serving <writemark-editor> from ${root}`);
-  console.log(`Demo:  ${baseUrl}/index.html`);
-  console.log(`Tests: ${baseUrl}/tests.html`);
+  console.log(`Demo:  ${baseUrl}/demo/index.html`);
+  console.log(`Tests: ${baseUrl}/tests/browser.html`);
+  console.log(`Perf:  ${baseUrl}/perf/index.html`);
   console.log('Press Ctrl+C to stop.');
   if (openPath) {
     const normalized = openPath.startsWith('/') ? openPath : `/${openPath}`;

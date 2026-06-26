@@ -35,13 +35,13 @@
   <script type="module">
     if (location.protocol === "file:") {
       document.documentElement.classList.add("file-protocol");
-      throw new Error("Serve tests.html over http://localhost.");
+      throw new Error("Serve tests/browser.html over http://localhost.");
     }
-    await import("./writemark-editor.js");
-    const { bindDemoControls } = await import("./demo-controls.js");
+    await import("../dist/writemark-editor.js");
+    const { bindDemoControls } = await import("../scripts/demo-controls.js");
     await customElements.whenDefined('writemark-editor');
     const editor = document.querySelector('#editor');
-    const compatibilityModule = await import("./md-live-editor.js");
+    const compatibilityModule = await import("../dist/md-live-editor.js");
     const fixtures = [
       { name: 'continues bullet list', before: '- one|', action: 'editor.smartEnter', after: '- one\n- |' },
       { name: 'exits empty bullet list', before: '- one\n- |', action: 'editor.smartEnter', after: '- one\n|' },
