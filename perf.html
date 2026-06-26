@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>&lt;md-live-editor&gt; Performance Harness</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: Canvas; color: CanvasText; }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    h1 { margin: 0 0 16px; font-size: 1.35rem; }
+    .controls { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 10px; align-items: end; margin-block-end: 16px; }
+    label { display: grid; gap: 4px; font-size: 0.86rem; color: color-mix(in srgb, CanvasText 72%, Canvas 28%); }
+    input, select, button {
+      box-sizing: border-box; min-height: 36px; border: 1px solid color-mix(in srgb, CanvasText 24%, Canvas 76%);
+      border-radius: 6px; padding: 6px 8px; background: Canvas; color: CanvasText; font: inherit;
+    }
+    button { cursor: pointer; font-weight: 650; }
+    md-live-editor { --md-editor-max-height: 420px; --md-editor-min-height: 420px; display: block; margin-block: 14px; }
+    table { border-collapse: collapse; width: 100%; margin-block-start: 14px; }
+    th, td { border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas 80%); padding: 7px 8px; text-align: left; }
+    th { font-size: 0.84rem; color: color-mix(in srgb, CanvasText 70%, Canvas 30%); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .status { min-height: 1.4em; color: color-mix(in srgb, CanvasText 72%, Canvas 28%); }
+    @media (max-width: 820px) { .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>&lt;md-live-editor&gt; performance harness</h1>
+    <div class="controls">
+      <label>Characters <input id="chars" type="number" min="10000" max="2000000" step="10000" value="200000"></label>
+      <label>Line length <input id="lineLength" type="number" min="20" max="220" step="10" value="80"></label>
+      <label>Edit runs <input id="runs" type="number" min="5" max="200" step="5" value="30"></label>
+      <label>Preview <select id="preview"><option value="none">None</option><option value="below">Below</option><option value="side">Side</option></select></label>
+      <label>Inline density <select id="density"><option value="light">Light</option><option value="medium">Medium</option><option value="heavy">Heavy</option></select></label>
+      <button id="run">Run</button>
+    </div>
+    <div class="status" id="status"></div>
+    <md-live-editor id="editor" mode="live" preview="none"></md-live-editor>
+    <table>
+      <thead><tr><th>Metric</th><th>Value</th><th>Notes</th></tr></thead>
+      <tbody id="results"></tbody>
+    </table>
+  </main>
+  <script type="module">
+    import { parseBlocks, renderMarkdown } from './md-live-editor.js';
+    await customElements.whenDefined('md-live-editor');
+
+    const editor = document.querySelector('#editor');
+    const status = document.querySelector('#status');
+    const results = document.querySelector('#results');
+    const controls = Object.fromEntries([...document.querySelectorAll('[id]')].map(el => [el.id, el]));
+    const waitFrame = () => new Promise(requestAnimationFrame);
+    const sample = (index, density) => {
+      const base = `Line ${String(index).padStart(5, '0')} has enough text to wrap naturally in the live editor`;
+      if (density === 'heavy') return `${base} with **bold text**, *italic text*, [a link](https://example.com/${index}), and \`code_${index}\`.`;
+      if (density === 'medium') return `${base} with **bold text** and [a link](https://example.com/${index}).`;
+      return `${base}.`;
+    };
+    function generateMarkdown(targetChars, lineLength, density) {
+      const lines = [];
+      let length = 0;
+      for (let i = 0; length < targetChars; i += 1) {
+        let line = sample(i, density);
+        while (line.length < lineLength) line += ` word${i % 10}`;
+        lines.push(line);
+        length += line.length + 1;
+      }
+      return lines.join('\n');
+    }
+    function percentile(values, p) {
+      if (!values.length) return 0;
+      const sorted = [...values].sort((a, b) => a - b);
+      return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))];
+    }
+    function addRow(metric, value, notes = '') {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${metric}</td><td><code>${value}</code></td><td>${notes}</td>`;
+      results.append(tr);
+    }
+    async function runBenchmark() {
+      results.textContent = '';
+      status.textContent = 'Generating document...';
+      const markdown = generateMarkdown(Number(controls.chars.value), Number(controls.lineLength.value), controls.density.value);
+      const runs = Number(controls.runs.value);
+
+      let t0 = performance.now();
+      const blocks = parseBlocks(markdown);
+      addRow('parseBlocks', `${(performance.now() - t0).toFixed(2)} ms`, `${blocks.length} blocks`);
+
+      t0 = performance.now();
+      const html = renderMarkdown(markdown);
+      addRow('renderMarkdown', `${(performance.now() - t0).toFixed(2)} ms`, `${Math.round(html.length / 1024)} KB HTML`);
+
+      status.textContent = 'Rendering editor...';
+      editor.preview = controls.preview.value;
+      t0 = performance.now();
+      editor.value = markdown;
+      await waitFrame();
+      addRow('initial live render', `${(performance.now() - t0).toFixed(2)} ms`, `${editor.shadowRoot.querySelectorAll('[data-editable]').length} rendered editables`);
+      addRow('virtualized', String(editor._virtualState.active), editor._virtualState.active ? `${editor._virtualState.start}-${editor._virtualState.end} of ${editor._virtualState.total}` : 'full live DOM');
+
+      status.textContent = 'Measuring edits...';
+      const latencies = [];
+      for (let i = 0; i < runs; i += 1) {
+        const cursor = Math.floor(editor.value.length / 2);
+        editor.setSelectionRange(cursor, cursor);
+        const start = performance.now();
+        editor.insertMarkdown(i % 2 ? 'y' : 'x');
+        await waitFrame();
+        latencies.push(performance.now() - start);
+      }
+      addRow('edit p50', `${percentile(latencies, 0.5).toFixed(2)} ms`, `${runs} inserted characters`);
+      addRow('edit p95', `${percentile(latencies, 0.95).toFixed(2)} ms`, 'includes render and selection restore');
+      addRow('final size', `${editor.value.length.toLocaleString()} chars`, `${editor._liveBlocks.length.toLocaleString()} blocks`);
+      status.textContent = 'Done.';
+    }
+    controls.run.addEventListener('click', () => runBenchmark().catch(error => {
+      status.textContent = error?.stack || String(error);
+    }));
+    runBenchmark();
+  </script>
+</body>
+</html>

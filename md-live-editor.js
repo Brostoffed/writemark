@@ -427,6 +427,49 @@ function applyTextChanges(value, changes) {
   }
   return out;
 }
+function diffTextChange(before, after) {
+  const oldValue = normalizeLineEndings(before ?? "");
+  const newValue = normalizeLineEndings(after ?? "");
+  if (oldValue === newValue) return [];
+  let start = 0;
+  const maxStart = Math.min(oldValue.length, newValue.length);
+  while (start < maxStart && oldValue[start] === newValue[start]) start += 1;
+  let oldEnd = oldValue.length;
+  let newEnd = newValue.length;
+  while (oldEnd > start && newEnd > start && oldValue[oldEnd - 1] === newValue[newEnd - 1]) {
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+  return [{ from: start, to: oldEnd, insert: newValue.slice(start, newEnd) }];
+}
+function normalizeChanges(changes = []) {
+  return [...changes]
+    .map(change => ({
+      from: Number(change.from) || 0,
+      to: Number(change.to) || Number(change.from) || 0,
+      insert: normalizeLineEndings(change.insert ?? ""),
+    }))
+    .sort((a, b) => a.from - b.from || a.to - b.to);
+}
+function changedSpans(changes = []) {
+  const sorted = normalizeChanges(changes);
+  if (!sorted.length) return null;
+  let oldStart = Infinity;
+  let oldEnd = -Infinity;
+  let newStart = Infinity;
+  let newEnd = -Infinity;
+  let shift = 0;
+  for (const change of sorted) {
+    oldStart = Math.min(oldStart, change.from);
+    oldEnd = Math.max(oldEnd, change.to);
+    const newFrom = change.from + shift;
+    const newTo = newFrom + change.insert.length;
+    newStart = Math.min(newStart, newFrom);
+    newEnd = Math.max(newEnd, newTo);
+    shift += change.insert.length - (change.to - change.from);
+  }
+  return { oldStart, oldEnd, newStart, newEnd, delta: shift };
+}
 function sameSelection(a, b) { return a && b && a.start === b.start && a.end === b.end && (a.direction || "none") === (b.direction || "none"); }
 function makeSnapshot(value, selectionStart, selectionEnd, direction = "none") { return { value, selection: { start: selectionStart, end: selectionEnd, direction } }; }
 function tx(ctx, actionId, changes, selectionAfter, undoGroup = actionId) {
@@ -622,6 +665,18 @@ class MdLiveEditorElement extends HTMLElement {
     this._ignoreSelectionChangeCount = 0;
     this._pointerSelection = null;
     this._suppressLiveClick = false;
+    this._blockCacheValue = null;
+    this._blockCache = null;
+    this._liveBlocks = [];
+    this._liveEditablesCache = [];
+    this._liveNavigationCache = [];
+    this._liveIndexDirty = true;
+    this._liveDirty = true;
+    this._previewDirty = true;
+    this._previewRenderTimer = 0;
+    this._completionUpdateFrame = 0;
+    this._virtualState = { active: false, start: 0, end: 0, total: 0, lineHeight: 24 };
+    this._virtualScrollFrame = 0;
     this._actions = new Map();
     this._providers = new Map();
     this._completion = { open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: 0, abort: null };
@@ -650,13 +705,21 @@ class MdLiveEditorElement extends HTMLElement {
       this._updateValidity();
     }
   }
-  disconnectedCallback() { this._completion.abort?.abort(); }
+  disconnectedCallback() {
+    this._completion.abort?.abort();
+    if (this._previewRenderTimer) globalThis.clearTimeout?.(this._previewRenderTimer);
+    if (this._completionUpdateFrame) cancelAnimationFrame(this._completionUpdateFrame);
+    if (this._virtualScrollFrame) cancelAnimationFrame(this._virtualScrollFrame);
+    this._previewRenderTimer = 0;
+    this._completionUpdateFrame = 0;
+    this._virtualScrollFrame = 0;
+  }
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === "value") { if (!this._hasConnected) { this._value = normalizeLineEndings(newValue ?? ""); this._defaultValue = this._value; } return; }
     if (!this._hasConnected) return;
     this._syncAttributesToControls();
-    if (name === "mode" || name === "preview") this._renderAll({ restoreSelection: true });
+    if (name === "mode" || name === "preview") this._renderAll({ restoreSelection: true, force: true });
     if (["required", "disabled", "readonly", "maxlength", "minlength"].includes(name)) { this._updateFormValue(); this._updateValidity(); }
   }
 
@@ -706,7 +769,7 @@ class MdLiveEditorElement extends HTMLElement {
     if (this._sourceTextarea && this._isSourceActive()) this._sourceTextarea.setSelectionRange(s, e, direction);
     if (this._liveEditor && !this._isSourceActive()) { this._ignoreSelectionChangeCount = 2; this._restoreLiveSelection(this._selection); }
     this._emitSelectionChange();
-    this._maybeUpdateCompletions();
+    this._scheduleCompletionUpdate();
   }
   exec(actionId, args) { const result = this._runAction(actionId, args, { source: "api", apply: true }); return Boolean(result?.ok); }
   registerAction(action) {
@@ -728,7 +791,7 @@ class MdLiveEditorElement extends HTMLElement {
   insertMarkdown(markdown) { return this.exec("editor.insertText", { text: markdown }); }
   canExec(actionId, args) { const action = this._actions.get(actionId); if (!action) return false; const ctx = this._getContext(); if (ctx.mode === "disabled" && !action.viewSafe) return false; if (ctx.mode === "readonly" && !action.readonlySafe && !action.viewSafe) return false; return !action.when || action.when(ctx, args); }
   getCurrentBlock() { const sel = this._getCurrentSelection(); return this._findBlockAtOffset(sel.start) || null; }
-  getSelectedBlocks() { const sel = this._getCurrentSelection(); const start = Math.min(sel.start, sel.end); const end = Math.max(sel.start, sel.end); return parseBlocks(this._value).filter(block => block.to >= start && block.from <= end); }
+  getSelectedBlocks() { const sel = this._getCurrentSelection(); const start = Math.min(sel.start, sel.end); const end = Math.max(sel.start, sel.end); return this._getBlocks().filter(block => block.to >= start && block.from <= end); }
   getActiveMarks() { return this._getActiveStateIds(this._getContext()); }
   find(query, options = {}) { return this._findText(query, options); }
   replace(query, replacement, options = {}) { return this._replaceText(query, replacement, { ...options, all: false }); }
@@ -814,6 +877,7 @@ class MdLiveEditorElement extends HTMLElement {
         :host([mode="preview"]) .preview, :host([mode="split"]) .preview, :host([preview="below"]) .preview, :host([preview="side"]) .preview, :host([preview="inline-split"]) .preview { display: block; }
         :host([preview="none"]):not([mode="split"]):not([mode="preview"]) .preview { display: none; }
         .live-placeholder { color: var(--md-editor-muted); pointer-events: none; }
+        .md-virtual-spacer { display: block; pointer-events: none; user-select: none; inline-size: 1px; min-block-size: 0; }
         .md-line { position: relative; min-block-size: 1.35em; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; padding: 1px 2px; outline: none; transition: background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease), box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease); }
         .md-line:focus, .md-task-source:focus, .md-code-line:focus { box-shadow: var(--md-editor-active-line-ring); background: var(--md-editor-active-line-bg); }
         .md-cell:focus { box-shadow: var(--md-editor-active-cell-ring); background: var(--md-editor-active-cell-bg); }
@@ -899,7 +963,7 @@ class MdLiveEditorElement extends HTMLElement {
     this._sourceTextarea.addEventListener("paste", event => this._onPaste(event));
     this._sourceTextarea.addEventListener("drop", event => this._onDrop(event));
     this._sourceTextarea.addEventListener("compositionstart", () => { this._isComposing = true; this._closeCompletion(); });
-    this._sourceTextarea.addEventListener("compositionend", () => { this._isComposing = false; this._maybeUpdateCompletions(); });
+    this._sourceTextarea.addEventListener("compositionend", () => { this._isComposing = false; this._scheduleCompletionUpdate(); });
 
     this._liveEditor.addEventListener("focus", () => { if (this._selection.start > this._value.length) this._selection = { start: 0, end: 0, direction: "none" }; }, true);
     this._liveEditor.addEventListener("keydown", event => this._onKeyDown(event));
@@ -909,6 +973,7 @@ class MdLiveEditorElement extends HTMLElement {
     this._liveEditor.addEventListener("click", event => this._onLiveClick(event));
     this._liveEditor.addEventListener("mousedown", event => this._onLiveMouseDown(event));
     this._liveEditor.addEventListener("mouseup", () => this._onSelectionChanged());
+    this._liveEditor.addEventListener("scroll", () => this._onLiveScroll());
     this._liveEditor.addEventListener("copy", event => this._onLiveCopy(event));
     this._liveEditor.addEventListener("cut", event => this._onLiveCut(event));
     this._liveEditor.addEventListener("paste", event => this._onPaste(event));
@@ -1001,36 +1066,354 @@ class MdLiveEditorElement extends HTMLElement {
 
   _rendererOptions() { return { markdownFlavor: this.markdownFlavor, allowRawHtml: false, sanitize: true, linkTarget: DEFAULTS.linkTarget }; }
   _setValueInternal(next, opts = {}) {
-    const value = normalizeLineEndings(next ?? ""); const before = this._snapshot(); const changed = value !== this._value;
+    const previousValue = this._value;
+    const value = normalizeLineEndings(next ?? ""); const before = this._snapshot(); const changed = value !== previousValue;
     this._value = value; if (this._sourceTextarea && this._sourceTextarea.value !== value) this._sourceTextarea.value = value;
     if (!opts.preserveSelection) this._selection = { start: clamp(this._selection.start, 0, value.length), end: clamp(this._selection.end, 0, value.length), direction: "none" };
     if (opts.recordUndo && changed) this._recordUndo(before, this._snapshot(), opts.undoGroup || opts.source || "api", { coalesce: false });
-    if (changed || opts.force || !this._hasRenderedOnce) this._afterValueChanged({ source: opts.source || "api", silent: opts.silent, restoreSelection: opts.preserveSelection !== false });
+    if (changed || opts.force || !this._hasRenderedOnce) this._afterValueChanged({ source: opts.source || "api", silent: opts.silent, restoreSelection: opts.preserveSelection !== false, previousValue, changes: changed ? diffTextChange(previousValue, value) : [] });
   }
-  _afterValueChanged({ source = "api", inputType = null, silent = false, restoreSelection = true } = {}) {
+  _afterValueChanged({ source = "api", inputType = null, silent = false, restoreSelection = true, previousValue = null, changes = null } = {}) {
     this._selectAllLevel = 0;
     this._structuredSelection = null;
-    this._updateFormValue(); this._updateValidity(); this._renderAll({ restoreSelection });
+    this._updateFormValue(); this._updateValidity(); this._renderAll({ restoreSelection, previousValue, changes });
     const oldDirty = this._dirty; this._dirty = this._value !== this._defaultValue; if (oldDirty !== this._dirty) this._dispatch("md-dirty-change", { dirty: this._dirty });
     if (!silent) this._dispatch("md-input", { value: this._value, source, inputType });
   }
-  _renderAll({ restoreSelection = true } = {}) {
+  _renderAll({ restoreSelection = true, previousValue = null, changes = null, force = false } = {}) {
     if (!this._liveEditor) return;
     this._hasRenderedOnce = true;
     this._sourceTextarea.value = this._value;
-    this._renderLive();
-    this._renderPreview();
-    if (restoreSelection && !this._isSourceActive()) this._restoreLiveSelection(this._selection);
+    if (this._isLiveVisible()) {
+      this._renderLive({ previousValue, changes, force });
+      this._liveDirty = false;
+      if (restoreSelection && !this._isSourceActive()) this._restoreLiveSelection(this._selection);
+    } else {
+      this._liveDirty = true;
+    }
+    this._schedulePreviewRender({ immediate: force || !this._previewDirty });
+  }
+  _isLiveVisible() {
+    return this.mode !== "source" && this.mode !== "preview";
+  }
+  _isPreviewVisible() {
+    return this.mode === "preview" || this.mode === "split" || this.preview !== "none";
+  }
+  _renderDebounceMs() {
+    const raw = Number(this.getAttribute("render-debounce-ms"));
+    return Number.isFinite(raw) ? clamp(raw, 0, 1000) : DEFAULTS.renderDebounceMs;
+  }
+  _schedulePreviewRender({ immediate = false } = {}) {
+    this._previewDirty = true;
+    if (!this._isPreviewVisible()) return;
+    const run = () => {
+      this._previewRenderTimer = 0;
+      if (this._isPreviewVisible()) this._renderPreview();
+    };
+    if (immediate) {
+      if (this._previewRenderTimer) globalThis.clearTimeout?.(this._previewRenderTimer);
+      run();
+      return;
+    }
+    if (this._previewRenderTimer) return;
+    this._previewRenderTimer = globalThis.setTimeout?.(run, this._renderDebounceMs()) ?? 0;
   }
   _renderPreview() {
     if (!this._preview) return;
-    try { this._preview.innerHTML = this.getHTML(); this._dispatch("md-render", { html: this._preview.innerHTML }); }
+    try { this._preview.innerHTML = this.getHTML(); this._previewDirty = false; this._dispatch("md-render", { html: this._preview.innerHTML }); }
     catch (error) { this._preview.innerHTML = `<pre><code>${escapeHtml(this._value)}</code></pre>`; this._emitError("render", error, true); }
   }
-  _renderLive() {
+  _getBlocks() {
+    if (this._blockCacheValue === this._value && this._blockCache) return this._blockCache;
     const blocks = parseBlocks(this._value);
+    this._setBlockCache(blocks, "full");
+    return blocks;
+  }
+  _setBlockCache(blocks, mode = "full") {
+    this._blockCacheValue = this._value;
+    this._blockCache = blocks;
+    this._lastParseMode = mode;
+  }
+  _blocksForRender(previousValue, changes) {
+    const incremental = this._tryIncrementalBlocks(previousValue, changes);
+    if (incremental) {
+      this._setBlockCache(incremental, "incremental");
+      return incremental;
+    }
+    const blocks = parseBlocks(this._value);
+    this._setBlockCache(blocks, "full");
+    return blocks;
+  }
+  _renderLive({ previousValue = null, changes = null, force = false, virtualAnchorOffset = null } = {}) {
+    const previousBlocks = this._liveBlocks || [];
+    const blocks = this._blocksForRender(previousValue, changes);
+    if (this._shouldVirtualize(blocks)) {
+      this._renderLiveVirtual(blocks, { anchorOffset: virtualAnchorOffset ?? this._selection.start, force });
+      this._liveBlocks = blocks;
+      this._rebuildLiveIndex();
+      return;
+    }
+    this._virtualState = { ...this._virtualState, active: false, start: 0, end: blocks.length, total: blocks.length };
+    const patched = !force && this._tryPatchLiveBlocks(previousBlocks, blocks, changes, previousValue);
+    if (!patched) this._renderLiveFull(blocks);
+    this._liveBlocks = blocks;
+    this._rebuildLiveIndex();
+  }
+  _renderLiveFull(blocks) {
     const html = blocks.map(block => this._renderLiveBlock(block)).join("");
     this._liveEditor.innerHTML = html || `<div class="live-placeholder">${escapeHtml(this.placeholder)}</div>`;
+  }
+  _tryPatchLiveBlocks(previousBlocks, blocks, changes, previousValue) {
+    if (!previousValue || !changes?.length || !previousBlocks.length || !this._liveEditor?.children?.length || this._virtualState.active) return false;
+    const children = Array.from(this._liveEditor.children);
+    if (children.length !== previousBlocks.length) return false;
+    const spans = changedSpans(changes);
+    if (!spans) return false;
+    const oldRange = this._expandedBlockRange(previousBlocks, spans.oldStart, spans.oldEnd, previousValue.length);
+    const newRange = this._expandedBlockRange(blocks, spans.newStart, spans.newEnd, this._value.length);
+    if (!oldRange || !newRange) return false;
+    if ((oldRange.end - oldRange.start) > 250 || (newRange.end - newRange.start) > 250) return false;
+    const fragment = this._liveFragmentForBlocks(blocks.slice(newRange.start, newRange.end));
+    const reference = children[oldRange.end] || null;
+    for (const node of children.slice(oldRange.start, oldRange.end)) node.remove();
+    this._liveEditor.insertBefore(fragment, reference);
+    if (!this._syncLiveMetadata(blocks)) {
+      this._renderLiveFull(blocks);
+    }
+    return true;
+  }
+  _expandedBlockRange(blocks, start, end, valueLength = this._value.length) {
+    if (!blocks.length) return { start: 0, end: 0 };
+    const range = this._blockRangeForSourceRange(blocks, start, end, valueLength);
+    if (!range) return null;
+    return {
+      start: clamp(range.start - 1, 0, blocks.length),
+      end: clamp(range.end + 1, 0, blocks.length),
+    };
+  }
+  _blockRangeForSourceRange(blocks, start, end, valueLength = this._value.length) {
+    if (!blocks.length) return { start: 0, end: 0 };
+    const rangeStart = clamp(Number(start) || 0, 0, valueLength);
+    const rangeEnd = clamp(Number(end) || rangeStart, rangeStart, Math.max(rangeStart, valueLength));
+    let first = -1;
+    let last = -1;
+    const pointRange = rangeStart === rangeEnd;
+    for (let i = 0; i < blocks.length; i += 1) {
+      const block = blocks[i];
+      const blockEnd = Math.max(block.newlineEnd ?? block.to ?? block.from, block.to ?? block.from, block.from);
+      if (first === -1 && (pointRange ? blockEnd >= rangeStart : blockEnd > rangeStart)) first = i;
+      if (first !== -1 && block.from <= rangeEnd) last = i;
+      if (first !== -1 && block.from > rangeEnd) break;
+    }
+    if (first === -1) first = Math.max(0, blocks.length - 1);
+    if (last === -1 || last < first) last = first;
+    return { start: first, end: Math.min(blocks.length, last + 1) };
+  }
+  _liveFragmentForBlocks(blocks) {
+    const template = document.createElement("template");
+    template.innerHTML = blocks.map(block => this._renderLiveBlock(block)).join("");
+    return template.content;
+  }
+  _syncLiveMetadata(blocks) {
+    const children = Array.from(this._liveEditor.children).filter(node => !node.classList?.contains("md-virtual-spacer"));
+    if (children.length !== blocks.length) return false;
+    for (let i = 0; i < blocks.length; i += 1) {
+      if (!this._syncLiveBlockNodeMetadata(children[i], blocks[i])) return false;
+    }
+    return true;
+  }
+  _setEditableMetadata(el, from, to, editable = this._lineEditable(), spellcheck = this._sourceTextarea?.spellcheck ? "true" : "false") {
+    if (!el) return false;
+    el.dataset.from = String(from);
+    el.dataset.to = String(to);
+    if (el.hasAttribute("contenteditable")) el.contentEditable = editable;
+    if (el.hasAttribute("spellcheck")) el.setAttribute("spellcheck", spellcheck);
+    return true;
+  }
+  _syncLiveBlockNodeMetadata(node, block) {
+    if (!node || !block) return false;
+    const blockFrom = block.from ?? block.line?.start ?? 0;
+    const blockTo = block.to ?? block.line?.end ?? blockFrom;
+    if (node.dataset) {
+      node.dataset.kind = block.type;
+      node.dataset.from = String(blockFrom);
+      node.dataset.to = String(blockTo);
+    }
+    if (block.type === "table") {
+      const cells = Array.from(node.querySelectorAll('.md-cell[data-editable="cell"]'));
+      const cols = Math.max(block.header.cells.length, ...block.rows.map(row => row.cells.length), 1);
+      const bodyRows = block.rows.length ? block.rows : [{ cells: Array.from({ length: cols }, () => ({ text: "", from: block.delimiter.end, to: block.delimiter.end })) }];
+      const expected = [
+        ...Array.from({ length: cols }, (_, col) => ({ cell: block.header.cells[col] ?? { from: block.header.end, to: block.header.end }, row: -1, col })),
+        ...bodyRows.flatMap((row, rowIndex) => Array.from({ length: cols }, (_, col) => ({ cell: row.cells[col] ?? { from: row.end, to: row.end }, row: rowIndex, col }))),
+      ];
+      if (cells.length !== expected.length) return false;
+      cells.forEach((cell, index) => {
+        const meta = expected[index];
+        cell.dataset.row = String(meta.row);
+        cell.dataset.col = String(meta.col);
+        this._setEditableMetadata(cell, meta.cell.from, meta.cell.to);
+      });
+      return true;
+    }
+    if (block.type === "code-fence") {
+      node.dataset.language = String(block.language || "");
+      const editables = Array.from(node.querySelectorAll("[data-editable]"));
+      const virtualOffset = block.codeLines[0]?.start ?? (block.closing ? block.opening.newlineEnd : block.opening.end);
+      const lines = block.codeLines.length ? block.codeLines : [{ start: virtualOffset, end: virtualOffset }];
+      if (editables.length !== lines.length) return false;
+      editables.forEach((editable, index) => this._setEditableMetadata(editable, lines[index].start, lines[index].end, this._lineEditable(), "false"));
+      return true;
+    }
+    if (block.type === "task-list-item") {
+      const source = node.querySelector("[data-editable]");
+      const checkbox = node.querySelector("[data-task-checkbox]");
+      if (!source) return false;
+      if (checkbox) checkbox.dataset.checkOffset = String(block.line.start + block.list.indent.length + `${block.list.marker} [`.length);
+      return this._setEditableMetadata(source, block.line.start, block.line.end);
+    }
+    const editable = node.matches?.("[data-editable]") ? node : node.querySelector?.("[data-editable]");
+    if (editable && block.line) return this._setEditableMetadata(editable, block.line.start, block.line.end);
+    return block.type === "horizontal-rule";
+  }
+  _lineAt(value, offset) {
+    const line = getLineRange(value, offset);
+    return { ...line, newlineEnd: line.end < value.length && value[line.end] === "\n" ? line.end + 1 : line.end };
+  }
+  _previousLineText(value, lineStart) {
+    if (lineStart <= 0) return "";
+    return getLineRange(value, lineStart - 1).text;
+  }
+  _nextLineText(value, lineEnd) {
+    if (lineEnd >= value.length) return "";
+    return getLineRange(value, lineEnd + 1).text;
+  }
+  _lineHasStructuralNeighbors(value, line) {
+    const texts = [this._previousLineText(value, line.start), line.text, this._nextLineText(value, line.end)];
+    return texts.some(text => isFenceLine(text) || isLikelyTableRow(text) || isTableDelimiter(text));
+  }
+  _parseSingleLineBlock(line) {
+    const heading = parseHeading(line.text);
+    if (heading) return { type: "heading", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, heading };
+    const list = parseListItem(line.text);
+    if (list) return { type: list.kind, from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, list };
+    const quote = parseBlockquote(line.text);
+    if (quote) return { type: "blockquote", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, quote };
+    if (isHorizontalRule(line.text)) return { type: "horizontal-rule", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line };
+    return { type: line.text.trim() ? "paragraph" : "blank", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line };
+  }
+  _tryIncrementalBlocks(previousValue, changes) {
+    const sorted = normalizeChanges(changes || []);
+    if (!previousValue || sorted.length !== 1 || this._blockCacheValue !== previousValue || !this._blockCache) return null;
+    const change = sorted[0];
+    const removed = previousValue.slice(change.from, change.to);
+    if (removed.includes("\n") || change.insert.includes("\n")) return null;
+    const oldLine = this._lineAt(previousValue, change.from);
+    const newLine = this._lineAt(this._value, change.from + change.insert.length);
+    if (oldLine.start !== newLine.start || this._lineHasStructuralNeighbors(previousValue, oldLine) || this._lineHasStructuralNeighbors(this._value, newLine)) return null;
+    const oldBlocks = this._blockCache;
+    const index = oldBlocks.findIndex(block => block.from === oldLine.start && block.to === oldLine.end && block.line);
+    if (index === -1) return null;
+    const oldBlock = oldBlocks[index];
+    if (oldBlock.type === "table" || oldBlock.type === "code-fence") return null;
+    const newBlock = this._parseSingleLineBlock(newLine);
+    const delta = this._value.length - previousValue.length;
+    return oldBlocks.map((block, i) => {
+      if (i < index) return block;
+      if (i === index) return newBlock;
+      return this._shiftBlockOffsets(block, delta);
+    });
+  }
+  _shiftCell(cell, delta) {
+    return cell ? { ...cell, from: cell.from + delta, to: cell.to + delta } : cell;
+  }
+  _shiftLineOffsets(line, delta) {
+    if (!line) return line;
+    const shifted = { ...line, start: line.start + delta, end: line.end + delta, newlineEnd: line.newlineEnd + delta };
+    if (line.cells) shifted.cells = line.cells.map(cell => this._shiftCell(cell, delta));
+    return shifted;
+  }
+  _shiftBlockOffsets(block, delta) {
+    const shifted = { ...block, from: block.from + delta, to: block.to + delta, newlineEnd: block.newlineEnd + delta };
+    if (block.line) shifted.line = this._shiftLineOffsets(block.line, delta);
+    if (block.opening) shifted.opening = this._shiftLineOffsets(block.opening, delta);
+    if (block.closing) shifted.closing = this._shiftLineOffsets(block.closing, delta);
+    if (block.codeLines) shifted.codeLines = block.codeLines.map(line => this._shiftLineOffsets(line, delta));
+    if (block.header) shifted.header = this._shiftLineOffsets(block.header, delta);
+    if (block.delimiter) shifted.delimiter = this._shiftLineOffsets(block.delimiter, delta);
+    if (block.rows) shifted.rows = block.rows.map(row => this._shiftLineOffsets(row, delta));
+    return shifted;
+  }
+  _shouldVirtualize(blocks) {
+    return blocks.length > 2500 || this._value.length > DEFAULTS.largeDocChars * 2;
+  }
+  _virtualLineHeight() {
+    return Math.max(18, this._computedLineHeight(this._liveEditor || this));
+  }
+  _blockIndexForOffset(blocks, offset) {
+    const safe = clamp(offset, 0, this._value.length);
+    let low = 0;
+    let high = blocks.length - 1;
+    let best = 0;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const block = blocks[mid];
+      if (safe < block.from) high = mid - 1;
+      else {
+        best = mid;
+        if (safe <= Math.max(block.to, block.from)) return mid;
+        low = mid + 1;
+      }
+    }
+    return clamp(best, 0, Math.max(0, blocks.length - 1));
+  }
+  _renderLiveVirtual(blocks, { anchorOffset = this._selection.start, force = false, fromScroll = false } = {}) {
+    const total = blocks.length;
+    const lineHeight = this._virtualLineHeight();
+    const viewportRows = Math.ceil((this._liveEditor.clientHeight || 600) / lineHeight);
+    const windowSize = clamp(viewportRows + 180, 220, 520);
+    const scrollIndex = Math.floor((this._liveEditor.scrollTop || 0) / lineHeight);
+    const anchorIndex = fromScroll ? scrollIndex : this._blockIndexForOffset(blocks, anchorOffset);
+    let start = clamp(anchorIndex - Math.floor(windowSize / 2), 0, Math.max(0, total - windowSize));
+    let end = clamp(start + windowSize, start, total);
+    if (end - start < windowSize && start > 0) start = Math.max(0, end - windowSize);
+    if (!force && this._virtualState.active && start === this._virtualState.start && end === this._virtualState.end && total === this._virtualState.total) return;
+    const topHeight = Math.round(start * lineHeight);
+    const bottomHeight = Math.round((total - end) * lineHeight);
+    const top = `<div class="md-virtual-spacer" contenteditable="false" aria-hidden="true" style="block-size:${topHeight}px"></div>`;
+    const bottom = `<div class="md-virtual-spacer" contenteditable="false" aria-hidden="true" style="block-size:${bottomHeight}px"></div>`;
+    this._liveEditor.innerHTML = `${top}${blocks.slice(start, end).map(block => this._renderLiveBlock(block)).join("")}${bottom}`;
+    this._virtualState = { active: true, start, end, total, lineHeight };
+  }
+  _isSourceOffsetRendered(offset) {
+    if (!this._virtualState.active) return true;
+    const blocks = this._liveBlocks?.length ? this._liveBlocks : this._getBlocks();
+    const index = this._blockIndexForOffset(blocks, offset);
+    return index >= this._virtualState.start && index < this._virtualState.end;
+  }
+  _ensureVirtualSelectionVisible(selection) {
+    if (!this._virtualState.active) return true;
+    const blocks = this._liveBlocks?.length ? this._liveBlocks : this._getBlocks();
+    const startIndex = this._blockIndexForOffset(blocks, Math.min(selection.start, selection.end));
+    const endIndex = this._blockIndexForOffset(blocks, Math.max(selection.start, selection.end));
+    if (startIndex >= this._virtualState.start && endIndex < this._virtualState.end) return true;
+    if (endIndex - startIndex > 500) return false;
+    const focus = selection.direction === "backward" ? selection.start : selection.end;
+    this._renderLiveVirtual(blocks, { anchorOffset: focus, force: true });
+    this._rebuildLiveIndex();
+    return true;
+  }
+  _onLiveScroll() {
+    if (!this._virtualState.active || this._virtualScrollFrame) return;
+    this._virtualScrollFrame = requestAnimationFrame(() => {
+      this._virtualScrollFrame = 0;
+      if (!this._virtualState.active || !this._liveEditor) return;
+      const blocks = this._liveBlocks?.length ? this._liveBlocks : this._getBlocks();
+      const nextStart = Math.floor((this._liveEditor.scrollTop || 0) / Math.max(1, this._virtualState.lineHeight));
+      if (Math.abs(nextStart - this._virtualState.start) < 60) return;
+      this._renderLiveVirtual(blocks, { fromScroll: true, force: true });
+      this._rebuildLiveIndex();
+    });
   }
   _renderLiveBlock(block) {
     const lineAttrs = (line, kind, extra = "") => `class="md-line ${extra}" part="line" data-editable="line" data-kind="${kind}" data-from="${line.start}" data-to="${line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}"`;
@@ -1080,14 +1463,15 @@ class MdLiveEditorElement extends HTMLElement {
 
   _onSourceInput(event) {
     const before = this._beforeInputSnapshot;
+    const previousValue = this._value;
     this._value = normalizeLineEndings(this._sourceTextarea.value);
     if (this._sourceTextarea.value !== this._value) this._sourceTextarea.value = this._value;
     this._selection = { start: this._sourceTextarea.selectionStart, end: this._sourceTextarea.selectionEnd, direction: this._sourceTextarea.selectionDirection || "none" };
     const after = this._snapshot();
     if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
     this._beforeInputSnapshot = null;
-    this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: false });
-    if (!this._isComposing) this._maybeUpdateCompletions();
+    this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: false, previousValue, changes: diffTextChange(previousValue, this._value) });
+    if (!this._isComposing) this._scheduleCompletionUpdate();
   }
   _onLiveBeforeInput(event) {
     if (this._isComposing) return;
@@ -1119,13 +1503,14 @@ class MdLiveEditorElement extends HTMLElement {
     const liveSelection = this._getLiveSelection(editable);
     const tableEdit = editable.dataset.editable === "cell" ? this._tableCellInputEdit(editable, raw) : null;
     if (tableEdit) {
+      const previousValue = this._value;
       this._value = tableEdit.nextValue;
       this._selection = { start: tableEdit.cursor, end: tableEdit.cursor, direction: "none" };
       const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction);
       if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
       this._beforeInputSnapshot = null;
-      this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: true });
-      if (!this._isComposing) this._maybeUpdateCompletions();
+      this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: true, previousValue, changes: diffTextChange(previousValue, this._value) });
+      if (!this._isComposing) this._scheduleCompletionUpdate();
       return;
     }
     let insert = raw;
@@ -1133,15 +1518,16 @@ class MdLiveEditorElement extends HTMLElement {
       const beforeSource = this._value.slice(0, from);
       if (!beforeSource.endsWith("\n")) insert = `\n${raw}`;
     }
-    const nextValue = this._value.slice(0, from) + insert + this._value.slice(to);
+    const previousValue = this._value;
+    const nextValue = previousValue.slice(0, from) + insert + previousValue.slice(to);
     const cursor = clamp(liveSelection?.end ?? from + insert.length, from, from + insert.length);
     this._value = nextValue;
     this._selection = { start: cursor, end: cursor, direction: "none" };
     const after = this._snapshot();
     if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
     this._beforeInputSnapshot = null;
-    this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: true });
-    if (!this._isComposing) this._maybeUpdateCompletions();
+    this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: true, previousValue, changes: [{ from, to, insert }] });
+    if (!this._isComposing) this._scheduleCompletionUpdate();
   }
   _plainText(el) { return (el.innerText ?? el.textContent ?? "").replace(/\u00a0/g, " ").replace(/\n+$/g, ""); }
   _closestEditable(target) { return target?.closest?.("[data-editable]") ?? null; }
@@ -1284,10 +1670,21 @@ class MdLiveEditorElement extends HTMLElement {
     return box.height <= this._computedLineHeight(editable) * 1.65;
   }
 
-  _liveNavigationEditables() {
-    return [...this._liveEditor.querySelectorAll("[data-editable]")]
-      .filter(el => el.dataset.editable !== "cell" && el.dataset.kind !== "horizontal-rule" && Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to)))
+  _rebuildLiveIndex() {
+    const editables = [...this._liveEditor.querySelectorAll("[data-editable]")]
+      .filter(el => Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to)))
       .sort((a, b) => Number(a.dataset.from) - Number(b.dataset.from));
+    this._liveEditablesCache = editables;
+    this._liveNavigationCache = editables.filter(el => el.dataset.editable !== "cell" && el.dataset.kind !== "horizontal-rule");
+    this._liveIndexDirty = false;
+  }
+  _liveEditables() {
+    if (this._liveIndexDirty) this._rebuildLiveIndex();
+    return this._liveEditablesCache || [];
+  }
+  _liveNavigationEditables() {
+    if (this._liveIndexDirty) this._rebuildLiveIndex();
+    return this._liveNavigationCache || [];
   }
 
   _adjacentLiveEditable(editable, direction) {
@@ -1372,8 +1769,7 @@ class MdLiveEditorElement extends HTMLElement {
     const direct = this._shadow.elementFromPoint?.(clientX, clientY);
     const directEditable = this._closestEditable(direct);
     if (directEditable) return directEditable;
-    const editables = [...this._liveEditor.querySelectorAll("[data-editable]")]
-      .filter(el => Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to)));
+    const editables = this._liveEditables();
     let best = null;
     let bestScore = Infinity;
     for (const el of editables) {
@@ -1421,13 +1817,13 @@ class MdLiveEditorElement extends HTMLElement {
     if (this._ignoreSelectionChangeCount > 0) {
       this._ignoreSelectionChangeCount -= 1;
       this._emitSelectionChange();
-      if (!this._isComposing) this._maybeUpdateCompletions();
+      if (!this._isComposing) this._scheduleCompletionUpdate();
       return;
     }
     this._structuredSelection = null;
     this._selection = this._getCurrentSelection();
     this._emitSelectionChange();
-    if (!this._isComposing) this._maybeUpdateCompletions();
+    if (!this._isComposing) this._scheduleCompletionUpdate();
   }
 
   _isSourceActive() { return this._shadow.activeElement === this._sourceTextarea || this.mode === "source"; }
@@ -1461,6 +1857,7 @@ class MdLiveEditorElement extends HTMLElement {
   }
   _restoreLiveSelection(selection = this._selection) {
     if (!this._liveEditor || this.mode === "source") return;
+    if (this._virtualState.active && !this._ensureVirtualSelectionVisible(selection)) { this._liveEditor.focus(); return; }
     const startPos = this._domPositionFromSource(selection.start);
     const endPos = this._domPositionFromSource(selection.end);
     if (!startPos || !endPos) { this._liveEditor.focus(); return; }
@@ -1484,9 +1881,12 @@ class MdLiveEditorElement extends HTMLElement {
   }
   _domPositionFromSource(offset) {
     const safe = clamp(offset, 0, this._value.length);
-    const editables = [...this._liveEditor.querySelectorAll("[data-editable]")]
-      .filter(el => Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to)))
-      .sort((a, b) => Number(a.dataset.from) - Number(b.dataset.from));
+    if (this._virtualState.active && !this._isSourceOffsetRendered(safe)) {
+      const blocks = this._liveBlocks?.length ? this._liveBlocks : this._getBlocks();
+      this._renderLiveVirtual(blocks, { anchorOffset: safe, force: true });
+      this._rebuildLiveIndex();
+    }
+    const editables = this._liveEditables();
     if (!editables.length) return null;
     let previous = null;
     for (const el of editables) {
@@ -1527,7 +1927,13 @@ class MdLiveEditorElement extends HTMLElement {
   _undoGroupForInput(inputType) { if (inputType?.startsWith("insert")) return "typing"; if (inputType?.startsWith("delete")) return "delete"; return inputType || "input"; }
   _undo() { const entry = this._undoStack.pop(); if (!entry) return false; const current = this._snapshot(); this._redoStack.push({ before: entry.before, after: current, group: entry.group, timestamp: now() }); this._restoreSnapshot(entry.before, "undo"); this._dispatch("md-action", { actionId: "history.undo", source: "keyboard", before: current, after: this._snapshot() }); return true; }
   _redo() { const entry = this._redoStack.pop(); if (!entry) return false; const current = this._snapshot(); this._undoStack.push({ before: current, after: entry.after, group: entry.group, timestamp: now() }); this._restoreSnapshot(entry.after, "redo"); this._dispatch("md-action", { actionId: "history.redo", source: "keyboard", before: current, after: this._snapshot() }); return true; }
-  _restoreSnapshot(snapshot, source) { this._value = snapshot.value; this._selection = { ...snapshot.selection }; this._redoStack = this._redoStack; this._afterValueChanged({ source, restoreSelection: true }); }
+  _restoreSnapshot(snapshot, source) {
+    const previousValue = this._value;
+    this._value = snapshot.value;
+    this._selection = { ...snapshot.selection };
+    this._redoStack = this._redoStack;
+    this._afterValueChanged({ source, restoreSelection: true, previousValue, changes: diffTextChange(previousValue, this._value) });
+  }
 
   _onKeyDown(event) {
     const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "");
@@ -1659,7 +2065,7 @@ class MdLiveEditorElement extends HTMLElement {
 
   _findBlockAtOffset(offset, type = null) {
     const safe = clamp(Number(offset) || 0, 0, this._value.length);
-    return parseBlocks(this._value).find(block => (!type || block.type === type) && safe >= block.from && safe <= Math.max(block.to, block.from)) || null;
+    return this._getBlocks().find(block => (!type || block.type === type) && safe >= block.from && safe <= Math.max(block.to, block.from)) || null;
   }
 
   _findTableBlockForCell(cell) {
@@ -1667,7 +2073,7 @@ class MdLiveEditorElement extends HTMLElement {
     if (!tableEl) return null;
     const from = Number(tableEl.dataset.from);
     const to = Number(tableEl.dataset.to);
-    return parseBlocks(this._value).find(block => block.type === "table" && block.from === from && block.to === to) || null;
+    return this._getBlocks().find(block => block.type === "table" && block.from === from && block.to === to) || null;
   }
 
   _tableInfoForCell(cell) {
@@ -1875,7 +2281,7 @@ class MdLiveEditorElement extends HTMLElement {
       if (info?.line) push(info.line.start, info.line.end, "row");
       if (info?.block) push(info.block.from, info.block.to, "table");
     }
-    const block = this._findBlockAtOffset(point) || parseBlocks(this._value)[0];
+    const block = this._findBlockAtOffset(point) || this._getBlocks()[0];
     if (block) push(block.from, block.to, block.type === "table" ? "table" : "block");
     const section = this._sectionRangeForOffset(point);
     if (section) push(section.start, section.end, "section");
@@ -1884,7 +2290,7 @@ class MdLiveEditorElement extends HTMLElement {
   }
 
   _sectionRangeForOffset(offset) {
-    const blocks = parseBlocks(this._value);
+    const blocks = this._getBlocks();
     let headingIndex = -1;
     let headingLevel = Infinity;
     for (let i = 0; i < blocks.length; i += 1) {
@@ -2044,7 +2450,7 @@ class MdLiveEditorElement extends HTMLElement {
     this._value = nextValue;
     const sel = proposedSelection;
     this._selection = { start: clamp(sel.start, 0, nextValue.length), end: clamp(sel.end, 0, nextValue.length), direction: sel.direction || "none" }; this._structuredSelection = null;
-    const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction); this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false }); this._redoStack.length = 0; this._afterValueChanged({ source: options.source || transaction.source || "api", restoreSelection: true }); this._maybeUpdateCompletions();
+    const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction); this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false }); this._redoStack.length = 0; this._afterValueChanged({ source: options.source || transaction.source || "api", restoreSelection: true, previousValue: before.value, changes: transaction.changes }); this._scheduleCompletionUpdate();
     return true;
   }
 
@@ -2205,6 +2611,20 @@ class MdLiveEditorElement extends HTMLElement {
   _slashReplacementForAction(actionId) { return { "block.paragraph": { insert: "", selectionOffset: 0 }, "block.heading.1": { insert: "# ", selectionOffset: 2 }, "block.heading.2": { insert: "## ", selectionOffset: 3 }, "block.heading.3": { insert: "### ", selectionOffset: 4 }, "block.heading.4": { insert: "#### ", selectionOffset: 5 }, "block.heading.5": { insert: "##### ", selectionOffset: 6 }, "block.heading.6": { insert: "###### ", selectionOffset: 7 }, "block.bulletList": { insert: "- ", selectionOffset: 2 }, "block.orderedList": { insert: "1. ", selectionOffset: 3 }, "block.taskList": { insert: "- [ ] ", selectionOffset: 6 }, "block.blockquote": { insert: "> ", selectionOffset: 2 }, "block.codeFence": { insert: "```\n\n```", selectionOffset: 4 }, "block.horizontalRule": { insert: "---\n", selectionOffset: 4 }, "block.table": { insert: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| Cell 1 | Cell 2 | Cell 3 |", selectionOffset: 2, selectionLength: "Column 1".length }, "inline.link": { insert: "[]()", selectionOffset: 1 }, "inline.image": { insert: "![]()", selectionOffset: 2 }, "inline.bold": { insert: "****", selectionOffset: 2 }, "inline.italic": { insert: "**", selectionOffset: 1 }, "inline.code": { insert: "``", selectionOffset: 1 }, "inline.strikethrough": { insert: "~~~~", selectionOffset: 2 } }[actionId] || null; }
   _matchCodeLanguage(ctx) { if (ctx.inline.insideInlineCode) return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)```([\w+-]*)$/.exec(before); if (!m) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: "```", query: m[2], providerId: "code-language" }; }
 
+  _scheduleCompletionUpdate({ immediate = false } = {}) {
+    if (this.disabled || this.readonly || this._isComposing) return;
+    if (immediate) {
+      if (this._completionUpdateFrame) cancelAnimationFrame(this._completionUpdateFrame);
+      this._completionUpdateFrame = 0;
+      this._maybeUpdateCompletions();
+      return;
+    }
+    if (this._completionUpdateFrame) return;
+    this._completionUpdateFrame = requestAnimationFrame(() => {
+      this._completionUpdateFrame = 0;
+      this._maybeUpdateCompletions();
+    });
+  }
   _maybeUpdateCompletions() {
     if (this.disabled || this.readonly || this._isComposing) return; const ctx = this._getContext(); if (ctx.selectionStart !== ctx.selectionEnd) { this._closeCompletion(); return; } const providers = [...this._providers.values()].sort((a, b) => b.priority - a.priority); let selectedProvider = null; let selectedMatch = null;
     for (const provider of providers) { try { const match = provider.match(ctx); if (match) { selectedProvider = provider; selectedMatch = match; break; } } catch (error) { this._emitError("completion", error, true, { providerId: provider.id }); } }

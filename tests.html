@@ -413,6 +413,67 @@ beta`;
     const shiftDownWideToNarrow = pressLiveKey('ArrowDown', { shiftKey: true });
     visualChecks.push({ name: 'Shift+ArrowDown preserves source column across proportional text', passed: shiftDownWideToNarrow && editor.selectionStart === 2 && editor.selectionEnd === 6 });
 
+    editor.mode = 'live';
+    editor.preview = 'none';
+    await new Promise(requestAnimationFrame);
+    let renderEvents = 0;
+    const countRender = () => { renderEvents += 1; };
+    editor.addEventListener('md-render', countRender);
+    editor.value = '**hidden preview**';
+    await new Promise(resolve => setTimeout(resolve, 140));
+    visualChecks.push({
+      name: 'Hidden preview is marked dirty without rendering HTML',
+      passed: renderEvents === 0 && editor._previewDirty === true && editor.shadowRoot.querySelector('.preview').innerHTML === ''
+    });
+    editor.preview = 'below';
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({
+      name: 'Dirty preview renders when preview becomes visible',
+      passed: renderEvents === 1 && editor._previewDirty === false && editor.shadowRoot.querySelector('.preview strong')?.textContent === 'hidden preview'
+    });
+    editor.removeEventListener('md-render', countRender);
+    editor.preview = 'none';
+
+    editor.value = 'zero\none\ntwo\nthree\nfour';
+    await new Promise(requestAnimationFrame);
+    const firstNodeBeforePatch = editor.shadowRoot.querySelector('[data-from="0"]');
+    const twoOffset = editor.value.indexOf('two');
+    editor.setSelectionRange(twoOffset + 3, twoOffset + 3);
+    const twoLine = editor.shadowRoot.querySelector(`[data-from="${twoOffset}"]`);
+    twoLine.textContent = 'twos';
+    twoLine.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 's', bubbles: true }));
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({
+      name: 'Simple live text edit uses incremental block parse',
+      passed: editor.value === 'zero\none\ntwos\nthree\nfour' && editor._lastParseMode === 'incremental'
+    });
+    visualChecks.push({
+      name: 'Dirty live render preserves unaffected DOM nodes',
+      passed: editor.shadowRoot.querySelector('[data-from="0"]') === firstNodeBeforePatch
+    });
+    visualChecks.push({
+      name: 'Live editable index is rebuilt after dirty patch',
+      passed: editor._liveEditables().length === 5 && editor._liveNavigationEditables().length === 5
+    });
+
+    const largeLines = Array.from({ length: 3000 }, (_, i) => `line ${String(i).padStart(4, '0')}`);
+    editor.style.setProperty('--md-editor-max-height', '300px');
+    editor.value = largeLines.join('\n');
+    await new Promise(requestAnimationFrame);
+    const renderedLargeEditables = editor.shadowRoot.querySelectorAll('[data-editable]').length;
+    visualChecks.push({
+      name: 'Large live document uses virtualized block window',
+      passed: editor._virtualState.active && editor._liveBlocks.length === 3000 && renderedLargeEditables < 800
+    });
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    visualChecks.push({
+      name: 'Virtualized live document can render selection near document end',
+      passed: editor._isSourceOffsetRendered(editor.value.length) && editor.shadowRoot.querySelectorAll('[data-editable]').length < 800
+    });
+    editor.style.removeProperty('--md-editor-max-height');
+    editor.value = '';
+    await new Promise(requestAnimationFrame);
+
     for (const check of visualChecks) {
       results.push({ name: check.name, expected: 'true', actual: String(check.passed), passed: check.passed });
     }
