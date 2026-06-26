@@ -373,10 +373,16 @@ function parseTableLineRanges(line, absoluteStart) {
     if (!atEnd && escaped) { escaped = false; continue; }
     if (!atEnd && ch === "\\") { escaped = true; continue; }
     if (atEnd || ch === "|") {
+      const rawCellStart = cellStart;
+      const rawCellEnd = i;
       let from = cellStart;
       let to = i;
       while (from < to && raw[from] === " ") from += 1;
       while (to > from && raw[to - 1] === " ") to -= 1;
+      if (from === to && rawCellEnd > rawCellStart && raw[rawCellStart] === " ") {
+        from = Math.min(rawCellStart + 1, rawCellEnd);
+        to = from;
+      }
       cells.push({ text: raw.slice(from, to), from: absoluteStart + from, to: absoluteStart + to });
       cellStart = i + 1;
     }
@@ -443,6 +449,7 @@ function parseFixtureMarkedValue(marked) {
   for (let i = 0; i < marked.length; i += 1) {
     const char = marked[i];
     if (char === "|") { selectionStart = value.length; selectionEnd = value.length; continue; }
+    if (char === "[" && marked[i + 1] === "]") { value += char; continue; }
     if (char === "[" && /^(?: |x|X)\]/.test(marked.slice(i + 1, i + 3))) { value += char; continue; }
     if (char === "]" && /\[(?: |x|X)$/.test(value.slice(-2))) { value += char; continue; }
     if (char === "[" && selectionStart === -1) { selectionStart = value.length; continue; }
@@ -613,6 +620,8 @@ class MdLiveEditorElement extends HTMLElement {
     this._selectAllLevel = 0;
     this._structuredSelection = null;
     this._ignoreSelectionChangeCount = 0;
+    this._pointerSelection = null;
+    this._suppressLiveClick = false;
     this._actions = new Map();
     this._providers = new Map();
     this._completion = { open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: 0, abort: null };
@@ -898,6 +907,7 @@ class MdLiveEditorElement extends HTMLElement {
     this._liveEditor.addEventListener("beforeinput", event => this._onLiveBeforeInput(event));
     this._liveEditor.addEventListener("input", event => this._onLiveInput(event));
     this._liveEditor.addEventListener("click", event => this._onLiveClick(event));
+    this._liveEditor.addEventListener("mousedown", event => this._onLiveMouseDown(event));
     this._liveEditor.addEventListener("mouseup", () => this._onSelectionChanged());
     this._liveEditor.addEventListener("copy", event => this._onLiveCopy(event));
     this._liveEditor.addEventListener("cut", event => this._onLiveCut(event));
@@ -921,6 +931,7 @@ class MdLiveEditorElement extends HTMLElement {
     this._sourceTextarea.name = this.name;
     this._liveEditor.setAttribute("aria-readonly", this.readonly ? "true" : "false");
     this._liveEditor.setAttribute("aria-disabled", this.disabled ? "true" : "false");
+    this._liveEditor.contentEditable = this._lineEditable();
     this._liveEditor.tabIndex = this.disabled ? -1 : 0;
     const maxLength = this.getAttribute("maxlength"); const minLength = this.getAttribute("minlength");
     maxLength != null ? this._sourceTextarea.maxLength = Number(maxLength) : this._sourceTextarea.removeAttribute("maxlength");
@@ -1026,7 +1037,7 @@ class MdLiveEditorElement extends HTMLElement {
     if (block.type === "blank") return `<div ${lineAttrs(block.line, "blank")}>${block.line.text ? decorateInline(block.line.text) : "<br>"}</div>`;
     if (block.type === "heading") return `<div ${lineAttrs(block.line, "heading", `md-heading md-h${block.heading.level}`)}>${this._renderHeadingLine(block.line.text, block.heading)}</div>`;
     if (block.type === "blockquote") return `<div ${lineAttrs(block.line, "blockquote", "md-quote")}>${decorateInline(block.line.text)}</div>`;
-    if (block.type === "horizontal-rule") return `<div ${lineAttrs(block.line, "horizontal-rule", "md-hr-line")} aria-label="Horizontal rule"></div>`;
+    if (block.type === "horizontal-rule") return `<div class="md-line md-hr-line" part="line" data-kind="horizontal-rule" data-from="${block.line.start}" data-to="${block.line.end}" contenteditable="false" aria-label="Horizontal rule"></div>`;
     if (block.type === "task-list-item") {
       const list = block.list; const checkOffset = block.line.start + list.indent.length + `${list.marker} [`.length;
       return `<div class="md-line md-task-line md-list" part="line" data-kind="task-list-item" data-from="${block.line.start}" data-to="${block.line.end}" style="--md-list-depth:${Math.floor(list.indent.length / Math.max(1, this.indentString.length))}"><input type="checkbox" part="checkbox" data-task-checkbox="true" data-check-offset="${checkOffset}" ${list.checked ? "checked" : ""} ${this.disabled || this.readonly ? "disabled" : ""}><span class="md-task-source" data-editable="line" data-from="${block.line.start}" data-to="${block.line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${this._renderTaskLine(block.line.text, list)}</span></div>`;
@@ -1100,19 +1111,30 @@ class MdLiveEditorElement extends HTMLElement {
   }
   _onLiveInput(event) {
     if (this.disabled || this.readonly) return;
-    const editable = this._closestEditable(event.target);
+    const editable = this._closestEditable(event.target) || this._activeEditableFromSelection();
     if (!editable) return;
     const before = this._beforeInputSnapshot;
-    const selection = this._getLiveSelection(editable);
     const from = Number(editable.dataset.from); const to = Number(editable.dataset.to);
     const raw = this._plainText(editable).replace(/\n/g, "");
+    const liveSelection = this._getLiveSelection(editable);
+    const tableEdit = editable.dataset.editable === "cell" ? this._tableCellInputEdit(editable, raw) : null;
+    if (tableEdit) {
+      this._value = tableEdit.nextValue;
+      this._selection = { start: tableEdit.cursor, end: tableEdit.cursor, direction: "none" };
+      const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction);
+      if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+      this._beforeInputSnapshot = null;
+      this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: true });
+      if (!this._isComposing) this._maybeUpdateCompletions();
+      return;
+    }
     let insert = raw;
     if (editable.dataset.editable === "virtual-code") {
       const beforeSource = this._value.slice(0, from);
       if (!beforeSource.endsWith("\n")) insert = `\n${raw}`;
     }
     const nextValue = this._value.slice(0, from) + insert + this._value.slice(to);
-    const cursor = from + insert.length;
+    const cursor = clamp(liveSelection?.end ?? from + insert.length, from, from + insert.length);
     this._value = nextValue;
     this._selection = { start: cursor, end: cursor, direction: "none" };
     const after = this._snapshot();
@@ -1124,16 +1146,72 @@ class MdLiveEditorElement extends HTMLElement {
   _plainText(el) { return (el.innerText ?? el.textContent ?? "").replace(/\u00a0/g, " ").replace(/\n+$/g, ""); }
   _closestEditable(target) { return target?.closest?.("[data-editable]") ?? null; }
   _onLiveClick(event) {
+    if (this._suppressLiveClick) {
+      this._suppressLiveClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     this._structuredSelection = null;
     const checkbox = event.target.closest?.("[data-task-checkbox]");
     if (checkbox) { event.preventDefault(); const offset = Number(checkbox.dataset.checkOffset); const current = this._value[offset] || " "; const next = current.toLowerCase() === "x" ? " " : "x"; this._applyTransaction({ changes: [{ from: offset, to: offset + 1, insert: next }], selectionAfter: this._selection, actionId: "block.taskDone", undoGroup: "block", source: "pointer" }, { source: "pointer" }); return; }
     this._onSelectionChanged();
   }
+
+  _onLiveMouseDown(event) {
+    if (this.disabled || this.readonly || this.mode === "source" || event.button !== 0 || event.detail > 1) return;
+    if (event.target.closest?.("[data-task-checkbox]")) return;
+    const anchor = this._sourceOffsetForClientPoint(event.clientX, event.clientY);
+    if (anchor == null) return;
+    event.preventDefault();
+    this._closeCompletion();
+    this._pointerSelection = { anchor, focus: anchor, startX: event.clientX, startY: event.clientY, moved: false };
+    this.setSelectionRange(anchor, anchor, "none");
+    this._boundLiveMouseMove ??= mouseEvent => this._onLiveMouseMove(mouseEvent);
+    this._boundLiveMouseEnd ??= mouseEvent => this._onLiveMouseEnd(mouseEvent);
+    const doc = this.ownerDocument || document;
+    doc.addEventListener("mousemove", this._boundLiveMouseMove, true);
+    doc.addEventListener("mouseup", this._boundLiveMouseEnd, true);
+  }
+
+  _onLiveMouseMove(event) {
+    const state = this._pointerSelection;
+    if (!state) return;
+    const focus = this._sourceOffsetForClientPoint(event.clientX, event.clientY);
+    if (focus == null) return;
+    event.preventDefault();
+    state.focus = focus;
+    state.moved = state.moved || Math.hypot(event.clientX - state.startX, event.clientY - state.startY) > 2;
+    this._setLivePointerSelection(state.anchor, focus);
+  }
+
+  _onLiveMouseEnd(event) {
+    const state = this._pointerSelection;
+    if (!state) return;
+    const focus = this._sourceOffsetForClientPoint(event.clientX, event.clientY);
+    if (focus != null) this._setLivePointerSelection(state.anchor, focus);
+    this._suppressLiveClick = state.moved;
+    if (this._suppressLiveClick) globalThis.setTimeout?.(() => { this._suppressLiveClick = false; }, 0);
+    this._pointerSelection = null;
+    const doc = this.ownerDocument || document;
+    doc.removeEventListener("mousemove", this._boundLiveMouseMove, true);
+    doc.removeEventListener("mouseup", this._boundLiveMouseEnd, true);
+    event.preventDefault();
+  }
+
+  _setLivePointerSelection(anchor, focus) {
+    const start = Math.min(anchor, focus);
+    const end = Math.max(anchor, focus);
+    const direction = anchor <= focus ? "forward" : "backward";
+    this.setSelectionRange(start, end, direction);
+  }
+
   _onNavigationKey(event) { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) this._onSelectionChanged(); }
 
   _maybeHandleLiveArrowKey(event, activeEditable = null) {
-    if (this._isSourceActive() || event.defaultPrevented || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return false;
+    if (this._isSourceActive() || event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey) return false;
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return false;
+    if (event.shiftKey) return this._maybeExtendLiveVerticalSelection(event);
     const editable = activeEditable || this._activeEditableFromEvent(event);
     if (!editable || editable.dataset.editable === "cell") return false;
     const selection = this._getLiveSelection(editable);
@@ -1146,6 +1224,29 @@ class MdLiveEditorElement extends HTMLElement {
     event.preventDefault();
     this.setSelectionRange(target, target, "none");
     return true;
+  }
+
+  _maybeExtendLiveVerticalSelection(event) {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return false;
+    const selection = this._getCurrentSelection();
+    const focus = selection.direction === "backward" ? selection.start : selection.end;
+    const anchor = selection.direction === "backward" ? selection.end : selection.start;
+    const pos = this._domPositionFromSource(focus);
+    const editable = pos?.editable;
+    if (!editable || editable.dataset.editable === "cell") return false;
+    const direction = event.key === "ArrowUp" ? -1 : 1;
+    const target = this._verticalArrowTarget(editable, focus, direction);
+    if (target == null || target === focus) return false;
+    event.preventDefault();
+    this._setSourceBackedSelection(anchor, target);
+    return true;
+  }
+
+  _setSourceBackedSelection(anchor, focus) {
+    const start = Math.min(anchor, focus);
+    const end = Math.max(anchor, focus);
+    const direction = anchor <= focus ? "forward" : "backward";
+    this.setSelectionRange(start, end, direction);
   }
 
   _horizontalArrowTarget(editable, offset, direction) {
@@ -1167,15 +1268,25 @@ class MdLiveEditorElement extends HTMLElement {
     if (!this._isCaretOnVisualBoundary(editable, offset, direction)) return null;
     const targetEditable = this._adjacentLiveEditable(editable, direction);
     if (!targetEditable) return null;
+    if (this._isSingleVisualRow(editable) && this._isSingleVisualRow(targetEditable)) {
+      const sourceColumn = clamp(offset - Number(editable.dataset.from), 0, this._plainText(editable).length);
+      return Number(targetEditable.dataset.from) + Math.min(sourceColumn, this._plainText(targetEditable).length);
+    }
     const caretRect = this._caretRectForSourceOffset(offset, editable);
     const fallbackRect = editable.getBoundingClientRect();
     const clientX = caretRect?.left ?? fallbackRect.left;
     return this._sourceOffsetInEditableAtX(targetEditable, clientX, direction);
   }
 
+  _isSingleVisualRow(editable) {
+    const box = editable.getBoundingClientRect();
+    if (!box || box.height === 0) return true;
+    return box.height <= this._computedLineHeight(editable) * 1.65;
+  }
+
   _liveNavigationEditables() {
     return [...this._liveEditor.querySelectorAll("[data-editable]")]
-      .filter(el => el.dataset.editable !== "cell" && Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to)))
+      .filter(el => el.dataset.editable !== "cell" && el.dataset.kind !== "horizontal-rule" && Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to)))
       .sort((a, b) => Number(a.dataset.from) - Number(b.dataset.from));
   }
 
@@ -1257,6 +1368,37 @@ class MdLiveEditorElement extends HTMLElement {
     return this._sourceOffsetFromDom(editable, node, offset);
   }
 
+  _liveEditableFromPoint(clientX, clientY) {
+    const direct = this._shadow.elementFromPoint?.(clientX, clientY);
+    const directEditable = this._closestEditable(direct);
+    if (directEditable) return directEditable;
+    const editables = [...this._liveEditor.querySelectorAll("[data-editable]")]
+      .filter(el => Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to)));
+    let best = null;
+    let bestScore = Infinity;
+    for (const el of editables) {
+      const rect = el.getBoundingClientRect();
+      if (!rect || rect.width === 0 || rect.height === 0) continue;
+      const dx = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
+      const dy = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+      const score = dy * 10000 + dx;
+      if (score < bestScore) { bestScore = score; best = el; }
+    }
+    return best;
+  }
+
+  _sourceOffsetForClientPoint(clientX, clientY) {
+    const editable = this._liveEditableFromPoint(clientX, clientY);
+    if (!editable) return null;
+    const rect = editable.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return Number(editable.dataset.from);
+    const x = clamp(clientX, rect.left + 1, rect.right - 1);
+    const y = clamp(clientY, rect.top + 1, rect.bottom - 1);
+    const fromPoint = this._sourceOffsetFromPoint(editable, x, y);
+    if (fromPoint != null) return clamp(fromPoint, Number(editable.dataset.from), Number(editable.dataset.to));
+    return this._nearestSourceOffsetInEditable(editable, x, y);
+  }
+
   _nearestSourceOffsetInEditable(editable, clientX, clientY) {
     const from = Number(editable.dataset.from);
     const length = this._plainText(editable).length;
@@ -1326,8 +1468,19 @@ class MdLiveEditorElement extends HTMLElement {
     range.setStart(startPos.node, startPos.offset); range.setEnd(endPos.node, endPos.offset);
     const sel = this._shadow.getSelection?.() || globalThis.getSelection?.();
     if (!sel) return;
-    sel.removeAllRanges(); sel.addRange(range);
-    startPos.editable?.focus?.();
+    sel.removeAllRanges();
+    try {
+      if (selection.start !== selection.end && typeof sel.setBaseAndExtent === "function") {
+        if (selection.direction === "backward") sel.setBaseAndExtent(endPos.node, endPos.offset, startPos.node, startPos.offset);
+        else sel.setBaseAndExtent(startPos.node, startPos.offset, endPos.node, endPos.offset);
+      } else {
+        sel.addRange(range);
+      }
+    } catch {
+      sel.removeAllRanges(); sel.addRange(range);
+    }
+    const focusEditable = selection.direction === "backward" ? startPos.editable : endPos.editable;
+    (focusEditable || startPos.editable)?.focus?.();
   }
   _domPositionFromSource(offset) {
     const safe = clamp(offset, 0, this._value.length);
@@ -1413,6 +1566,16 @@ class MdLiveEditorElement extends HTMLElement {
         event.preventDefault();
         const result = this._deleteSelectionResult(this._getContext(), event.key === "Delete" ? "editor.smartDelete" : "editor.smartBackspace");
         this._applyActionResult(event.key === "Delete" ? "editor.smartDelete" : "editor.smartBackspace", result, { source: "keyboard" });
+        return;
+      }
+    }
+
+    if (activeCell && (event.key === "Backspace" || event.key === "Delete")) {
+      if (this.readonly || this.disabled) return;
+      const result = this._deleteEmptyTableRowFromCellResult(activeCell);
+      if (result?.ok && result.transaction) {
+        event.preventDefault();
+        this._applyActionResult("table.deleteRow", result, { source: "keyboard" });
         return;
       }
     }
@@ -1566,6 +1729,73 @@ class MdLiveEditorElement extends HTMLElement {
     return splitTableRow(line.text).every(cell => cell.trim() === "");
   }
 
+  _escapeTableCellText(cell) {
+    return String(cell ?? "").replace(/\|/g, "\\|");
+  }
+
+  _tableRowSourceParts(cells) {
+    const escaped = cells.map(cell => this._escapeTableCellText(cell));
+    const offsets = [];
+    let text = "| ";
+    escaped.forEach((cell, index) => {
+      offsets[index] = { from: text.length, to: text.length + cell.length };
+      text += cell;
+      text += index === escaped.length - 1 ? " |" : " | ";
+    });
+    return { text, offsets };
+  }
+
+  _tableBlockSourceWithOffsets(headerCells, delimiterCells, rows) {
+    const parts = [
+      this._tableRowSourceParts(headerCells),
+      this._tableRowSourceParts(delimiterCells),
+      ...rows.map(row => this._tableRowSourceParts(row)),
+    ];
+    const lines = [];
+    const lineStarts = [];
+    let cursor = 0;
+    for (const part of parts) {
+      lineStarts.push(cursor);
+      lines.push(part.text);
+      cursor += part.text.length + 1;
+    }
+    return { source: lines.join("\n"), parts, lineStarts };
+  }
+
+  _tableCellInputEdit(cell, raw) {
+    const info = this._tableInfoForCell(cell);
+    if (!info) return null;
+    const existingCell = info.line?.cells?.[info.col];
+    if (existingCell && Number.isFinite(existingCell.from) && Number.isFinite(existingCell.to)) return null;
+    const cols = info.cols;
+    const header = this._tableCellTexts(info.block.header, cols);
+    const delimiter = this._tableCellTexts(info.block.delimiter, cols);
+    const rows = info.block.rows.map(row => this._tableCellTexts(row, cols));
+    if (info.row < 0) {
+      header[info.col] = raw;
+    } else {
+      while (rows.length <= info.row) rows.push(Array.from({ length: cols }, () => ""));
+      rows[info.row][info.col] = raw;
+    }
+    const serialized = this._tableBlockSourceWithOffsets(header, delimiter, rows);
+    const lineIndex = info.row < 0 ? 0 : info.row + 2;
+    const cellOffsets = serialized.parts[lineIndex]?.offsets?.[info.col];
+    const cursor = info.block.from + (serialized.lineStarts[lineIndex] ?? 0) + (cellOffsets?.to ?? 0);
+    return {
+      nextValue: this._value.slice(0, info.block.from) + serialized.source + this._value.slice(info.block.to),
+      cursor,
+    };
+  }
+
+  _deleteEmptyTableRowFromCellResult(cell) {
+    const info = this._tableInfoForCell(cell);
+    if (!info || info.row < 0 || !info.line) return fail("not-applicable");
+    const selection = this._getLiveSelection(cell);
+    if (!selection || selection.start !== selection.end) return fail("not-applicable");
+    if (this._plainText(cell).trim() || !this._isTableRowEmpty(info.line)) return fail("not-applicable");
+    return this._tableDeleteRowResult(this._getContext(), info.block, info.row);
+  }
+
   _insertTableRowAfterCell(cell) {
     const info = this._tableInfoForCell(cell);
     if (!info) return;
@@ -1713,7 +1943,7 @@ class MdLiveEditorElement extends HTMLElement {
   }
 
   _serializeTableBlock(headerCells, delimiterCells, rows) {
-    const serialize = cells => `| ${cells.map(cell => String(cell ?? "").replace(/\|/g, "\\|")).join(" | ")} |`;
+    const serialize = cells => this._tableRowSourceParts(cells).text;
     return [serialize(headerCells), serialize(delimiterCells), ...rows.map(serialize)].join("\n");
   }
   _tableCellTexts(line, cols) {
@@ -1744,7 +1974,12 @@ class MdLiveEditorElement extends HTMLElement {
     const index = clamp(Number(row) || 0, 0, block.rows.length - 1);
     const line = block.rows[index];
     let from = line.start; let to = line.newlineEnd;
-    if (to <= from) to = line.end;
+    if (to <= line.end && line.start > block.delimiter.end && ctx.value[line.start - 1] === "\n") {
+      from = line.start - 1;
+      to = line.end;
+    } else if (to <= from) {
+      to = line.end;
+    }
     const cursor = from;
     return ok(tx(ctx, "table.deleteRow", [{ from, to, insert: "" }], { start: cursor, end: cursor, direction: "none" }, "table"), "Row deleted.");
   }
@@ -1957,7 +2192,7 @@ class MdLiveEditorElement extends HTMLElement {
   _toggleList(ctx, type) { const markerFor = i => type === "ordered" ? `${i + 1}. ` : type === "task" ? "- [ ] " : "- "; const lines = ctx.selectedLines; const allList = lines.every(line => parseListItem(line.text)); const changes = []; lines.forEach((line, i) => { const list = parseListItem(line.text); const h = parseHeading(line.text); const quote = parseBlockquote(line.text); let c; if (allList && list) c = { from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: "" }; else if (list) c = { from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: markerFor(i) }; else if (h) c = { from: line.start, to: line.start + h.contentStart, insert: h.indent + markerFor(i) }; else if (quote) c = { from: line.start, to: line.start + quote.contentStart, insert: markerFor(i) }; else { const indent = (line.text.match(/^\s*/) || [""])[0]; c = { from: line.start + indent.length, to: line.start + indent.length, insert: markerFor(i) }; } changes.push(c); }); let ds = 0; let de = 0; for (const c of changes) { const diff = c.insert.length - (c.to - c.from); if (c.from < ctx.selectionStart) ds += diff; if (c.from < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += diff; } const id = `block.${type === "bullet" ? "bulletList" : type === "ordered" ? "orderedList" : "taskList"}`; return ok(tx(ctx, id, changes, { start: Math.max(0, ctx.selectionStart + ds), end: Math.max(0, ctx.selectionEnd + de), direction: ctx.selectionDirection || "none" }, "block"), allList ? "Removed list." : type === "ordered" ? "Numbered list." : type === "task" ? "Task list." : "Bullet list."); }
   _toggleTaskDone(ctx) { const list = ctx.block.list; if (!list || list.kind !== "task-list-item") return fail("not-applicable"); const checkboxStart = ctx.currentLine.start + list.indent.length + `${list.marker} [`.length; const next = list.checked ? " " : "x"; return ok(tx(ctx, "block.taskDone", [{ from: checkboxStart, to: checkboxStart + 1, insert: next }], { start: ctx.selectionStart, end: ctx.selectionEnd, direction: ctx.selectionDirection || "none" }, "block"), next === "x" ? "Task checked." : "Task unchecked."); }
   _toggleBlockquote(ctx) { const lines = ctx.selectedLines; const allQuote = lines.every(line => parseBlockquote(line.text)); const changes = lines.map(line => { const quote = parseBlockquote(line.text); return allQuote && quote ? { from: line.start, to: line.start + quote.contentStart, insert: "" } : { from: line.start, to: line.start, insert: "> " }; }); let ds = 0; let de = 0; for (const c of changes) { const diff = c.insert.length - (c.to - c.from); if (c.from < ctx.selectionStart) ds += diff; if (c.from < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += diff; } return ok(tx(ctx, "block.blockquote", changes, { start: Math.max(0, ctx.selectionStart + ds), end: Math.max(0, ctx.selectionEnd + de), direction: ctx.selectionDirection || "none" }, "block"), allQuote ? "Removed blockquote." : "Blockquote."); }
-  _toggleCodeFence(ctx, args = {}) { const language = String(args.language ?? "").trim(); const langPart = language ? language : ""; if (ctx.selectionStart !== ctx.selectionEnd) { const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd); const insert = `\`\`\`${langPart}\n${selected}\n\`\`\``; const cursor = ctx.selectionStart + insert.length; return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block."); } const insert = `\`\`\`${langPart}\n\n\`\`\``; const cursor = ctx.selectionStart + 4 + langPart.length; return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block."); }
+  _toggleCodeFence(ctx, args = {}) { const language = String(args.language ?? "").trim(); const langPart = language ? language : ""; if (ctx.selectionStart !== ctx.selectionEnd) { const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd); const insert = `\`\`\`${langPart}\n${selected}\n\`\`\``; const cursor = ctx.selectionStart + 4 + langPart.length + selected.length; return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block."); } const insert = `\`\`\`${langPart}\n\n\`\`\``; const cursor = ctx.selectionStart + 4 + langPart.length; return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block."); }
   _insertHorizontalRule(ctx) { const lead = ctx.selectionStart > 0 && ctx.value[ctx.selectionStart - 1] !== "\n" ? "\n" : ""; const trail = ctx.selectionStart < ctx.value.length && ctx.value[ctx.selectionStart] !== "\n" ? "\n" : "\n"; const insert = `${lead}---${trail}`; return insertionTransaction(ctx, "block.horizontalRule", insert, insert.length, "block"); }
   _insertTable(ctx, args = {}) { const rows = clamp(Number(args.rows) || 2, 1, 20); const cols = clamp(Number(args.cols) || 3, 2, 12); const header = `| ${Array.from({ length: cols }, (_, i) => `Column ${i + 1}`).join(" | ")} |`; const delimiter = `| ${Array.from({ length: cols }, () => "---").join(" | ")} |`; const body = Array.from({ length: rows }, (_, r) => `| ${Array.from({ length: cols }, (_, c) => `Cell ${r * cols + c + 1}`).join(" | ")} |`); const insert = [header, delimiter, ...body].join("\n"); const cursor = ctx.selectionStart + header.indexOf("Column 1"); return ok(tx(ctx, "block.table", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor + "Column 1".length, direction: "none" }, "block"), "Table inserted."); }
   _wrapInline(ctx, prefix, suffix, label) { const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd); if (selected) { const insert = `${prefix}${selected}${suffix}`; const cursor = ctx.selectionStart + insert.length; return ok(tx(ctx, `inline.${label.toLowerCase().replace(/\s+/g, "")}`, [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), `${label}.`); } const insert = `${prefix}${suffix}`; const cursor = ctx.selectionStart + prefix.length; return ok(tx(ctx, `inline.${label.toLowerCase().replace(/\s+/g, "")}`, [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), `${label}.`); }

@@ -10,6 +10,7 @@
   },
   "files": [
     "md-live-editor.js",
+    "demo-controls.js",
     "index.html",
     "standalone.html",
     "tests.html",
@@ -35,6 +36,6 @@
     "start": "node dev-server.mjs --open=index.html",
     "serve": "node dev-server.mjs",
     "test:browser": "node dev-server.mjs --open=tests.html",
-    "check": "node --check md-live-editor.js && node --check dev-server.mjs"
+    "check": "node --check md-live-editor.js && node --check demo-controls.js && node --check dev-server.mjs"
   }
 }

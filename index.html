@@ -10,7 +10,8 @@
     main { max-width: 1200px; margin: 0 auto; display: grid; gap: 20px; }
     h1 { margin-bottom: 0; }
     .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    button, select { font: inherit; border-radius: 8px; border: 1px solid color-mix(in srgb, CanvasText 22%, Canvas 78%); background: Canvas; color: CanvasText; padding: 8px 10px; }
+    button, select, input { font: inherit; border-radius: 8px; border: 1px solid color-mix(in srgb, CanvasText 22%, Canvas 78%); background: Canvas; color: CanvasText; padding: 8px 10px; }
+    input[type="number"] { width: 5.5em; }
     .file-warning { display: none; border: 1px solid #b45309; background: color-mix(in srgb, #f59e0b 16%, Canvas 84%); border-radius: 10px; padding: 12px 14px; }
     html.file-protocol .file-warning { display: block; }
     pre.log { white-space: pre-wrap; border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas 82%); border-radius: 8px; padding: 12px; min-height: 80px; max-height: 220px; overflow: auto; }
@@ -55,6 +56,27 @@
           <option value="editor-first">editor-first</option>
         </select>
       </label>
+      <label>
+        Font
+        <select id="font-family">
+          <option value='system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' selected>System UI</option>
+          <option value='Arial, Helvetica, sans-serif'>Arial</option>
+          <option value='Verdana, Geneva, sans-serif'>Verdana</option>
+          <option value='Georgia, "Times New Roman", serif'>Georgia</option>
+          <option value='"Times New Roman", Times, serif'>Times New Roman</option>
+          <option value='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'>Monospace</option>
+        </select>
+      </label>
+      <label>
+        Base font size
+        <input id="font-size" type="number" min="12" max="28" step="1" value="15">
+        px
+      </label>
+      <label>
+        Max height
+        <input id="max-height" type="number" min="220" max="1200" step="20" placeholder="none">
+        px
+      </label>
       <button type="button" id="insert-demo">Insert demo content</button>
       <button type="button" id="select-expand">Expand selection</button>
       <button type="button" id="get-html">Log HTML</button>
@@ -88,12 +110,16 @@
       throw new Error("Open standalone.html directly, or serve index.html over http://localhost.");
     }
     await import("./md-live-editor.js");
+    const { bindDemoControls } = await import("./demo-controls.js");
 
     const editor = document.querySelector('#editor');
     const log = document.querySelector('#log');
     const previewMode = document.querySelector('#preview-mode');
     const mode = document.querySelector('#mode');
     const tabBehavior = document.querySelector('#tab-behavior');
+    const fontFamily = document.querySelector('#font-family');
+    const fontSize = document.querySelector('#font-size');
+    const maxHeight = document.querySelector('#max-height');
 
     const demoMarkdown = `# Live inline markdown editor
 
@@ -148,6 +174,7 @@ print("hello")
     mode.addEventListener('change', () => editor.mode = mode.value);
     previewMode.addEventListener('change', () => editor.preview = previewMode.value);
     tabBehavior.addEventListener('change', () => editor.tabBehavior = tabBehavior.value);
+    bindDemoControls({ editor, fontFamily, fontSize, maxHeight });
     document.querySelector('#insert-demo').addEventListener('click', () => { editor.value = demoMarkdown; editor.focus(); });
     document.querySelector('#select-expand').addEventListener('click', () => { editor.exec('editor.selectAllExpand'); editor.focus(); });
     document.querySelector('#get-html').addEventListener('click', () => writeLog('HTML', { html: editor.getHTML() }));

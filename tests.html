@@ -38,6 +38,7 @@
       throw new Error("Serve tests.html over http://localhost.");
     }
     await import("./md-live-editor.js");
+    const { bindDemoControls } = await import("./demo-controls.js");
     await customElements.whenDefined('md-live-editor');
     const editor = document.querySelector('#editor');
     const fixtures = [
@@ -63,7 +64,7 @@
       { name: 'bold insertion no selection', before: 'hello |', action: 'inline.bold', after: 'hello **|**' },
       { name: 'bold wraps selection', before: 'hello [world]', action: 'inline.bold', after: 'hello **world**|' },
       { name: 'link wraps selection with pasted URL', before: '[OpenAI]', action: 'inline.link', args: { url: 'https://openai.com' }, after: '[OpenAI](https://openai.com)|' },
-      { name: 'code fence wraps selection', before: '[const x = 1;]', action: 'block.codeFence', after: '```\nconst x = 1;\n```|' },
+      { name: 'code fence wraps selection', before: '[const x = 1;]', action: 'block.codeFence', after: '```\nconst x = 1;|\n```' },
       { name: 'table insertion includes delimiter and body row', before: '|', action: 'block.table', args: { rows: 1, cols: 2 }, after: '| [Column 1] | Column 2 |\n| --- | --- |\n| Cell 1 | Cell 2 |' },
       { name: 'delete selection removes selected markdown', before: '[# Title\n\nBody]', action: 'editor.deleteSelection', after: '|' },
       { name: 'smart delete removes selected markdown', before: '[# Title\n\nBody]', action: 'editor.smartDelete', after: '|' },
@@ -73,6 +74,29 @@
     const results = fixtures.map(fixture => editor.runFixture(fixture));
 
     const visualChecks = [];
+    function pressLiveKey(key, init = {}) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
+      editor.shadowRoot.querySelector('.live-editor').dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
+    function pointForSourceOffset(offset) {
+      const rect = editor._caretRectForSourceOffset(offset);
+      if (rect) return { x: rect.left, y: (rect.top + rect.bottom) / 2 };
+      const pos = editor._domPositionFromSource(offset);
+      const box = pos?.editable?.getBoundingClientRect();
+      return box ? { x: box.left + 2, y: box.top + box.height / 2 } : { x: 0, y: 0 };
+    }
+
+    function dragLiveSelection(from, to) {
+      const start = pointForSourceOffset(from);
+      const end = pointForSourceOffset(to);
+      const eventInit = point => ({ button: 0, buttons: 1, clientX: point.x, clientY: point.y, bubbles: true, cancelable: true, composed: true });
+      editor.shadowRoot.querySelector('.live-editor').dispatchEvent(new MouseEvent('mousedown', eventInit(start)));
+      document.dispatchEvent(new MouseEvent('mousemove', eventInit(end)));
+      document.dispatchEvent(new MouseEvent('mouseup', { ...eventInit(end), buttons: 0 }));
+    }
+
     editor.value = '# H1\n\n## H2\n\n**bold** and *italic* and `code`\n\n---\n\n| A | B |\n| --- | --- |\n| C | D |\n\n```python\nprint(1)\n```\n\n- [ ] task';
     await new Promise(requestAnimationFrame);
     const root = editor.shadowRoot;
@@ -88,6 +112,7 @@
     visualChecks.push({ name: 'live editor renders task checkbox', passed: Boolean(root.querySelector('[data-task-checkbox]')) });
     visualChecks.push({ name: 'live horizontal rule renders divider', passed: Boolean(root.querySelector('.md-hr-line')) });
     visualChecks.push({ name: 'live horizontal rule hides raw marker text', passed: ((root.querySelector('.md-hr-line')?.innerText || root.querySelector('.md-hr-line')?.textContent || '').trim() === '') });
+    visualChecks.push({ name: 'live horizontal rule is not a text-editable row', passed: !root.querySelector('.md-hr-line')?.hasAttribute('data-editable') });
     const focusedLine = root.querySelector('.md-line');
     focusedLine?.focus();
     visualChecks.push({ name: 'active live line has no default blue inset focus ring', passed: focusedLine ? getComputedStyle(focusedLine).boxShadow === 'none' : false });
@@ -96,6 +121,56 @@
     visualChecks.push({ name: 'component renders no global toolbar', passed: !root.querySelector('[part=\"toolbar\"]') && !root.querySelector('[part=\"mobile-toolbar\"]') });
     visualChecks.push({ name: 'code block renders no embedded action buttons', passed: !root.querySelector('[data-code-copy]') && !root.querySelector('[data-code-lang]') });
     visualChecks.push({ name: 'table renders no embedded table controls', passed: !root.querySelector('[data-table-action]') });
+
+    const demoControls = document.createElement('div');
+    demoControls.hidden = true;
+    demoControls.innerHTML = `
+      <select data-test-font-family>
+        <option value='system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' selected>System UI</option>
+        <option value='Arial, Helvetica, sans-serif'>Arial</option>
+      </select>
+      <input data-test-font-size type="number" min="12" max="28" step="1" value="15">
+      <input data-test-max-height type="number" min="220" max="1200" step="20">
+    `;
+    document.body.append(demoControls);
+    const testFontFamily = demoControls.querySelector('[data-test-font-family]');
+    const testFontSize = demoControls.querySelector('[data-test-font-size]');
+    const testMaxHeight = demoControls.querySelector('[data-test-max-height]');
+    bindDemoControls({ editor, fontFamily: testFontFamily, fontSize: testFontSize, maxHeight: testMaxHeight });
+
+    testMaxHeight.value = '5';
+    testMaxHeight.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const maxHeightPartialStart = testMaxHeight.value === '5' && editor.style.getPropertyValue('--md-editor-max-height') === '';
+    testMaxHeight.value = '52';
+    testMaxHeight.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const maxHeightPartialContinues = testMaxHeight.value === '52' && editor.style.getPropertyValue('--md-editor-max-height') === '';
+    testMaxHeight.value = '520';
+    testMaxHeight.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const maxHeightComplete = testMaxHeight.value === '520' && editor.style.getPropertyValue('--md-editor-max-height') === '520px';
+    testMaxHeight.value = '5';
+    testMaxHeight.dispatchEvent(new Event('change', { bubbles: true }));
+    const maxHeightCommitClamps = testMaxHeight.value === '220' && editor.style.getPropertyValue('--md-editor-max-height') === '220px';
+
+    testFontSize.value = '2';
+    testFontSize.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const fontSizePartialStart = testFontSize.value === '2' && editor.style.getPropertyValue('--md-editor-font-size') === '15px';
+    testFontSize.value = '20';
+    testFontSize.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const fontSizeComplete = testFontSize.value === '20' && editor.style.getPropertyValue('--md-editor-font-size') === '20px';
+    testFontSize.value = '2';
+    testFontSize.dispatchEvent(new Event('change', { bubbles: true }));
+    const fontSizeCommitClamps = testFontSize.value === '12' && editor.style.getPropertyValue('--md-editor-font-size') === '12px';
+
+    visualChecks.push({ name: 'Max height input preserves partial value while typing', passed: maxHeightPartialStart && maxHeightPartialContinues });
+    visualChecks.push({ name: 'Max height input applies complete in-range value', passed: maxHeightComplete });
+    visualChecks.push({ name: 'Max height input clamps only on commit', passed: maxHeightCommitClamps });
+    visualChecks.push({ name: 'Base font size input preserves partial value while typing', passed: fontSizePartialStart });
+    visualChecks.push({ name: 'Base font size input applies complete in-range value', passed: fontSizeComplete });
+    visualChecks.push({ name: 'Base font size input clamps only on commit', passed: fontSizeCommitClamps });
+    testFontSize.value = '15';
+    testFontSize.dispatchEvent(new Event('change', { bubbles: true }));
+    testMaxHeight.value = '';
+    testMaxHeight.dispatchEvent(new Event('change', { bubbles: true }));
 
     editor.value = '```';
     await new Promise(requestAnimationFrame);
@@ -114,6 +189,38 @@
       passed: editor.selectionStart === editor.value.lastIndexOf('|  |  |') + 2 && editor.selectionEnd === editor.selectionStart
     });
 
+    editor.value = '| A | B |\n| --- | --- |\n| Cell 1 | Cell 2 |';
+    await new Promise(requestAnimationFrame);
+    const cellStart = editor.value.indexOf('Cell 1');
+    editor.setSelectionRange(cellStart, cellStart + 'Cell 1'.length);
+    const clearedCellWithBackspace = pressLiveKey('Backspace');
+    visualChecks.push({
+      name: 'Backspace clears selected live table cell contents',
+      passed: clearedCellWithBackspace && editor.value === '| A | B |\n| --- | --- |\n|  | Cell 2 |'
+    });
+
+    editor.value = '| A | B |\n| --- | --- |\n|  |  |';
+    await new Promise(requestAnimationFrame);
+    const emptyCell = editor.shadowRoot.querySelector('tbody .md-cell');
+    const emptyCellOffset = Number(emptyCell.dataset.from);
+    editor.setSelectionRange(emptyCellOffset, emptyCellOffset);
+    const removedEmptyRowWithBackspace = pressLiveKey('Backspace');
+    visualChecks.push({
+      name: 'Backspace removes empty live table body row',
+      passed: removedEmptyRowWithBackspace && editor.value === '| A | B |\n| --- | --- |'
+    });
+
+    editor.value = '| Col [A] | Col [B] |\n| --- | ---';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const firstVirtualCell = editor.shadowRoot.querySelector('tbody .md-cell');
+    firstVirtualCell.textContent = 'a';
+    firstVirtualCell.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 'a', bubbles: true }));
+    visualChecks.push({
+      name: 'Typing in auto-created empty table body cell creates a Markdown row',
+      passed: editor.value === '| Col [A] | Col [B] |\n| --- | --- |\n| a |  |'
+    });
+
     editor.value = '# Section\n\nParagraph text\n\n## Child\n\nChild text\n\n# Next\n\nEnd';
     const paraStart = editor.value.indexOf('Paragraph');
     const paraEnd = paraStart + 'Paragraph text'.length;
@@ -127,6 +234,29 @@
     visualChecks.push({ name: 'Cmd/Ctrl+A expansion first selects current block', passed: firstSelectIsBlock });
     visualChecks.push({ name: 'Cmd/Ctrl+A expansion then selects current heading section', passed: secondSelectIsSection });
     visualChecks.push({ name: 'Cmd/Ctrl+A expansion then selects full document', passed: thirdSelectIsDocument });
+
+    editor.value = 'alpha\nbeta\ngamma';
+    await new Promise(requestAnimationFrame);
+    dragLiveSelection(1, editor.value.indexOf('gamma') + 3);
+    visualChecks.push({
+      name: 'Mouse drag can select across multiple live text rows',
+      passed: editor.selectionStart === 1 && editor.selectionEnd === editor.value.indexOf('gamma') + 3
+    });
+
+    editor.value = 'alpha\n----\nbeta\ngamma';
+    await new Promise(requestAnimationFrame);
+    const hrLine = editor.shadowRoot.querySelector('.md-hr-line');
+    const hrBox = hrLine.getBoundingClientRect();
+    const belowHrOffset = editor._sourceOffsetForClientPoint(hrBox.left + 25, hrBox.bottom - 2);
+    visualChecks.push({
+      name: 'Mouse hit testing below live horizontal rule reaches following row',
+      passed: belowHrOffset > editor.value.indexOf('beta')
+    });
+    dragLiveSelection(1, editor.value.indexOf('gamma') + 3);
+    visualChecks.push({
+      name: 'Mouse drag can select downward across live horizontal rule',
+      passed: editor.selectionStart === 1 && editor.selectionEnd === editor.value.indexOf('gamma') + 3
+    });
 
     editor.value = `# Delete Me
 
@@ -212,12 +342,6 @@ beta`;
     editor.shadowRoot.querySelector('.live-editor').dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
     visualChecks.push({ name: 'Backspace at live line start joins with previous line', passed: editor.value === 'alphabeta' && editor.selectionStart === 5 && editor.selectionEnd === 5 });
 
-    function pressLiveKey(key) {
-      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
-      editor.shadowRoot.querySelector('.live-editor').dispatchEvent(event);
-      return event.defaultPrevented;
-    }
-
     editor.value = 'abc\ndefgh';
     await new Promise(requestAnimationFrame);
     editor.setSelectionRange(4, 4);
@@ -239,6 +363,55 @@ beta`;
     editor.setSelectionRange(6, 6);
     pressLiveKey('ArrowUp');
     visualChecks.push({ name: 'ArrowUp preserves column when moving to previous live line', passed: editor.selectionStart === 2 && editor.selectionEnd === 2 });
+
+    editor.value = 'alpha\n----\nbeta\ngamma';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(1, 1);
+    const arrowDownSkippedHr = pressLiveKey('ArrowDown');
+    visualChecks.push({ name: 'ArrowDown skips live horizontal rule instead of trapping caret', passed: arrowDownSkippedHr && editor.selectionStart === editor.value.indexOf('beta') + 1 && editor.selectionEnd === editor.selectionStart });
+    const arrowDownContinuesAfterHr = pressLiveKey('ArrowDown');
+    visualChecks.push({ name: 'ArrowDown continues after skipping live horizontal rule', passed: arrowDownContinuesAfterHr && editor.selectionStart === editor.value.indexOf('gamma') + 1 && editor.selectionEnd === editor.selectionStart });
+
+    editor.value = 'abc\ndef\nghi';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(0, 0);
+    const shiftDownFromStart = pressLiveKey('ArrowDown', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+ArrowDown from live line start selects to next line start', passed: shiftDownFromStart && editor.selectionStart === 0 && editor.selectionEnd === 4 });
+
+    editor.setSelectionRange(3, 3);
+    const shiftDownFromEnd = pressLiveKey('ArrowDown', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+ArrowDown from live line end selects to next line end', passed: shiftDownFromEnd && editor.selectionStart === 3 && editor.selectionEnd === 7 });
+
+    editor.setSelectionRange(4, 4);
+    const shiftUpFromStart = pressLiveKey('ArrowUp', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+ArrowUp from live line start selects to previous line start', passed: shiftUpFromStart && editor.selectionStart === 0 && editor.selectionEnd === 4 && editor._selection.direction === 'backward' });
+
+    editor.setSelectionRange(2, 2);
+    const shiftDownFromMiddle = pressLiveKey('ArrowDown', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+ArrowDown from live line middle preserves column', passed: shiftDownFromMiddle && editor.selectionStart === 2 && editor.selectionEnd === 6 });
+
+    pressLiveKey('ArrowDown', { shiftKey: true });
+    visualChecks.push({ name: 'Repeated Shift+ArrowDown extends from original anchor', passed: editor.selectionStart === 2 && editor.selectionEnd === 10 });
+    const repeatedShiftDownLiveSelection = editor._getLiveSelection();
+    visualChecks.push({ name: 'Repeated Shift+ArrowDown updates the DOM selection across rows', passed: repeatedShiftDownLiveSelection?.start === 2 && repeatedShiftDownLiveSelection?.end === 10 && repeatedShiftDownLiveSelection?.direction === 'forward' });
+
+    editor.value = 'abc\ndef\nghi\njkl';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(10, 10);
+    pressLiveKey('ArrowUp', { shiftKey: true });
+    pressLiveKey('ArrowUp', { shiftKey: true });
+    const repeatedShiftUpLiveSelection = editor._getLiveSelection();
+    visualChecks.push({ name: 'Repeated Shift+ArrowUp preserves backward DOM selection direction', passed: editor.selectionStart === 2 && editor.selectionEnd === 10 && editor._selection.direction === 'backward' && repeatedShiftUpLiveSelection?.start === 2 && repeatedShiftUpLiveSelection?.end === 10 && repeatedShiftUpLiveSelection?.direction === 'backward' });
+    pressLiveKey('ArrowDown', { shiftKey: true });
+    pressLiveKey('ArrowDown', { shiftKey: true });
+    pressLiveKey('ArrowDown', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+Arrow can shrink backward selection and continue forward', passed: editor.selectionStart === 10 && editor.selectionEnd === 14 && editor._selection.direction === 'forward' });
+
+    editor.value = 'www\niii';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(2, 2);
+    const shiftDownWideToNarrow = pressLiveKey('ArrowDown', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+ArrowDown preserves source column across proportional text', passed: shiftDownWideToNarrow && editor.selectionStart === 2 && editor.selectionEnd === 6 });
 
     for (const check of visualChecks) {
       results.push({ name: check.name, expected: 'true', actual: String(check.passed), passed: check.passed });
