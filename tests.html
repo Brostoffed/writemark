@@ -212,6 +212,34 @@ beta`;
     editor.shadowRoot.querySelector('.live-editor').dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
     visualChecks.push({ name: 'Backspace at live line start joins with previous line', passed: editor.value === 'alphabeta' && editor.selectionStart === 5 && editor.selectionEnd === 5 });
 
+    function pressLiveKey(key) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      editor.shadowRoot.querySelector('.live-editor').dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
+    editor.value = 'abc\ndefgh';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(4, 4);
+    const leftCrossedLine = pressLiveKey('ArrowLeft');
+    visualChecks.push({ name: 'ArrowLeft at live line start moves to previous line end', passed: leftCrossedLine && editor.selectionStart === 3 && editor.selectionEnd === 3 });
+
+    editor.setSelectionRange(3, 3);
+    const rightCrossedLine = pressLiveKey('ArrowRight');
+    visualChecks.push({ name: 'ArrowRight at live line end moves to next line start', passed: rightCrossedLine && editor.selectionStart === 4 && editor.selectionEnd === 4 });
+
+    editor.setSelectionRange(9, 9);
+    const upCrossedLine = pressLiveKey('ArrowUp');
+    visualChecks.push({ name: 'ArrowUp from live line end moves to previous line end', passed: upCrossedLine && editor.selectionStart === 3 && editor.selectionEnd === 3 });
+
+    editor.setSelectionRange(0, 0);
+    const downCrossedLine = pressLiveKey('ArrowDown');
+    visualChecks.push({ name: 'ArrowDown from live line start moves to next line start', passed: downCrossedLine && editor.selectionStart === 4 && editor.selectionEnd === 4 });
+
+    editor.setSelectionRange(6, 6);
+    pressLiveKey('ArrowUp');
+    visualChecks.push({ name: 'ArrowUp preserves column when moving to previous live line', passed: editor.selectionStart === 2 && editor.selectionEnd === 2 });
+
     for (const check of visualChecks) {
       results.push({ name: check.name, expected: 'true', actual: String(check.passed), passed: check.passed });
     }

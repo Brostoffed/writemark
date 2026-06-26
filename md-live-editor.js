@@ -1130,6 +1130,151 @@ class MdLiveEditorElement extends HTMLElement {
     this._onSelectionChanged();
   }
   _onNavigationKey(event) { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) this._onSelectionChanged(); }
+
+  _maybeHandleLiveArrowKey(event, activeEditable = null) {
+    if (this._isSourceActive() || event.defaultPrevented || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return false;
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return false;
+    const editable = activeEditable || this._activeEditableFromEvent(event);
+    if (!editable || editable.dataset.editable === "cell") return false;
+    const selection = this._getLiveSelection(editable);
+    if (!selection || selection.start !== selection.end) return false;
+    const direction = (event.key === "ArrowLeft" || event.key === "ArrowUp") ? -1 : 1;
+    const target = (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      ? this._horizontalArrowTarget(editable, selection.start, direction)
+      : this._verticalArrowTarget(editable, selection.start, direction);
+    if (target == null || target === selection.start) return false;
+    event.preventDefault();
+    this.setSelectionRange(target, target, "none");
+    return true;
+  }
+
+  _horizontalArrowTarget(editable, offset, direction) {
+    const from = Number(editable.dataset.from);
+    const to = Number(editable.dataset.to);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    if (direction < 0 && offset <= from) {
+      const previous = this._adjacentLiveEditable(editable, -1);
+      return previous ? Number(previous.dataset.to) : null;
+    }
+    if (direction > 0 && offset >= to) {
+      const next = this._adjacentLiveEditable(editable, 1);
+      return next ? Number(next.dataset.from) : null;
+    }
+    return null;
+  }
+
+  _verticalArrowTarget(editable, offset, direction) {
+    if (!this._isCaretOnVisualBoundary(editable, offset, direction)) return null;
+    const targetEditable = this._adjacentLiveEditable(editable, direction);
+    if (!targetEditable) return null;
+    const caretRect = this._caretRectForSourceOffset(offset, editable);
+    const fallbackRect = editable.getBoundingClientRect();
+    const clientX = caretRect?.left ?? fallbackRect.left;
+    return this._sourceOffsetInEditableAtX(targetEditable, clientX, direction);
+  }
+
+  _liveNavigationEditables() {
+    return [...this._liveEditor.querySelectorAll("[data-editable]")]
+      .filter(el => el.dataset.editable !== "cell" && Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to)))
+      .sort((a, b) => Number(a.dataset.from) - Number(b.dataset.from));
+  }
+
+  _adjacentLiveEditable(editable, direction) {
+    const editables = this._liveNavigationEditables();
+    const index = editables.indexOf(editable);
+    return index === -1 ? null : editables[index + direction] || null;
+  }
+
+  _computedLineHeight(el) {
+    const style = globalThis.getComputedStyle?.(el);
+    const parsed = Number.parseFloat(style?.lineHeight || "");
+    if (Number.isFinite(parsed)) return parsed;
+    const fontSize = Number.parseFloat(style?.fontSize || "");
+    return Number.isFinite(fontSize) ? fontSize * 1.2 : 18;
+  }
+
+  _isCaretOnVisualBoundary(editable, offset, direction) {
+    const from = Number(editable.dataset.from);
+    const to = Number(editable.dataset.to);
+    const rect = this._caretRectForSourceOffset(offset, editable);
+    const box = editable.getBoundingClientRect();
+    if (!rect || !box || box.height === 0) return direction < 0 ? offset <= from : offset >= to;
+    const tolerance = this._computedLineHeight(editable) * 0.65;
+    return direction < 0
+      ? rect.top <= box.top + tolerance
+      : rect.bottom >= box.bottom - tolerance;
+  }
+
+  _caretRectForSourceOffset(offset, preferredEditable = null) {
+    const pos = preferredEditable
+      ? this._textPositionInElement(preferredEditable, clamp(offset - Number(preferredEditable.dataset.from), 0, this._plainText(preferredEditable).length))
+      : this._domPositionFromSource(offset);
+    if (!pos) return null;
+    return this._caretRectFromDomPosition(pos.node, pos.offset);
+  }
+
+  _caretRectFromDomPosition(node, offset) {
+    const range = document.createRange();
+    try { range.setStart(node, offset); } catch { return null; }
+    range.collapse(true);
+    const rect = range.getClientRects()[0] || range.getBoundingClientRect();
+    return rect && Number.isFinite(rect.left) && (rect.height > 0 || rect.width > 0) ? rect : null;
+  }
+
+  _sourceOffsetInEditableAtX(editable, clientX, direction) {
+    const from = Number(editable.dataset.from);
+    const to = Number(editable.dataset.to);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    const box = editable.getBoundingClientRect();
+    if (!box || box.width === 0 || box.height === 0) return direction < 0 ? to : from;
+    const lineHeight = this._computedLineHeight(editable);
+    const x = clamp(clientX, box.left + 1, box.right - 1);
+    const rowOffset = Math.min(Math.max(lineHeight / 2, 1), Math.max(box.height / 2, 1));
+    const y = direction < 0 ? box.bottom - rowOffset : box.top + rowOffset;
+    const fromPoint = this._sourceOffsetFromPoint(editable, x, y);
+    if (fromPoint != null) return clamp(fromPoint, from, to);
+    return this._nearestSourceOffsetInEditable(editable, x, y);
+  }
+
+  _sourceOffsetFromPoint(editable, clientX, clientY) {
+    const doc = editable.ownerDocument || document;
+    let node = null;
+    let offset = 0;
+    if (doc.caretPositionFromPoint) {
+      try {
+        const pos = doc.caretPositionFromPoint(clientX, clientY, { shadowRoots: [this._shadow] });
+        if (pos) { node = pos.offsetNode; offset = pos.offset; }
+      } catch {
+        const pos = doc.caretPositionFromPoint(clientX, clientY);
+        if (pos) { node = pos.offsetNode; offset = pos.offset; }
+      }
+    }
+    if (!node && doc.caretRangeFromPoint) {
+      const range = doc.caretRangeFromPoint(clientX, clientY);
+      if (range) { node = range.startContainer; offset = range.startOffset; }
+    }
+    if (!node || (node !== editable && !editable.contains(node))) return null;
+    return this._sourceOffsetFromDom(editable, node, offset);
+  }
+
+  _nearestSourceOffsetInEditable(editable, clientX, clientY) {
+    const from = Number(editable.dataset.from);
+    const length = this._plainText(editable).length;
+    if (!length) return from;
+    let bestOffset = 0;
+    let bestScore = Infinity;
+    for (let offset = 0; offset <= length; offset += 1) {
+      const pos = this._textPositionInElement(editable, offset);
+      const rect = this._caretRectFromDomPosition(pos.node, pos.offset);
+      if (!rect) continue;
+      const rowDistance = Math.abs(((rect.top + rect.bottom) / 2) - clientY);
+      const columnDistance = Math.abs(rect.left - clientX);
+      const score = (rowDistance * 1000) + columnDistance;
+      if (score < bestScore) { bestScore = score; bestOffset = offset; }
+    }
+    return from + bestOffset;
+  }
+
   _onSelectionChanged() {
     if (this._ignoreSelectionChangeCount > 0) {
       this._ignoreSelectionChangeCount -= 1;
@@ -1258,6 +1403,8 @@ class MdLiveEditorElement extends HTMLElement {
       if (event.key === "PageUp") { event.preventDefault(); this._moveCompletion(-5); return; }
       if (event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) { event.preventDefault(); this._runAction("completion.accept", undefined, { source: "keyboard", apply: true }); return; }
     }
+
+    if (this._maybeHandleLiveArrowKey(event, activeEditable)) return;
 
     if ((event.key === "Backspace" || event.key === "Delete") && !this._isSourceActive()) {
       if (this.readonly || this.disabled) return;
