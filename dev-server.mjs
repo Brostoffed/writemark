@@ -88,7 +88,7 @@ function openBrowser(url) {
 
 server.listen(port, '127.0.0.1', () => {
   const baseUrl = `http://127.0.0.1:${port}`;
-  console.log(`Serving <md-live-editor> from ${root}`);
+  console.log(`Serving <writemark-editor> from ${root}`);
   console.log(`Demo:  ${baseUrl}/index.html`);
   console.log(`Tests: ${baseUrl}/tests.html`);
   console.log('Press Ctrl+C to stop.');

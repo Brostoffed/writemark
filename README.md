@@ -1,6 +1,6 @@
-# `<md-live-editor>`
+# Writemark
 
-A dependency-free live inline Markdown editor web component.
+`<writemark-editor>` is a dependency-free live inline Markdown editor web component.
 
 The default experience is **inline/live editing**: headings, inline formatting, lists, task checkboxes, code fences, and tables render inside the editor itself while the component preserves raw Markdown as the canonical `value` and form submission value. There is no built-in formatting toolbar; formatting is driven by Markdown shortcuts, slash commands, keyboard shortcuts, and the public action API.
 
@@ -9,7 +9,7 @@ The default experience is **inline/live editing**: headings, inline formatting, 
 Do not open `index.html` directly with `file://` unless you use `standalone.html`. ES modules loaded from local files are blocked by browser security rules.
 
 ```sh
-cd md-live-editor-v1
+cd writemark-editor-v1
 npm start
 ```
 
@@ -42,23 +42,25 @@ standalone.html
 ## Basic usage
 
 ```html
-<script type="module" src="./md-live-editor.js"></script>
+<script type="module" src="./writemark-editor.js"></script>
 
-<md-live-editor
+<writemark-editor
   name="body"
   label="Body"
   mode="live"
   placeholder="Type / for commands"
-></md-live-editor>
+></writemark-editor>
 ```
+
+Compatibility: `md-live-editor.js` and `<md-live-editor>` are still registered as legacy aliases for existing demos or consumers.
 
 ## Modes
 
 ```html
-<md-live-editor mode="live"></md-live-editor>
-<md-live-editor mode="source"></md-live-editor>
-<md-live-editor mode="split"></md-live-editor>
-<md-live-editor mode="preview"></md-live-editor>
+<writemark-editor mode="live"></writemark-editor>
+<writemark-editor mode="source"></writemark-editor>
+<writemark-editor mode="split"></writemark-editor>
+<writemark-editor mode="preview"></writemark-editor>
 ```
 
 | Mode | Behavior |
@@ -137,7 +139,7 @@ Paste behavior:
 ## Public API
 
 ```js
-const editor = document.querySelector('md-live-editor');
+const editor = document.querySelector('writemark-editor');
 
 editor.value = '# Hello';
 editor.mode = 'live';
@@ -256,7 +258,7 @@ Important action IDs:
 
 ```html
 <form>
-  <md-live-editor name="body" label="Body" required></md-live-editor>
+  <writemark-editor name="body" label="Body" required></writemark-editor>
   <button>Submit</button>
 </form>
 ```
@@ -273,11 +275,11 @@ Horizontal rules now render as a clean divider in live mode. The raw Markdown ma
 The component exposes CSS parts and variables.
 
 ```css
-md-live-editor::part(live-editor) {
+writemark-editor::part(live-editor) {
   min-height: 400px;
 }
 
-md-live-editor {
+writemark-editor {
   --md-editor-font: Inter, system-ui, sans-serif;
   --md-editor-mono-font: "JetBrains Mono", monospace;
   --md-editor-min-height: 360px;
@@ -287,7 +289,7 @@ md-live-editor {
 The active line/table-cell blue inset outline is disabled by default. To keep it removed, no CSS override is required. To add a subtle non-blue active block affordance:
 
 ```css
-md-live-editor {
+writemark-editor {
   --md-editor-active-line-bg: color-mix(in srgb, CanvasText 4%, transparent);
   --md-editor-active-cell-bg: color-mix(in srgb, CanvasText 4%, transparent);
 }
@@ -296,7 +298,7 @@ md-live-editor {
 To re-enable an outline explicitly:
 
 ```css
-md-live-editor {
+writemark-editor {
   --md-editor-active-line-ring: inset 0 0 0 2px color-mix(in srgb, Highlight 35%, transparent);
   --md-editor-active-cell-ring: var(--md-editor-active-line-ring);
 }

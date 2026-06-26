@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>&lt;md-live-editor&gt; Live Inline Browser Tests</title>
+  <title>&lt;writemark-editor&gt; Live Inline Browser Tests</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
     body { margin: 0; padding: 24px; background: Canvas; color: CanvasText; }
@@ -16,15 +16,15 @@
     html.file-protocol .file-warning { display: block; }
     .pass { color: #097a2d; }
     .fail { color: #b00020; }
-    md-live-editor { position: absolute; left: -9999px; top: -9999px; width: 800px; --md-editor-min-height: 300px; }
+    writemark-editor { position: absolute; left: -9999px; top: -9999px; width: 800px; --md-editor-min-height: 300px; }
   </style>
 </head>
 <body>
   <main>
-    <h1>&lt;md-live-editor&gt; live inline browser tests</h1>
+    <h1>&lt;writemark-editor&gt; live inline browser tests</h1>
     <p>Serve this file over <code>http://localhost</code>. The test harness exercises action fixtures and verifies rendered live-editor structure.</p>
-    <div class="file-warning" role="alert">This test harness imports <code>md-live-editor.js</code> as an ES module, so it cannot run from <code>file://</code>.</div>
-    <md-live-editor id="editor" mode="live" preview="none"></md-live-editor>
+    <div class="file-warning" role="alert">This test harness imports <code>writemark-editor.js</code> as an ES module, so it cannot run from <code>file://</code>.</div>
+    <writemark-editor id="editor" mode="live" preview="none"></writemark-editor>
     <div id="summary"></div>
     <table>
       <thead><tr><th>Result</th><th>Name</th><th>Expected</th><th>Actual</th></tr></thead>
@@ -37,10 +37,11 @@
       document.documentElement.classList.add("file-protocol");
       throw new Error("Serve tests.html over http://localhost.");
     }
-    await import("./md-live-editor.js");
+    await import("./writemark-editor.js");
     const { bindDemoControls } = await import("./demo-controls.js");
-    await customElements.whenDefined('md-live-editor');
+    await customElements.whenDefined('writemark-editor');
     const editor = document.querySelector('#editor');
+    const compatibilityModule = await import("./md-live-editor.js");
     const fixtures = [
       { name: 'continues bullet list', before: '- one|', action: 'editor.smartEnter', after: '- one\n- |' },
       { name: 'exits empty bullet list', before: '- one\n- |', action: 'editor.smartEnter', after: '- one\n|' },
@@ -100,6 +101,8 @@
     editor.value = '# H1\n\n## H2\n\n**bold** and *italic* and `code`\n\n---\n\n| A | B |\n| --- | --- |\n| C | D |\n\n```python\nprint(1)\n```\n\n- [ ] task';
     await new Promise(requestAnimationFrame);
     const root = editor.shadowRoot;
+    visualChecks.push({ name: 'writemark-editor custom element is registered', passed: Boolean(customElements.get('writemark-editor')) });
+    visualChecks.push({ name: 'legacy md-live-editor alias remains registered', passed: Boolean(customElements.get('md-live-editor')) && Boolean(compatibilityModule.WritemarkEditorElement) && Boolean(compatibilityModule.MdLiveEditorElement) });
     visualChecks.push({ name: 'live editor renders H1 class', passed: Boolean(root.querySelector('.md-h1')) });
     visualChecks.push({ name: 'live editor renders H2 class', passed: Boolean(root.querySelector('.md-h2')) });
     visualChecks.push({ name: 'live editor decorates bold', passed: Boolean(root.querySelector('strong')) });
@@ -470,9 +473,42 @@ beta`;
       name: 'Virtualized live document can render selection near document end',
       passed: editor._isSourceOffsetRendered(editor.value.length) && editor.shadowRoot.querySelectorAll('[data-editable]').length < 800
     });
+    const farVirtualSelectionEnd = largeLines.slice(0, 320).join('\n').length;
+    let largeSelectionRestoreThrew = false;
+    try {
+      editor.setSelectionRange(0, farVirtualSelectionEnd);
+    } catch {
+      largeSelectionRestoreThrew = true;
+    }
+    visualChecks.push({
+      name: 'Virtualized oversized selection restore does not throw',
+      passed: !largeSelectionRestoreThrew && editor.selectionStart === 0 && editor.selectionEnd === farVirtualSelectionEnd
+    });
     editor.style.removeProperty('--md-editor-max-height');
     editor.value = '';
     await new Promise(requestAnimationFrame);
+
+    editor.value = '';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(0, 0);
+    const enterFromEmpty = pressLiveKey('Enter');
+    await new Promise(requestAnimationFrame);
+    const secondBlankLine = editor.shadowRoot.querySelector('[data-editable][data-from="1"]');
+    secondBlankLine.textContent = '#';
+    const hashText = secondBlankLine.firstChild;
+    const hashRange = document.createRange();
+    hashRange.setStart(hashText, hashText.nodeValue.length);
+    hashRange.collapse(true);
+    const hashSelection = editor.shadowRoot.getSelection();
+    hashSelection.removeAllRanges();
+    hashSelection.addRange(hashRange);
+    secondBlankLine.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: '#', bubbles: true }));
+    const headingShortcutAfterBlankEnter = pressLiveKey(' ');
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({
+      name: 'Heading shortcut works after Enter in an empty editor',
+      passed: enterFromEmpty && headingShortcutAfterBlankEnter && editor.value === '\n# ' && Boolean(editor.shadowRoot.querySelector('.md-heading'))
+    });
 
     for (const check of visualChecks) {
       results.push({ name: check.name, expected: 'true', actual: String(check.passed), passed: check.passed });

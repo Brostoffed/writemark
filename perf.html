@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>&lt;md-live-editor&gt; Performance Harness</title>
+  <title>&lt;writemark-editor&gt; Performance Harness</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: Canvas; color: CanvasText; }
@@ -16,7 +16,7 @@
       border-radius: 6px; padding: 6px 8px; background: Canvas; color: CanvasText; font: inherit;
     }
     button { cursor: pointer; font-weight: 650; }
-    md-live-editor { --md-editor-max-height: 420px; --md-editor-min-height: 420px; display: block; margin-block: 14px; }
+    writemark-editor { --md-editor-max-height: 420px; --md-editor-min-height: 420px; display: block; margin-block: 14px; }
     table { border-collapse: collapse; width: 100%; margin-block-start: 14px; }
     th, td { border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas 80%); padding: 7px 8px; text-align: left; }
     th { font-size: 0.84rem; color: color-mix(in srgb, CanvasText 70%, Canvas 30%); }
@@ -27,7 +27,7 @@
 </head>
 <body>
   <main>
-    <h1>&lt;md-live-editor&gt; performance harness</h1>
+    <h1>&lt;writemark-editor&gt; performance harness</h1>
     <div class="controls">
       <label>Characters <input id="chars" type="number" min="10000" max="2000000" step="10000" value="200000"></label>
       <label>Line length <input id="lineLength" type="number" min="20" max="220" step="10" value="80"></label>
@@ -37,15 +37,15 @@
       <button id="run">Run</button>
     </div>
     <div class="status" id="status"></div>
-    <md-live-editor id="editor" mode="live" preview="none"></md-live-editor>
+    <writemark-editor id="editor" mode="live" preview="none"></writemark-editor>
     <table>
       <thead><tr><th>Metric</th><th>Value</th><th>Notes</th></tr></thead>
       <tbody id="results"></tbody>
     </table>
   </main>
   <script type="module">
-    import { parseBlocks, renderMarkdown } from './md-live-editor.js';
-    await customElements.whenDefined('md-live-editor');
+    import { parseBlocks, renderMarkdown } from './writemark-editor.js';
+    await customElements.whenDefined('writemark-editor');
 
     const editor = document.querySelector('#editor');
     const status = document.querySelector('#status');

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>&lt;md-live-editor&gt; v1.2.2 Live Inline Demo</title>
+  <title>&lt;writemark-editor&gt; v1.2.2 Live Inline Demo</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
     body { margin: 0; padding: 32px; background: Canvas; color: CanvasText; }
@@ -15,16 +15,16 @@
     .file-warning { display: none; border: 1px solid #b45309; background: color-mix(in srgb, #f59e0b 16%, Canvas 84%); border-radius: 10px; padding: 12px 14px; }
     html.file-protocol .file-warning { display: block; }
     pre.log { white-space: pre-wrap; border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas 82%); border-radius: 8px; padding: 12px; min-height: 80px; max-height: 220px; overflow: auto; }
-    md-live-editor { --md-editor-min-height: 420px; }
+    writemark-editor { --md-editor-min-height: 420px; }
     /* Active-line/cell focus outline is off by default. Re-enable with:
-       md-live-editor { --md-editor-active-line-ring: inset 0 0 0 2px color-mix(in srgb, Highlight 35%, transparent); }
+       writemark-editor { --md-editor-active-line-ring: inset 0 0 0 2px color-mix(in srgb, Highlight 35%, transparent); }
     */
   </style>
 </head>
 <body>
   <main>
     <header>
-      <h1>&lt;md-live-editor&gt; live inline editor</h1>
+      <h1>&lt;writemark-editor&gt; live inline editor</h1>
       <p>Dependency-free markdown web component. The default mode is inline/live: headings, inline formatting, tables, code blocks, task checkboxes, and lists render inside the editor itself while markdown source remains canonical. There is no built-in toolbar; use Markdown shortcuts, slash commands, keyboard shortcuts, or the public action API.</p>
       <div class="file-warning" role="alert">
         This module demo must be served over <code>http://localhost</code>. Do not open <code>index.html</code> with <code>file://</code>. Run <code>./serve.sh</code>, double-click <code>start-local.command</code> on macOS, run <code>npm start</code>, or open <code>standalone.html</code> directly.
@@ -84,7 +84,7 @@
     </div>
 
     <form id="demo-form">
-      <md-live-editor
+      <writemark-editor
         id="editor"
         name="body"
         label="Body"
@@ -94,7 +94,7 @@
         required
         maxlength="50000"
         spellcheck="true"
-      ></md-live-editor>
+      ></writemark-editor>
       <p><button type="submit">Submit form</button></p>
     </form>
 
@@ -109,7 +109,7 @@
       document.documentElement.classList.add("file-protocol");
       throw new Error("Open standalone.html directly, or serve index.html over http://localhost.");
     }
-    await import("./md-live-editor.js");
+    await import("./writemark-editor.js");
     const { bindDemoControls } = await import("./demo-controls.js");
 
     const editor = document.querySelector('#editor');
