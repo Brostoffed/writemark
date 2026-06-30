@@ -81,6 +81,12 @@
       return event.defaultPrevented;
     }
 
+    function pressSourceKey(key, init = {}) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
+      editor.shadowRoot.querySelector('textarea').dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
     function pointForSourceOffset(offset) {
       const rect = editor._caretRectForSourceOffset(offset);
       if (rect) return { x: rect.left, y: (rect.top + rect.bottom) / 2 };
@@ -124,6 +130,232 @@
     visualChecks.push({ name: 'component renders no global toolbar', passed: !root.querySelector('[part=\"toolbar\"]') && !root.querySelector('[part=\"mobile-toolbar\"]') });
     visualChecks.push({ name: 'code block renders no embedded action buttons', passed: !root.querySelector('[data-code-copy]') && !root.querySelector('[data-code-lang]') });
     visualChecks.push({ name: 'table renders no embedded table controls', passed: !root.querySelector('[data-table-action]') });
+
+    editor.mode = 'live';
+    editor.preview = 'none';
+    editor.value = '';
+    await new Promise(requestAnimationFrame);
+    const emptyLine = root.querySelector('[data-kind="blank"]');
+    visualChecks.push({
+      name: 'empty live editor exposes placeholder without inserting placeholder text',
+      passed: emptyLine?.dataset.placeholder === editor.placeholder && editor.value === '' && editor.shadowRoot.querySelectorAll('[data-editable]').length === 1
+    });
+
+    editor.mode = 'split';
+    editor.preview = 'none';
+    editor.value = '# Split mode';
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({
+      name: 'split mode shows source textarea and preview without live editor',
+      passed: getComputedStyle(root.querySelector('.live-editor')).display === 'none'
+        && getComputedStyle(root.querySelector('textarea')).display === 'block'
+        && getComputedStyle(root.querySelector('.preview')).display === 'block'
+        && root.querySelector('.preview h1')?.textContent === 'Split mode'
+    });
+
+    editor.mode = 'preview';
+    await new Promise(requestAnimationFrame);
+    editor.focus();
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({
+      name: 'preview mode focus targets rendered preview surface',
+      passed: root.activeElement === root.querySelector('.preview')
+    });
+
+    editor.mode = 'live';
+    editor.required = true;
+    editor.value = '';
+    await new Promise(requestAnimationFrame);
+    const requiredMessageInitiallyHidden = root.querySelector('.validation').textContent === '' && root.querySelector('.live-editor').getAttribute('aria-invalid') === 'true';
+    const reportValidityResult = editor.reportValidity();
+    const requiredMessageAfterReport = root.querySelector('.validation').textContent === 'Please fill out this field.';
+    visualChecks.push({
+      name: 'required validation message is hidden until reported',
+      passed: requiredMessageInitiallyHidden && reportValidityResult === false && requiredMessageAfterReport
+    });
+    editor.required = false;
+
+    editor.value = '1. one\n2. two\n\nwrapped\nparagraph\n\n| A | B |\n| --- | --- |\n| C | D |';
+    await new Promise(requestAnimationFrame);
+    const renderedDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'preview renderer groups ordered list items into one ol',
+      passed: renderedDoc.querySelectorAll('ol').length === 1
+        && renderedDoc.querySelectorAll('ol > li').length === 2
+        && !renderedDoc.querySelector('ul > li')
+    });
+    visualChecks.push({
+      name: 'preview renderer keeps soft-wrapped paragraph as one paragraph',
+      passed: [...renderedDoc.querySelectorAll('p')].some(p => p.textContent.replace(/\s+/g, ' ').trim() === 'wrapped paragraph')
+    });
+    visualChecks.push({
+      name: 'plain text extraction preserves table row and cell separators',
+      passed: editor.getText() === 'one\ntwo\n\nwrapped\nparagraph\n\nA\tB\nC\tD'
+    });
+
+    editor.value = '```js\nconsole.log(1)\n```';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(5, 5);
+    const setLanguageWorked = editor.exec('code.setLanguage', { language: 'python' });
+    visualChecks.push({
+      name: 'code.setLanguage updates opening fence language',
+      passed: setLanguageWorked && editor.value === '```python\nconsole.log(1)\n```'
+    });
+
+    editor.value = '| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |';
+    await new Promise(requestAnimationFrame);
+    const middleCellOffset = editor.value.indexOf('2');
+    editor.setSelectionRange(middleCellOffset, middleCellOffset + 1);
+    editor.exec('table.deleteColumn');
+    visualChecks.push({
+      name: 'table.deleteColumn targets selected table column',
+      passed: editor.value === '| A | C |\n| --- | --- |\n| 1 | 3 |'
+    });
+
+    editor.value = '| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |';
+    await new Promise(requestAnimationFrame);
+    const secondRowOffset = editor.value.indexOf('3');
+    editor.setSelectionRange(secondRowOffset, secondRowOffset + 1);
+    editor.exec('table.deleteRow');
+    visualChecks.push({
+      name: 'table.deleteRow targets selected table row',
+      passed: editor.value === '| A | B |\n| --- | --- |\n| 1 | 2 |'
+    });
+
+    editor.markdownFlavor = 'commonmark';
+    editor.value = '| A | B |\n| --- | --- |\n- [ ] task\n~~strike~~';
+    await new Promise(requestAnimationFrame);
+    const commonmarkDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'commonmark mode does not render GFM table task checkbox or strikethrough',
+      passed: !commonmarkDoc.querySelector('table')
+        && !commonmarkDoc.querySelector('input[type="checkbox"]')
+        && !commonmarkDoc.querySelector('del')
+    });
+    editor.markdownFlavor = 'gfm';
+    editor.mode = 'live';
+    editor.preview = 'none';
+
+    editor.value = '__bold__ and _italic_';
+    await new Promise(requestAnimationFrame);
+    const underscoreDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'preview renderer supports underscore strong and emphasis',
+      passed: underscoreDoc.querySelector('strong')?.textContent === 'bold'
+        && underscoreDoc.querySelector('em')?.textContent === 'italic'
+    });
+    visualChecks.push({
+      name: 'live renderer supports underscore strong and emphasis',
+      passed: editor.shadowRoot.querySelector('strong')?.textContent === 'bold'
+        && editor.shadowRoot.querySelector('em')?.textContent === 'italic'
+    });
+
+    editor.value = 'Setext H1\n=\n\nSetext H2\n---';
+    await new Promise(requestAnimationFrame);
+    const setextDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'preview renderer supports setext h1 and h2 headings',
+      passed: setextDoc.querySelector('h1')?.textContent === 'Setext H1'
+        && setextDoc.querySelector('h2')?.textContent === 'Setext H2'
+        && !setextDoc.querySelector('hr')
+    });
+    visualChecks.push({
+      name: 'live renderer supports setext h1 and h2 headings',
+      passed: editor.shadowRoot.querySelector('.md-h1')?.textContent === 'Setext H1'
+        && editor.shadowRoot.querySelector('.md-h2')?.textContent === 'Setext H2'
+        && !editor.shadowRoot.querySelector('.md-hr-line')
+    });
+
+    editor.value = '~~~js\nconsole.log(1)\n~~~';
+    await new Promise(requestAnimationFrame);
+    const tildeFenceDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'preview renderer supports tilde fenced code blocks',
+      passed: tildeFenceDoc.querySelector('pre > code.language-js')?.textContent === 'console.log(1)'
+        && !tildeFenceDoc.querySelector('del')
+    });
+    visualChecks.push({
+      name: 'live renderer supports tilde fenced code blocks',
+      passed: editor.shadowRoot.querySelector('.md-code-block')?.dataset.language === 'js'
+        && editor.shadowRoot.querySelector('.md-code-label')?.textContent === 'js'
+    });
+    editor.setSelectionRange(5, 5);
+    const tildeSetLanguageWorked = editor.exec('code.setLanguage', { language: 'python' });
+    visualChecks.push({
+      name: 'code.setLanguage preserves tilde fence marker',
+      passed: tildeSetLanguageWorked && editor.value === '~~~python\nconsole.log(1)\n~~~'
+    });
+    editor.value = '~~~';
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const smartEnterClosedTildeFence = editor.exec('editor.smartEnter');
+    visualChecks.push({
+      name: 'smart Enter closes tilde fence with matching marker',
+      passed: smartEnterClosedTildeFence && editor.value === '~~~\n\n~~~'
+    });
+
+    editor.value = '[](https://example.com) [x](https://example.com/a(b)) ![alt](https://example.com/a(b).png "Title")';
+    await new Promise(requestAnimationFrame);
+    const nestedLinkDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    const nestedLinks = nestedLinkDoc.querySelectorAll('a');
+    const nestedImage = nestedLinkDoc.querySelector('img');
+    visualChecks.push({
+      name: 'preview renderer supports empty labels and nested parentheses in links',
+      passed: nestedLinks.length === 2
+        && nestedLinks[0].textContent === ''
+        && nestedLinks[0].getAttribute('href') === 'https://example.com'
+        && nestedLinks[1].textContent === 'x'
+        && nestedLinks[1].getAttribute('href') === 'https://example.com/a(b)'
+    });
+    visualChecks.push({
+      name: 'preview renderer supports nested parentheses and titles in images',
+      passed: nestedImage?.getAttribute('src') === 'https://example.com/a(b).png'
+        && nestedImage?.getAttribute('alt') === 'alt'
+        && nestedImage?.getAttribute('title') === 'Title'
+    });
+    visualChecks.push({
+      name: 'live renderer decorates nested-parenthesis links without truncating URLs',
+      passed: editor.shadowRoot.querySelectorAll('.md-url')[1]?.textContent === 'https://example.com/a(b)'
+        && editor.shadowRoot.querySelectorAll('.md-url')[2]?.textContent === 'https://example.com/a(b).png'
+    });
+
+    editor.value = '| L | C | R |\n| :--- | :---: | ---: |\n| a | b | c |';
+    await new Promise(requestAnimationFrame);
+    const alignedTableDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    const previewHeadCells = alignedTableDoc.querySelectorAll('th');
+    const previewBodyCells = alignedTableDoc.querySelectorAll('td');
+    const liveHeadCells = editor.shadowRoot.querySelectorAll('.md-table th');
+    visualChecks.push({
+      name: 'preview renderer applies GFM table column alignment',
+      passed: previewHeadCells[0]?.style.textAlign === 'left'
+        && previewHeadCells[1]?.style.textAlign === 'center'
+        && previewHeadCells[2]?.style.textAlign === 'right'
+        && previewBodyCells[0]?.style.textAlign === 'left'
+        && previewBodyCells[1]?.style.textAlign === 'center'
+        && previewBodyCells[2]?.style.textAlign === 'right'
+    });
+    visualChecks.push({
+      name: 'live renderer applies GFM table column alignment',
+      passed: liveHeadCells[0]?.style.textAlign === 'left'
+        && liveHeadCells[1]?.style.textAlign === 'center'
+        && liveHeadCells[2]?.style.textAlign === 'right'
+    });
+
+    editor.value = '| A | B |\n| --- | --- |\n| a\\|b | c |';
+    await new Promise(requestAnimationFrame);
+    const escapedPipeDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    const escapedPipeLiveCell = editor.shadowRoot.querySelector('tbody .md-cell');
+    visualChecks.push({
+      name: 'table renderer unescapes escaped pipe characters inside cells',
+      passed: escapedPipeDoc.querySelector('tbody td')?.textContent === 'a|b'
+        && escapedPipeLiveCell?.textContent === 'a|b'
+        && editor.getText() === 'A\tB\na|b\tc'
+    });
+    escapedPipeLiveCell.textContent = 'a|c';
+    escapedPipeLiveCell.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 'c', bubbles: true }));
+    visualChecks.push({
+      name: 'editing live table cell re-escapes pipe characters in Markdown source',
+      passed: editor.value === '| A | B |\n| --- | --- |\n| a\\|c | c |'
+    });
 
     const demoControls = document.createElement('div');
     demoControls.hidden = true;
@@ -246,7 +478,7 @@
       passed: editor.selectionStart === 1 && editor.selectionEnd === editor.value.indexOf('gamma') + 3
     });
 
-    editor.value = 'alpha\n----\nbeta\ngamma';
+    editor.value = 'alpha\n***\nbeta\ngamma';
     await new Promise(requestAnimationFrame);
     const hrLine = editor.shadowRoot.querySelector('.md-hr-line');
     const hrBox = hrLine.getBoundingClientRect();
@@ -259,6 +491,89 @@
     visualChecks.push({
       name: 'Mouse drag can select downward across live horizontal rule',
       passed: editor.selectionStart === 1 && editor.selectionEnd === editor.value.indexOf('gamma') + 3
+    });
+
+    editor.value = '---';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const terminalHrLine = editor.shadowRoot.querySelector('.md-hr-line');
+    const terminalHrAnchor = editor.shadowRoot.querySelector('[data-editable="virtual-hr-after"]');
+    const terminalHrPosition = editor._domPositionFromSource(editor.value.length);
+    const terminalHrSelection = editor._getLiveSelection();
+    const terminalHrLineRect = terminalHrLine?.getBoundingClientRect();
+    const terminalHrAnchorRect = terminalHrAnchor?.getBoundingClientRect();
+    visualChecks.push({
+      name: 'Terminal live horizontal rule restores caret below divider',
+      passed: Boolean(terminalHrLine && terminalHrAnchor && terminalHrPosition?.editable === terminalHrAnchor && terminalHrSelection?.start === 3 && terminalHrSelection?.end === 3 && terminalHrAnchorRect.top >= terminalHrLineRect.bottom - 1)
+    });
+
+    terminalHrAnchor.textContent = 'next';
+    const terminalHrAnchorText = terminalHrAnchor.firstChild;
+    const terminalHrAnchorRange = document.createRange();
+    terminalHrAnchorRange.setStart(terminalHrAnchorText, terminalHrAnchorText.nodeValue.length);
+    terminalHrAnchorRange.collapse(true);
+    const terminalHrShadowSelection = editor.shadowRoot.getSelection();
+    terminalHrShadowSelection.removeAllRanges();
+    terminalHrShadowSelection.addRange(terminalHrAnchorRange);
+    terminalHrAnchor.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 'next', bubbles: true }));
+    visualChecks.push({
+      name: 'Typing below terminal live horizontal rule creates following paragraph',
+      passed: editor.value === '---\nnext' && editor.selectionStart === editor.value.length && Boolean(editor.shadowRoot.querySelector('.md-hr-line'))
+    });
+
+    const terminalSetextHeading = 'Setext title\n---';
+    editor.value = terminalSetextHeading;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const terminalSetextLine = editor.shadowRoot.querySelector('.md-heading');
+    const terminalSetextAnchor = editor.shadowRoot.querySelector('[data-editable="virtual-setext-after"]');
+    const terminalSetextPosition = editor._domPositionFromSource(editor.value.length);
+    const terminalSetextSelection = editor._getLiveSelection();
+    const terminalSetextLineRect = terminalSetextLine?.getBoundingClientRect();
+    const terminalSetextAnchorRect = terminalSetextAnchor?.getBoundingClientRect();
+    visualChecks.push({
+      name: 'Terminal live setext heading restores caret below hidden underline',
+      passed: Boolean(terminalSetextLine && terminalSetextAnchor && terminalSetextPosition?.editable === terminalSetextAnchor && terminalSetextSelection?.start === editor.value.length && terminalSetextSelection?.end === editor.value.length && terminalSetextAnchorRect.top >= terminalSetextLineRect.bottom - 1)
+    });
+
+    editor.setSelectionRange('Setext title'.length, 'Setext title'.length);
+    const setextArrowDownExited = pressLiveKey('ArrowDown');
+    const setextArrowDownSelection = editor._getLiveSelection();
+    visualChecks.push({
+      name: 'ArrowDown exits terminal live setext heading to below-heading anchor',
+      passed: setextArrowDownExited && setextArrowDownSelection?.start === editor.value.length && setextArrowDownSelection?.end === editor.value.length && editor._domPositionFromSource(editor.value.length)?.editable === terminalSetextAnchor
+    });
+
+    const setextEnterBelow = pressLiveKey('Enter');
+    visualChecks.push({
+      name: 'Enter on terminal live setext after-anchor creates trailing blank line',
+      passed: setextEnterBelow && editor.value === `${terminalSetextHeading}\n` && editor.selectionStart === editor.value.length && editor.selectionEnd === editor.value.length
+    });
+
+    editor.value = terminalSetextHeading;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const terminalSetextTypingAnchor = editor.shadowRoot.querySelector('[data-editable="virtual-setext-after"]');
+    terminalSetextTypingAnchor.textContent = 'next';
+    const terminalSetextAnchorText = terminalSetextTypingAnchor.firstChild;
+    const terminalSetextAnchorRange = document.createRange();
+    terminalSetextAnchorRange.setStart(terminalSetextAnchorText, terminalSetextAnchorText.nodeValue.length);
+    terminalSetextAnchorRange.collapse(true);
+    const terminalSetextShadowSelection = editor.shadowRoot.getSelection();
+    terminalSetextShadowSelection.removeAllRanges();
+    terminalSetextShadowSelection.addRange(terminalSetextAnchorRange);
+    terminalSetextTypingAnchor.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 'next', bubbles: true }));
+    visualChecks.push({
+      name: 'Typing below terminal live setext heading creates following paragraph',
+      passed: editor.value === `${terminalSetextHeading}\nnext` && editor.selectionStart === editor.value.length && Boolean(editor.shadowRoot.querySelector('.md-heading'))
+    });
+
+    editor.value = '  Padded setext  \n===';
+    await new Promise(requestAnimationFrame);
+    const paddedSetextHeading = editor.shadowRoot.querySelector('.md-heading');
+    visualChecks.push({
+      name: 'Live setext heading preserves title source spacing for caret mapping',
+      passed: paddedSetextHeading?.textContent === '  Padded setext  ' && Boolean(editor.shadowRoot.querySelector('[data-editable="virtual-setext-after"]'))
     });
 
     editor.value = `# Delete Me
@@ -367,7 +682,7 @@ beta`;
     pressLiveKey('ArrowUp');
     visualChecks.push({ name: 'ArrowUp preserves column when moving to previous live line', passed: editor.selectionStart === 2 && editor.selectionEnd === 2 });
 
-    editor.value = 'alpha\n----\nbeta\ngamma';
+    editor.value = 'alpha\n***\nbeta\ngamma';
     await new Promise(requestAnimationFrame);
     editor.setSelectionRange(1, 1);
     const arrowDownSkippedHr = pressLiveKey('ArrowDown');
@@ -416,17 +731,194 @@ beta`;
     const shiftDownWideToNarrow = pressLiveKey('ArrowDown', { shiftKey: true });
     visualChecks.push({ name: 'Shift+ArrowDown preserves source column across proportional text', passed: shiftDownWideToNarrow && editor.selectionStart === 2 && editor.selectionEnd === 6 });
 
+    const terminalCodeBlock = '```\nconst x = 1;\n```';
+    editor.value = terminalCodeBlock;
+    await new Promise(requestAnimationFrame);
+    const terminalCodeLineEnd = terminalCodeBlock.indexOf('const x = 1;') + 'const x = 1;'.length;
+    editor.setSelectionRange(terminalCodeLineEnd, terminalCodeLineEnd);
+    const codeArrowDownExited = pressLiveKey('ArrowDown');
+    const terminalCodeAnchor = editor.shadowRoot.querySelector('[data-editable="virtual-code-after"]');
+    const terminalCodePosition = editor._domPositionFromSource(editor.value.length);
+    const terminalCodeSelection = editor._getLiveSelection();
+    visualChecks.push({
+      name: 'ArrowDown exits terminal live code block to below-block anchor',
+      passed: codeArrowDownExited && terminalCodePosition?.editable === terminalCodeAnchor && terminalCodeSelection?.start === editor.value.length && terminalCodeSelection?.end === editor.value.length
+    });
+
+    const codeEnterBelow = pressLiveKey('Enter');
+    visualChecks.push({
+      name: 'Enter on terminal live code block after-anchor creates trailing blank line',
+      passed: codeEnterBelow && editor.value === `${terminalCodeBlock}\n` && editor.selectionStart === editor.value.length && editor.selectionEnd === editor.value.length
+    });
+
+    editor.value = terminalCodeBlock;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const terminalCodeTypingAnchor = editor.shadowRoot.querySelector('[data-editable="virtual-code-after"]');
+    terminalCodeTypingAnchor.textContent = 'after';
+    const terminalCodeTypingText = terminalCodeTypingAnchor.firstChild;
+    const terminalCodeTypingRange = document.createRange();
+    terminalCodeTypingRange.setStart(terminalCodeTypingText, terminalCodeTypingText.nodeValue.length);
+    terminalCodeTypingRange.collapse(true);
+    const terminalCodeTypingSelection = editor.shadowRoot.getSelection();
+    terminalCodeTypingSelection.removeAllRanges();
+    terminalCodeTypingSelection.addRange(terminalCodeTypingRange);
+    terminalCodeTypingAnchor.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 'after', bubbles: true }));
+    visualChecks.push({
+      name: 'Typing below terminal live code block creates following paragraph',
+      passed: editor.value === `${terminalCodeBlock}\nafter` && editor.selectionStart === editor.value.length && Boolean(editor.shadowRoot.querySelector('.md-code-block'))
+    });
+
+    const terminalTableBlock = '| A | B |\n| --- | --- |\n| C | D |';
+    editor.value = terminalTableBlock;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const terminalTable = editor.shadowRoot.querySelector('.md-table-block');
+    const terminalTableAnchor = editor.shadowRoot.querySelector('[data-editable="virtual-table-after"]');
+    const terminalTablePosition = editor._domPositionFromSource(editor.value.length);
+    const terminalTableSelection = editor._getLiveSelection();
+    const terminalTableRect = terminalTable?.getBoundingClientRect();
+    const terminalTableAnchorRect = terminalTableAnchor?.getBoundingClientRect();
+    visualChecks.push({
+      name: 'Terminal live table restores EOF caret below grid',
+      passed: Boolean(terminalTable && terminalTableAnchor && terminalTablePosition?.editable === terminalTableAnchor && terminalTableSelection?.start === editor.value.length && terminalTableSelection?.end === editor.value.length && terminalTableAnchorRect.top >= terminalTableRect.bottom - 1)
+    });
+
+    const terminalTableLastCellEnd = terminalTableBlock.indexOf('D') + 1;
+    editor.setSelectionRange(terminalTableLastCellEnd, terminalTableLastCellEnd);
+    const tableArrowDownExited = pressLiveKey('ArrowDown');
+    visualChecks.push({
+      name: 'ArrowDown exits terminal live table to following blank line',
+      passed: tableArrowDownExited && editor.value === `${terminalTableBlock}\n` && editor.selectionStart === editor.value.length && editor.selectionEnd === editor.value.length
+    });
+
+    editor.value = terminalTableBlock;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const tableEnterBelow = pressLiveKey('Enter');
+    visualChecks.push({
+      name: 'Enter on terminal live table after-anchor creates trailing blank line',
+      passed: tableEnterBelow && editor.value === `${terminalTableBlock}\n` && editor.selectionStart === editor.value.length && editor.selectionEnd === editor.value.length
+    });
+
+    editor.value = terminalTableBlock;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const terminalTableTypingAnchor = editor.shadowRoot.querySelector('[data-editable="virtual-table-after"]');
+    terminalTableTypingAnchor.textContent = 'after';
+    const terminalTableTypingText = terminalTableTypingAnchor.firstChild;
+    const terminalTableTypingRange = document.createRange();
+    terminalTableTypingRange.setStart(terminalTableTypingText, terminalTableTypingText.nodeValue.length);
+    terminalTableTypingRange.collapse(true);
+    const terminalTableTypingSelection = editor.shadowRoot.getSelection();
+    terminalTableTypingSelection.removeAllRanges();
+    terminalTableTypingSelection.addRange(terminalTableTypingRange);
+    terminalTableTypingAnchor.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 'after', bubbles: true }));
+    visualChecks.push({
+      name: 'Typing below terminal live table creates following paragraph',
+      passed: editor.value === `${terminalTableBlock}\nafter` && editor.selectionStart === editor.value.length && Boolean(editor.shadowRoot.querySelector('.md-table-block'))
+    });
+
+    editor.value = 'abc\ndef';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(1, 5, 'forward');
+    const arrowLeftCollapsedLiveRange = pressLiveKey('ArrowLeft');
+    visualChecks.push({ name: 'ArrowLeft collapses multi-line live selection to start', passed: arrowLeftCollapsedLiveRange && editor.selectionStart === 1 && editor.selectionEnd === 1 });
+
+    editor.setSelectionRange(1, 5, 'forward');
+    const arrowRightCollapsedLiveRange = pressLiveKey('ArrowRight');
+    visualChecks.push({ name: 'ArrowRight collapses multi-line live selection to end', passed: arrowRightCollapsedLiveRange && editor.selectionStart === 5 && editor.selectionEnd === 5 });
+
+    editor.setSelectionRange(3, 3);
+    const shiftRightCrossesLiveRow = pressLiveKey('ArrowRight', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+ArrowRight at live row end selects into next row', passed: shiftRightCrossesLiveRow && editor.selectionStart === 3 && editor.selectionEnd === 4 && editor._selection.direction === 'forward' });
+
+    editor.setSelectionRange(4, 4);
+    const shiftLeftCrossesLiveRow = pressLiveKey('ArrowLeft', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+ArrowLeft at live row start selects from previous row', passed: shiftLeftCrossesLiveRow && editor.selectionStart === 3 && editor.selectionEnd === 4 && editor._selection.direction === 'backward' });
+
+    editor.mode = 'source';
+    editor.value = 'abc\ndef';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(1, 1);
+    const sourceEndMovesToLineEnd = pressSourceKey('End');
+    visualChecks.push({ name: 'End in source mode moves to current line end', passed: sourceEndMovesToLineEnd && editor.selectionStart === 3 && editor.selectionEnd === 3 });
+
+    editor.setSelectionRange(2, 2);
+    const sourceHomeMovesToLineStart = pressSourceKey('Home');
+    visualChecks.push({ name: 'Home in source mode moves to current line start', passed: sourceHomeMovesToLineStart && editor.selectionStart === 0 && editor.selectionEnd === 0 });
+
+    editor.mode = 'live';
+    editor.value = 'abc\ndef';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(1, 1);
+    const liveEndMovesToLineEnd = pressLiveKey('End');
+    visualChecks.push({ name: 'End in live mode moves to rendered row end', passed: liveEndMovesToLineEnd && editor.selectionStart === 3 && editor.selectionEnd === 3 });
+
+    editor.setSelectionRange(2, 2);
+    const liveHomeMovesToLineStart = pressLiveKey('Home');
+    visualChecks.push({ name: 'Home in live mode moves to rendered row start', passed: liveHomeMovesToLineStart && editor.selectionStart === 0 && editor.selectionEnd === 0 });
+
+    editor.setSelectionRange(1, 1);
+    const liveShiftEndSelectsLineEnd = pressLiveKey('End', { shiftKey: true });
+    visualChecks.push({ name: 'Shift+End in live mode selects only to rendered row end', passed: liveShiftEndSelectsLineEnd && editor.selectionStart === 1 && editor.selectionEnd === 3 && editor._selection.direction === 'forward' });
+
+    const keyboardTable = '| A | B |\n| --- | --- |\n| C | D |';
+    editor.value = keyboardTable;
+    await new Promise(requestAnimationFrame);
+    const tableAOffset = keyboardTable.indexOf('A');
+    const tableBOffset = keyboardTable.indexOf('B');
+    const tableCOffset = keyboardTable.indexOf('C');
+    editor.setSelectionRange(tableAOffset + 1, tableAOffset + 1);
+    const arrowRightMovesToNextCell = pressLiveKey('ArrowRight');
+    visualChecks.push({ name: 'ArrowRight at live table cell end moves to next cell', passed: arrowRightMovesToNextCell && editor.selectionStart === tableBOffset && editor.selectionEnd === tableBOffset });
+
+    editor.setSelectionRange(tableBOffset, tableBOffset);
+    const arrowLeftMovesToPreviousCell = pressLiveKey('ArrowLeft');
+    visualChecks.push({ name: 'ArrowLeft at live table cell start moves to previous cell end', passed: arrowLeftMovesToPreviousCell && editor.selectionStart === tableAOffset + 1 && editor.selectionEnd === tableAOffset + 1 });
+
+    editor.setSelectionRange(tableAOffset, tableAOffset);
+    const arrowDownMovesToBodyCell = pressLiveKey('ArrowDown');
+    visualChecks.push({ name: 'ArrowDown in live table moves to same-column body cell', passed: arrowDownMovesToBodyCell && editor.selectionStart === tableCOffset && editor.selectionEnd === tableCOffset });
+
+    editor.setSelectionRange(tableCOffset, tableCOffset);
+    const arrowUpMovesToHeaderCell = pressLiveKey('ArrowUp');
+    visualChecks.push({ name: 'ArrowUp in live table moves to same-column header cell', passed: arrowUpMovesToHeaderCell && editor.selectionStart === tableAOffset && editor.selectionEnd === tableAOffset });
+
+    editor.setSelectionRange(tableBOffset, tableBOffset);
+    const tableEndMovesToCellEnd = pressLiveKey('End');
+    visualChecks.push({ name: 'End in live table cell moves to cell end', passed: tableEndMovesToCellEnd && editor.selectionStart === tableBOffset + 1 && editor.selectionEnd === tableBOffset + 1 });
+
+    editor.setSelectionRange(tableBOffset + 1, tableBOffset + 1);
+    const tableHomeMovesToCellStart = pressLiveKey('Home');
+    visualChecks.push({ name: 'Home in live table cell moves to cell start', passed: tableHomeMovesToCellStart && editor.selectionStart === tableBOffset && editor.selectionEnd === tableBOffset });
+
+    const escapedCellTable = '| A | B |\n| --- | --- |\n| a\\|b | c |';
+    editor.value = escapedCellTable;
+    await new Promise(requestAnimationFrame);
+    const escapedCell = editor.shadowRoot.querySelector('.md-cell[data-row="0"][data-col="0"]');
+    const escapedPipeSourceOffset = escapedCellTable.indexOf('a\\|b') + 3;
+    const escapedPipeDisplayOffset = editor._displayOffsetFromSourceOffset(escapedCell, escapedPipeSourceOffset);
+    const escapedPipeRoundTrip = editor._sourceOffsetFromDisplayOffset(escapedCell, escapedPipeDisplayOffset);
+    const escapedPipeDomPosition = editor._domPositionFromSource(escapedPipeSourceOffset);
+    const escapedPipeDomRoundTrip = editor._sourceOffsetFromDom(escapedPipeDomPosition.editable, escapedPipeDomPosition.node, escapedPipeDomPosition.offset);
+    visualChecks.push({
+      name: 'Escaped live table pipe maps between source and displayed offsets',
+      passed: escapedPipeDisplayOffset === 2 && escapedPipeRoundTrip === escapedPipeSourceOffset && escapedPipeDomRoundTrip === escapedPipeSourceOffset
+    });
+
     editor.mode = 'live';
     editor.preview = 'none';
     await new Promise(requestAnimationFrame);
     let renderEvents = 0;
     const countRender = () => { renderEvents += 1; };
     editor.addEventListener('md-render', countRender);
+    const previewBeforeHiddenChange = editor.shadowRoot.querySelector('.preview').innerHTML;
     editor.value = '**hidden preview**';
     await new Promise(resolve => setTimeout(resolve, 140));
     visualChecks.push({
       name: 'Hidden preview is marked dirty without rendering HTML',
-      passed: renderEvents === 0 && editor._previewDirty === true && editor.shadowRoot.querySelector('.preview').innerHTML === ''
+      passed: renderEvents === 0 && editor._previewDirty === true && editor.shadowRoot.querySelector('.preview').innerHTML === previewBeforeHiddenChange
     });
     editor.preview = 'below';
     await new Promise(requestAnimationFrame);

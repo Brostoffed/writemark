@@ -66,6 +66,9 @@ const ALIASES = new Map([
   ["kt", "kotlin"],
 ]);
 
+const LIVE_ARROW_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
+const NAVIGATION_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
+
 function now() { return Date.now(); }
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function normalizeLineEndings(value) { return String(value ?? "").replace(/\r\n?/g, "\n"); }
@@ -90,6 +93,62 @@ function isSafeUrl(url, { allowDataImage = false } = {}) {
   return true;
 }
 function safeHref(url, opts = {}) { const raw = String(url ?? "").trim(); return isSafeUrl(raw, opts) ? raw : "#"; }
+
+function splitLinkDestinationAndTitle(raw) {
+  const value = String(raw ?? "").trim();
+  if (!value) return { url: "", title: "" };
+  const quoted = /^(.*?)\s+(["'])(.*?)\2\s*$/.exec(value);
+  if (quoted && quoted[1].trim()) return { url: quoted[1].trim(), title: quoted[3] };
+  return { url: value, title: "" };
+}
+
+function parseInlineLinkAt(text, start = 0) {
+  const source = String(text ?? "");
+  const bang = source[start] === "!" ? "!" : "";
+  let i = start + bang.length;
+  if (source[i] !== "[") return null;
+  let escaped = false;
+  let labelEnd = -1;
+  for (let j = i + 1; j < source.length; j += 1) {
+    const ch = source[j];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === "]") { labelEnd = j; break; }
+  }
+  if (labelEnd === -1 || source[labelEnd + 1] !== "(") return null;
+  const label = source.slice(i + 1, labelEnd);
+  const destStart = labelEnd + 2;
+  let depth = 0;
+  let quote = "";
+  escaped = false;
+  for (let j = destStart; j < source.length; j += 1) {
+    const ch = source[j];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (quote) {
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === "\"" || ch === "'") { quote = ch; continue; }
+    if (ch === "(") { depth += 1; continue; }
+    if (ch === ")") {
+      if (depth > 0) { depth -= 1; continue; }
+      const destination = splitLinkDestinationAndTitle(source.slice(destStart, j));
+      return {
+        bang,
+        label,
+        url: destination.url,
+        title: destination.title,
+        from: start,
+        to: j + 1,
+        labelStart: i + 1,
+        labelEnd,
+        full: source.slice(start, j + 1),
+      };
+    }
+  }
+  return null;
+}
 
 function htmlToMarkdown(html) {
   const template = document.createElement("template");
@@ -176,14 +235,15 @@ function markdownFromClipboardData(clipboard) {
 }
 function collectInlineMarkdownRanges(source) {
   const ranges = [];
-  const addMatches = (regex, openLength, closeLength, labelGroup = 1) => {
+  const addMatches = (regex, openLength, closeLength, labelGroup = 1, markerOffsetGroup = null) => {
     regex.lastIndex = 0;
     let match;
     while ((match = regex.exec(source))) {
       const label = match[labelGroup] ?? "";
-      const from = match.index;
+      const markerOffset = markerOffsetGroup == null ? 0 : (match[markerOffsetGroup]?.length ?? 0);
+      const from = match.index + markerOffset;
       const to = match.index + match[0].length;
-      const innerFrom = match.index + openLength;
+      const innerFrom = from + openLength;
       const innerTo = to - closeLength;
       if (innerTo >= innerFrom && label.length >= 0) ranges.push({ from, to, innerFrom, innerTo });
       if (match.index === regex.lastIndex) regex.lastIndex += 1;
@@ -193,17 +253,13 @@ function collectInlineMarkdownRanges(source) {
   addMatches(/\*\*([^*]+)\*\*/g, 2, 2);
   addMatches(/__([^_]+)__/g, 2, 2);
   addMatches(/~~([^~]+)~~/g, 2, 2);
-  addMatches(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, 1, 1, 2);
-  let match;
-  const linkRegex = /(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g;
-  while ((match = linkRegex.exec(source))) {
-    const bang = match[1] || "";
-    const label = match[2] || "";
-    const from = match.index;
-    const labelStart = from + bang.length + 1;
-    const labelEnd = labelStart + label.length;
-    ranges.push({ from, to: from + match[0].length, innerFrom: labelStart, innerTo: labelEnd });
-    if (match.index === linkRegex.lastIndex) linkRegex.lastIndex += 1;
+  addMatches(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, 1, 1, 2, 1);
+  addMatches(/(^|[^_])_([^_\n]+)_(?!_)/g, 1, 1, 2, 1);
+  for (let i = 0; i < source.length; i += 1) {
+    const link = parseInlineLinkAt(source, i);
+    if (!link) continue;
+    ranges.push({ from: link.from, to: link.to, innerFrom: link.labelStart, innerTo: link.labelEnd });
+    i = link.to - 1;
   }
   return ranges.sort((a, b) => (a.to - a.from) - (b.to - b.from));
 }
@@ -281,7 +337,7 @@ function getLineRange(value, offset) {
   return { start, end, text: source.slice(start, end) };
 }
 
-function getSelectedLineRanges(value, selectionStart, selectionEnd) {
+function getSelectedLineRanges(value, selectionStart, selectionEnd, opts = {}) {
   const startLine = getLineRange(value, selectionStart);
   const endProbe = selectionEnd > selectionStart && value[selectionEnd - 1] === "\n" ? selectionEnd - 1 : selectionEnd;
   const endLine = getLineRange(value, endProbe);
@@ -289,25 +345,29 @@ function getSelectedLineRanges(value, selectionStart, selectionEnd) {
   let cursor = startLine.start;
   while (cursor <= endLine.start) {
     const line = getLineRange(value, cursor);
-    out.push(makeLineInfo(line.start, line.end, line.text));
+    out.push(makeLineInfo(line.start, line.end, line.text, opts));
     if (line.end >= value.length) break;
     cursor = line.end + 1;
   }
   return out;
 }
 
-function makeLineInfo(start, end, text) {
+function makeLineInfo(start, end, text, opts = {}) {
   const indent = (/^(\s*)/.exec(text) || ["", ""])[1];
-  const list = parseListItem(text);
+  const list = parseListItem(text, opts);
   const contentStart = list ? start + list.contentStart : start + indent.length;
   return { start, end, text, indent, marker: list?.markerText ?? null, contentStart };
 }
 
-function parseListItem(line) {
-  const task = /^(\s*)([-+*])\s+\[( |x|X)\]\s+(.*)$/.exec(line);
-  if (task) {
-    const markerText = `${task[2]} [${task[3]}] `;
-    return { kind: "task-list-item", listType: "ul", indent: task[1], marker: task[2], markerText, checked: task[3].toLowerCase() === "x", content: task[4], contentStart: task[1].length + markerText.length, fullMarkerStart: task[1].length, fullMarkerEnd: task[1].length + markerText.length };
+function usesGfm(opts = {}) { return opts.gfm ?? opts.markdownFlavor !== "commonmark"; }
+
+function parseListItem(line, opts = {}) {
+  if (usesGfm(opts)) {
+    const task = /^(\s*)([-+*])\s+\[( |x|X)\]\s+(.*)$/.exec(line);
+    if (task) {
+      const markerText = `${task[2]} [${task[3]}] `;
+      return { kind: "task-list-item", listType: "ul", indent: task[1], marker: task[2], markerText, checked: task[3].toLowerCase() === "x", content: task[4], contentStart: task[1].length + markerText.length, fullMarkerStart: task[1].length, fullMarkerEnd: task[1].length + markerText.length };
+    }
   }
   const ordered = /^(\s*)(\d+)([.)])\s+(.*)$/.exec(line);
   if (ordered) {
@@ -333,9 +393,22 @@ function parseBlockquote(line) {
   return { markerText: m[1], content: m[2], contentStart: m[1].length };
 }
 function isHorizontalRule(line) { const t = line.trim(); return /^([-*_])(?:\s*\1){2,}\s*$/.test(t); }
-function isFenceLine(line) { return /^\s*```/.test(line); }
-function getFenceInfo(line) { const m = /^\s*```\s*([^`]*)$/.exec(line); return m ? { language: m[1].trim() } : null; }
-function isFenceOpenerLine(line) { return /^\s*```[\w+-]*\s*$/.test(line); }
+function getFenceInfo(line) {
+  const m = /^(\s{0,3})(`{3,}|~{3,})\s*([^`~]*)$/.exec(line);
+  if (!m) return null;
+  return { marker: m[2][0], length: m[2].length, sequence: m[2], language: m[3].trim() };
+}
+function isFenceLine(line) { return Boolean(getFenceInfo(line)); }
+function isFenceCloseLine(line, opener) {
+  const info = getFenceInfo(line);
+  return Boolean(info && opener && info.marker === opener.marker && info.length >= opener.length && info.language === "");
+}
+function isFenceOpenerLine(line) { return Boolean(getFenceInfo(line)); }
+function parseSetextHeadingLevel(line) {
+  const m = /^\s{0,3}(=+|-+)\s*$/.exec(line);
+  if (!m) return null;
+  return m[1][0] === "=" ? 1 : 2;
+}
 function isInsideInlineCode(lineBeforeCursor) { return ((lineBeforeCursor.match(/(?<!\\)`/g) || []).length % 2) === 1; }
 
 function splitTableRow(line) {
@@ -395,32 +468,54 @@ function parseTableLineRanges(line, absoluteStart) {
   }
   return cells;
 }
+function tableAlignmentFromDelimiter(cellText) {
+  const value = String(cellText ?? "").trim();
+  const left = value.startsWith(":");
+  const right = value.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  if (left) return "left";
+  return "";
+}
+function tableAlignmentStyle(alignment) {
+  return alignment ? ` style="text-align:${alignment}"` : "";
+}
+function unescapeTableCellText(cellText) {
+  return String(cellText ?? "").replace(/\\([\\|])/g, "$1");
+}
 
-function classifyLine(value, offset, lineInfo) {
+function classifyLine(value, offset, lineInfo, opts = {}) {
   if (isInsideFence(value, offset)) return { kind: "fenced-code" };
-  const list = parseListItem(lineInfo.text); if (list) return { kind: list.kind, list };
+  const list = parseListItem(lineInfo.text, opts); if (list) return { kind: list.kind, list };
   const heading = parseHeading(lineInfo.text); if (heading) return { kind: "heading", heading };
   const quote = parseBlockquote(lineInfo.text); if (quote) return { kind: "blockquote", blockquote: quote };
   if (isHorizontalRule(lineInfo.text)) return { kind: "horizontal-rule" };
-  if (isLikelyTableRow(lineInfo.text)) return { kind: "table" };
+  if (usesGfm(opts) && isLikelyTableRow(lineInfo.text)) return { kind: "table" };
   return { kind: "paragraph" };
 }
 function isInsideFence(value, offset) {
   const source = normalizeLineEndings(value);
   const lines = getLines(source);
-  let inFence = false;
+  let opener = null;
   for (const line of lines) {
     if (line.start >= offset) break;
-    if (isFenceLine(line.text)) {
+    if (!opener) {
+      const info = getFenceInfo(line.text);
+      if (!info) continue;
       if (offset <= line.end) break;
-      inFence = !inFence;
+      opener = info;
+      continue;
+    }
+    if (isFenceCloseLine(line.text, opener)) {
+      if (offset <= line.end) break;
+      opener = null;
     }
   }
-  return inFence;
+  return Boolean(opener);
 }
-function hasClosingFenceAfter(value, lineEnd) {
+function hasClosingFenceAfter(value, lineEnd, opener) {
   const rest = normalizeLineEndings(value).slice(lineEnd + 1);
-  return /^.*?^\s*```\s*$/ms.test(rest);
+  return getLines(rest).some(line => isFenceCloseLine(line.text, opener));
 }
 
 function applyTextChanges(value, changes) {
@@ -514,13 +609,14 @@ function serializeMarkedValue(value, start, end) {
   return value.slice(0, start) + "[" + value.slice(start, end) + "]" + value.slice(end);
 }
 
-function parseBlocks(markdown) {
+function parseBlocks(markdown, opts = {}) {
   const source = normalizeLineEndings(markdown);
   const lines = getLines(source);
   const blocks = [];
+  const gfm = usesGfm(opts);
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    if (i + 1 < lines.length && isLikelyTableRow(line.text) && isTableDelimiter(lines[i + 1].text)) {
+    if (gfm && i + 1 < lines.length && isLikelyTableRow(line.text) && isTableDelimiter(lines[i + 1].text)) {
       const header = { ...lines[i], cells: parseTableLineRanges(lines[i].text, lines[i].start) };
       const delimiter = { ...lines[i + 1], cells: parseTableLineRanges(lines[i + 1].text, lines[i + 1].start) };
       const rows = [];
@@ -533,19 +629,31 @@ function parseBlocks(markdown) {
       i = j - 1;
       continue;
     }
-    if (isFenceLine(line.text) && (line.newlineEnd > line.end || i + 1 < lines.length)) {
-      const info = getFenceInfo(line.text) || { language: "" };
+    const fenceInfo = getFenceInfo(line.text);
+    if (fenceInfo && (line.newlineEnd > line.end || i + 1 < lines.length)) {
       const codeLines = [];
       let j = i + 1;
-      while (j < lines.length && !isFenceLine(lines[j].text)) { codeLines.push(lines[j]); j += 1; }
+      while (j < lines.length && !isFenceCloseLine(lines[j].text, fenceInfo)) { codeLines.push(lines[j]); j += 1; }
       const closing = j < lines.length ? lines[j] : null;
-      blocks.push({ type: "code-fence", from: line.start, to: (closing ?? codeLines.at(-1) ?? line).end, newlineEnd: (closing ?? codeLines.at(-1) ?? line).newlineEnd, opening: line, closing, codeLines, language: info.language });
+      blocks.push({ type: "code-fence", from: line.start, to: (closing ?? codeLines.at(-1) ?? line).end, newlineEnd: (closing ?? codeLines.at(-1) ?? line).newlineEnd, opening: line, closing, codeLines, language: fenceInfo.language, fence: fenceInfo });
       i = closing ? j : j - 1;
+      continue;
+    }
+    const setextLevel = i + 1 < lines.length ? parseSetextHeadingLevel(lines[i + 1].text) : null;
+    const canSetext = setextLevel
+      && line.text.trim()
+      && !parseHeading(line.text)
+      && !parseListItem(line.text, opts)
+      && !parseBlockquote(line.text)
+      && !isHorizontalRule(line.text);
+    if (canSetext) {
+      blocks.push({ type: "heading", from: line.start, to: lines[i + 1].end, newlineEnd: lines[i + 1].newlineEnd, line, heading: { indent: "", level: setextLevel, markerText: lines[i + 1].text, content: line.text.trim(), contentStart: 0 }, setext: lines[i + 1] });
+      i += 1;
       continue;
     }
     const heading = parseHeading(line.text);
     if (heading) { blocks.push({ type: "heading", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, heading }); continue; }
-    const list = parseListItem(line.text);
+    const list = parseListItem(line.text, opts);
     if (list) { blocks.push({ type: list.kind, from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, list }); continue; }
     const quote = parseBlockquote(line.text);
     if (quote) { blocks.push({ type: "blockquote", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, quote }); continue; }
@@ -556,7 +664,7 @@ function parseBlocks(markdown) {
   return blocks;
 }
 
-function decorateInline(raw) {
+function decorateInline(raw, opts = {}) {
   const text = String(raw ?? "");
   let i = 0;
   let html = "";
@@ -568,24 +676,31 @@ function decorateInline(raw) {
     }
     if (text.startsWith("**", i)) {
       const end = text.indexOf("**", i + 2);
-      if (end > i + 2) { html += token("**") + `<strong>${decorateInline(text.slice(i + 2, end))}</strong>` + token("**"); i = end + 2; continue; }
+      if (end > i + 2) { html += token("**") + `<strong>${decorateInline(text.slice(i + 2, end), opts)}</strong>` + token("**"); i = end + 2; continue; }
     }
-    if (text.startsWith("~~", i)) {
+    if (text.startsWith("__", i)) {
+      const end = text.indexOf("__", i + 2);
+      if (end > i + 2) { html += token("__") + `<strong>${decorateInline(text.slice(i + 2, end), opts)}</strong>` + token("__"); i = end + 2; continue; }
+    }
+    if (usesGfm(opts) && text.startsWith("~~", i)) {
       const end = text.indexOf("~~", i + 2);
-      if (end > i + 2) { html += token("~~") + `<del>${decorateInline(text.slice(i + 2, end))}</del>` + token("~~"); i = end + 2; continue; }
+      if (end > i + 2) { html += token("~~") + `<del>${decorateInline(text.slice(i + 2, end), opts)}</del>` + token("~~"); i = end + 2; continue; }
     }
     if (text[i] === "*" && text[i + 1] !== "*") {
       const end = text.indexOf("*", i + 1);
-      if (end > i + 1) { html += token("*") + `<em>${decorateInline(text.slice(i + 1, end))}</em>` + token("*"); i = end + 1; continue; }
+      if (end > i + 1) { html += token("*") + `<em>${decorateInline(text.slice(i + 1, end), opts)}</em>` + token("*"); i = end + 1; continue; }
     }
-    const link = /^(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/.exec(text.slice(i));
+    if (text[i] === "_" && text[i + 1] !== "_" && !/\w/.test(text[i - 1] || "")) {
+      const end = text.indexOf("_", i + 1);
+      if (end > i + 1 && !/\w/.test(text[end + 1] || "")) { html += token("_") + `<em>${decorateInline(text.slice(i + 1, end), opts)}</em>` + token("_"); i = end + 1; continue; }
+    }
+    const link = parseInlineLinkAt(text, i);
     if (link) {
-      const [full, bang, label, url] = link;
-      const safe = safeHref(url);
-      const labelHtml = decorateInline(label);
-      if (bang) html += token("![") + labelHtml + token("](") + `<span class="md-url">${escapeHtml(url)}</span>` + token(")");
-      else html += token("[") + `<a href="${escapeAttribute(safe)}" tabindex="-1">${labelHtml}</a>` + token("](") + `<span class="md-url">${escapeHtml(url)}</span>` + token(")");
-      i += full.length;
+      const safe = safeHref(link.url);
+      const labelHtml = decorateInline(link.label, opts);
+      if (link.bang) html += token("![") + labelHtml + token("](") + `<span class="md-url">${escapeHtml(link.url)}</span>` + token(")");
+      else html += token("[") + `<a href="${escapeAttribute(safe)}" tabindex="-1">${labelHtml}</a>` + token("](") + `<span class="md-url">${escapeHtml(link.url)}</span>` + token(")");
+      i = link.to;
       continue;
     }
     html += escapeHtml(text[i]);
@@ -600,38 +715,74 @@ function renderInlineMarkdown(source, opts = {}) {
   const tokens = [];
   const reserve = html => { const token = `\uE000${tokens.length}\uE001`; tokens.push([token, html]); return token; };
   text = text.replace(/`([^`\n]+?)`/g, (_, code) => reserve(`<code>${escapeHtml(code)}</code>`));
-  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (all, alt, url, title) => {
-    const safe = safeHref(url, { allowDataImage: false }); if (safe === "#" && String(url).trim() !== "#") return escapeHtml(all);
-    return reserve(`<img src="${escapeAttribute(safe)}" alt="${escapeAttribute(alt)}"${title ? ` title="${escapeAttribute(title)}"` : ""}>`);
-  });
-  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (all, label, url, title) => {
-    const safe = safeHref(url); if (safe === "#" && String(url).trim() !== "#") return escapeHtml(label);
-    const target = opts.linkTarget === "_blank" ? " target=\"_blank\" rel=\"noopener noreferrer\"" : "";
-    return reserve(`<a href="${escapeAttribute(safe)}"${target}${title ? ` title="${escapeAttribute(title)}"` : ""}>${renderInlineMarkdown(label, opts)}</a>`);
-  });
+  let linked = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const link = parseInlineLinkAt(text, i);
+    if (!link) { linked += text[i]; continue; }
+    if (link.bang) {
+      const safe = safeHref(link.url, { allowDataImage: false });
+      linked += (safe === "#" && String(link.url).trim() !== "#")
+        ? link.full
+        : reserve(`<img src="${escapeAttribute(safe)}" alt="${escapeAttribute(link.label)}"${link.title ? ` title="${escapeAttribute(link.title)}"` : ""}>`);
+    } else {
+      const safe = safeHref(link.url);
+      const target = opts.linkTarget === "_blank" ? " target=\"_blank\" rel=\"noopener noreferrer\"" : "";
+      linked += (safe === "#" && String(link.url).trim() !== "#")
+        ? link.label
+        : reserve(`<a href="${escapeAttribute(safe)}"${target}${link.title ? ` title="${escapeAttribute(link.title)}"` : ""}>${renderInlineMarkdown(link.label, opts)}</a>`);
+    }
+    i = link.to - 1;
+  }
+  text = linked;
   text = escapeHtml(text);
   text = text.replace(/(^|[\s(])((?:https?:\/\/)[^\s<]+[^\s<.,;:!?\])}])/g, (m, p, url) => `${p}<a href="${escapeAttribute(safeHref(url))}">${escapeHtml(url)}</a>`);
   text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   text = text.replace(/__([^_]+)__/g, "<strong>$1</strong>");
   text = text.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
-  text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  text = text.replace(/(?<![\w_])_([^_\n]+)_(?![\w_])/g, "<em>$1</em>");
+  if (usesGfm(opts)) text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
   for (const [token, html] of tokens) text = text.replaceAll(escapeHtml(token), html).replaceAll(token, html);
   return text;
 }
 
 function renderMarkdown(markdown, opts = {}) {
   const options = { ...DEFAULTS, ...opts };
-  const blocks = parseBlocks(markdown);
+  const blocks = parseBlocks(markdown, options);
   const out = [];
-  for (const block of blocks) {
+  for (let i = 0; i < blocks.length; i += 1) {
+    const block = blocks[i];
     if (block.type === "blank") continue;
     if (block.type === "heading") { out.push(`<h${block.heading.level}>${renderInlineMarkdown(block.heading.content, options)}</h${block.heading.level}>`); continue; }
     if (block.type === "horizontal-rule") { out.push("<hr>"); continue; }
-    if (block.type === "blockquote") { out.push(`<blockquote>${renderInlineMarkdown(block.quote.content, options)}</blockquote>`); continue; }
+    if (block.type === "blockquote") {
+      const quotes = [block];
+      let j = i + 1;
+      while (j < blocks.length && blocks[j].type === "blockquote") { quotes.push(blocks[j]); j += 1; }
+      const body = quotes.map(q => q.quote.content).join("\n");
+      out.push(`<blockquote><p>${renderInlineMarkdown(body, options)}</p></blockquote>`);
+      i = j - 1;
+      continue;
+    }
     if (block.type === "bullet-list-item" || block.type === "ordered-list-item" || block.type === "task-list-item") {
-      const list = block.list;
-      const checkbox = list.kind === "task-list-item" ? `<input type="checkbox" disabled${list.checked ? " checked" : ""}> ` : "";
-      out.push(`<ul><li>${checkbox}${renderInlineMarkdown(list.content, options)}</li></ul>`); continue;
+      const items = [block];
+      let j = i + 1;
+      while (j < blocks.length) {
+        const next = blocks[j];
+        if (!["bullet-list-item", "ordered-list-item", "task-list-item"].includes(next.type)) break;
+        if (next.list.listType !== block.list.listType || next.list.indent !== block.list.indent) break;
+        items.push(next);
+        j += 1;
+      }
+      const tag = block.list.listType === "ol" ? "ol" : "ul";
+      const start = tag === "ol" && Number.isFinite(block.list.number) && block.list.number !== 1 ? ` start="${block.list.number}"` : "";
+      const listHtml = items.map(item => {
+        const list = item.list;
+        const checkbox = list.kind === "task-list-item" ? `<input type="checkbox" disabled${list.checked ? " checked" : ""}> ` : "";
+        return `<li>${checkbox}${renderInlineMarkdown(list.content, options)}</li>`;
+      }).join("");
+      out.push(`<${tag}${start}>${listHtml}</${tag}>`);
+      i = j - 1;
+      continue;
     }
     if (block.type === "code-fence") {
       const lang = block.language ? ` class="language-${escapeAttribute(block.language)}"` : "";
@@ -640,13 +791,41 @@ function renderMarkdown(markdown, opts = {}) {
     if (block.type === "table") {
       const header = block.header.cells;
       const rows = block.rows;
-      out.push(`<div class="md-table-wrap"><table><thead><tr>${header.map(c => `<th>${renderInlineMarkdown(c.text, options)}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${header.map((_, i) => `<td>${renderInlineMarkdown(r.cells[i]?.text ?? "", options)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`); continue;
+      const alignments = block.delimiter.cells.map(cell => tableAlignmentFromDelimiter(cell.text));
+      out.push(`<div class="md-table-wrap"><table><thead><tr>${header.map((c, i) => `<th${tableAlignmentStyle(alignments[i])}>${renderInlineMarkdown(unescapeTableCellText(c.text), options)}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${header.map((_, i) => `<td${tableAlignmentStyle(alignments[i])}>${renderInlineMarkdown(unescapeTableCellText(r.cells[i]?.text ?? ""), options)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`); continue;
+    }
+    if (block.type === "paragraph") {
+      const paragraphs = [block];
+      let j = i + 1;
+      while (j < blocks.length && blocks[j].type === "paragraph") { paragraphs.push(blocks[j]); j += 1; }
+      out.push(`<p>${renderInlineMarkdown(paragraphs.map(p => p.line.text).join("\n"), options)}</p>`);
+      i = j - 1;
+      continue;
     }
     out.push(`<p>${renderInlineMarkdown(block.line.text, options)}</p>`);
   }
   return out.join("\n");
 }
-function textFromMarkdown(markdown) { return stripHtml(renderMarkdown(markdown)).replace(/\n{3,}/g, "\n\n").trim(); }
+function textFromMarkdown(markdown, opts = {}) {
+  const options = { ...DEFAULTS, ...opts };
+  const inlineText = text => stripHtml(renderInlineMarkdown(text, options));
+  const lines = [];
+  for (const block of parseBlocks(markdown, options)) {
+    if (block.type === "blank") { lines.push(""); continue; }
+    if (block.type === "heading") { lines.push(inlineText(block.heading.content)); continue; }
+    if (block.type === "horizontal-rule") continue;
+    if (block.type === "blockquote") { lines.push(inlineText(block.quote.content)); continue; }
+    if (block.type === "bullet-list-item" || block.type === "ordered-list-item" || block.type === "task-list-item") { lines.push(inlineText(block.list.content)); continue; }
+    if (block.type === "code-fence") { lines.push(block.codeLines.map(l => l.text).join("\n")); continue; }
+    if (block.type === "table") {
+      const tableRows = [block.header, ...block.rows];
+      for (const row of tableRows) lines.push(row.cells.map(cell => inlineText(unescapeTableCellText(cell.text))).join("\t"));
+      continue;
+    }
+    lines.push(inlineText(block.line.text));
+  }
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
 
 class WritemarkEditorElement extends HTMLElement {
   static formAssociated = true;
@@ -679,6 +858,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._liveIndexDirty = true;
     this._liveDirty = true;
     this._previewDirty = true;
+    this._validationVisible = false;
     this._previewRenderTimer = 0;
     this._completionUpdateFrame = 0;
     this._virtualState = { active: false, start: 0, end: 0, total: 0, lineHeight: 24 };
@@ -765,7 +945,7 @@ class WritemarkEditorElement extends HTMLElement {
   get willValidate() { return this._internals?.willValidate ?? !this.disabled; }
 
   focus(options) { this._focusEditable(options); }
-  blur() { this._sourceTextarea?.blur(); this._liveEditor?.blur(); }
+  blur() { this._sourceTextarea?.blur(); this._liveEditor?.blur(); this._preview?.blur(); }
   select() { this.setSelectionRange(0, this._value.length); }
   setSelectionRange(start, end, direction = "none") {
     const s = clamp(Number(start) || 0, 0, this._value.length);
@@ -789,7 +969,7 @@ class WritemarkEditorElement extends HTMLElement {
   }
   unregisterCompletionProvider(providerId) { this._providers.delete(providerId); if (this._completion.providerId === providerId) this._closeCompletion(); }
   getHTML() { return renderMarkdown(this._value, this._rendererOptions()); }
-  getText() { return textFromMarkdown(this._value); }
+  getText() { return textFromMarkdown(this._value, this._rendererOptions()); }
   getMarkdown() { return this._value; }
   setMarkdown(markdown) { this.value = markdown; }
   getPlainText() { return this.getText(); }
@@ -805,7 +985,7 @@ class WritemarkEditorElement extends HTMLElement {
   commit() { const old = this._dirty; this._defaultValue = this._value; this._dirty = false; this._dispatch("md-change", { value: this._value }); if (old) this._dispatch("md-dirty-change", { dirty: false }); }
   reset() { this._setValueInternal(this._defaultValue, { source: "api", recordUndo: true }); this.setSelectionRange(0, 0); this._dirty = false; this._dispatch("md-dirty-change", { dirty: false }); }
   checkValidity() { this._updateValidity(); return this._internals ? this._internals.checkValidity() : this._fallbackValidity().valid; }
-  reportValidity() { this._updateValidity(); return this._internals ? this._internals.reportValidity() : this.checkValidity(); }
+  reportValidity() { this._validationVisible = true; this._updateValidity(); return this._internals ? this._internals.reportValidity() : this.checkValidity(); }
   setCustomValidity(message) { this._customValidityMessage = String(message ?? ""); this._updateValidity(); }
   runFixture(fixture) {
     const p = parseFixtureMarkedValue(fixture.before); this.value = p.value; this.setSelectionRange(p.selectionStart, p.selectionEnd);
@@ -876,6 +1056,7 @@ class WritemarkEditorElement extends HTMLElement {
         textarea { display: none; resize: vertical; font-family: var(--md-editor-mono-font); font-size: var(--md-editor-font-size); tab-size: 2; }
         :host([mode="source"]) .live-editor { display: none; }
         :host([mode="source"]) textarea { display: block; }
+        :host([mode="split"]) .live-editor { display: none; }
         :host([mode="split"]) textarea { display: block; }
         :host([mode="preview"]) .live-editor { display: none; }
         :host([mode="preview"]) textarea { display: none; }
@@ -883,6 +1064,7 @@ class WritemarkEditorElement extends HTMLElement {
         :host([mode="preview"]) .preview, :host([mode="split"]) .preview, :host([preview="below"]) .preview, :host([preview="side"]) .preview, :host([preview="inline-split"]) .preview { display: block; }
         :host([preview="none"]):not([mode="split"]):not([mode="preview"]) .preview { display: none; }
         .live-placeholder { color: var(--md-editor-muted); pointer-events: none; }
+        .md-empty-placeholder::before { content: attr(data-placeholder); position: absolute; color: var(--md-editor-muted); pointer-events: none; }
         .md-virtual-spacer { display: block; pointer-events: none; user-select: none; inline-size: 1px; min-block-size: 0; }
         .md-line { position: relative; min-block-size: 1.35em; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; padding: 1px 2px; outline: none; transition: background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease), box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease); }
         .md-line:focus, .md-task-source:focus, .md-code-line:focus { box-shadow: var(--md-editor-active-line-ring); background: var(--md-editor-active-line-bg); }
@@ -944,7 +1126,7 @@ class WritemarkEditorElement extends HTMLElement {
             <textarea part="textarea" id="${this._ids.source}" aria-controls="${this._ids.completion}" aria-expanded="false" aria-autocomplete="list" aria-describedby="${this._ids.validation}" rows="12"></textarea>
             <div class="completion-popup" part="completion-popup" id="${this._ids.completion}" role="listbox" hidden></div>
           </div>
-          <div class="preview" part="preview" aria-label="Rendered markdown preview"></div>
+          <div class="preview" part="preview" aria-label="Rendered markdown preview" tabindex="-1"></div>
         </div>
         <div class="validation" part="error" id="${this._ids.validation}"></div>
         <div class="sr-only" part="status" id="${this._ids.status}" aria-live="polite" aria-atomic="true"></div>
@@ -1004,6 +1186,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._liveEditor.setAttribute("aria-disabled", this.disabled ? "true" : "false");
     this._liveEditor.contentEditable = this._lineEditable();
     this._liveEditor.tabIndex = this.disabled ? -1 : 0;
+    this._preview.tabIndex = this.disabled ? -1 : (this.mode === "preview" ? 0 : -1);
     const maxLength = this.getAttribute("maxlength"); const minLength = this.getAttribute("minlength");
     maxLength != null ? this._sourceTextarea.maxLength = Number(maxLength) : this._sourceTextarea.removeAttribute("maxlength");
     minLength != null ? this._sourceTextarea.minLength = Number(minLength) : this._sourceTextarea.removeAttribute("minlength");
@@ -1070,7 +1253,8 @@ class WritemarkEditorElement extends HTMLElement {
     return changes.length;
   }
 
-  _rendererOptions() { return { markdownFlavor: this.markdownFlavor, allowRawHtml: false, sanitize: true, linkTarget: DEFAULTS.linkTarget }; }
+  _parseOptions() { return { markdownFlavor: this.markdownFlavor }; }
+  _rendererOptions() { return { ...this._parseOptions(), allowRawHtml: false, sanitize: true, linkTarget: DEFAULTS.linkTarget }; }
   _setValueInternal(next, opts = {}) {
     const previousValue = this._value;
     const value = normalizeLineEndings(next ?? ""); const before = this._snapshot(); const changed = value !== previousValue;
@@ -1082,6 +1266,7 @@ class WritemarkEditorElement extends HTMLElement {
   _afterValueChanged({ source = "api", inputType = null, silent = false, restoreSelection = true, previousValue = null, changes = null } = {}) {
     this._selectAllLevel = 0;
     this._structuredSelection = null;
+    if (["user", "keyboard", "paste", "pointer"].includes(source)) this._validationVisible = true;
     this._updateFormValue(); this._updateValidity(); this._renderAll({ restoreSelection, previousValue, changes });
     const oldDirty = this._dirty; this._dirty = this._value !== this._defaultValue; if (oldDirty !== this._dirty) this._dispatch("md-dirty-change", { dirty: this._dirty });
     if (!silent) this._dispatch("md-input", { value: this._value, source, inputType });
@@ -1100,7 +1285,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._schedulePreviewRender({ immediate: force || !this._previewDirty });
   }
   _isLiveVisible() {
-    return this.mode !== "source" && this.mode !== "preview";
+    return this.mode === "live";
   }
   _isPreviewVisible() {
     return this.mode === "preview" || this.mode === "split" || this.preview !== "none";
@@ -1131,7 +1316,7 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _getBlocks() {
     if (this._blockCacheValue === this._value && this._blockCache) return this._blockCache;
-    const blocks = parseBlocks(this._value);
+    const blocks = parseBlocks(this._value, this._parseOptions());
     this._setBlockCache(blocks, "full");
     return blocks;
   }
@@ -1146,7 +1331,7 @@ class WritemarkEditorElement extends HTMLElement {
       this._setBlockCache(incremental, "incremental");
       return incremental;
     }
-    const blocks = parseBlocks(this._value);
+    const blocks = parseBlocks(this._value, this._parseOptions());
     this._setBlockCache(blocks, "full");
     return blocks;
   }
@@ -1301,7 +1486,7 @@ class WritemarkEditorElement extends HTMLElement {
   _parseSingleLineBlock(line) {
     const heading = parseHeading(line.text);
     if (heading) return { type: "heading", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, heading };
-    const list = parseListItem(line.text);
+    const list = parseListItem(line.text, this._parseOptions());
     if (list) return { type: list.kind, from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, list };
     const quote = parseBlockquote(line.text);
     if (quote) return { type: "blockquote", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line, quote };
@@ -1425,31 +1610,47 @@ class WritemarkEditorElement extends HTMLElement {
     });
   }
   _renderLiveBlock(block) {
-    const lineAttrs = (line, kind, extra = "") => `class="md-line ${extra}" part="line" data-editable="line" data-kind="${kind}" data-from="${line.start}" data-to="${line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}"`;
-    if (block.type === "blank") return `<div ${lineAttrs(block.line, "blank")}>${block.line.text ? decorateInline(block.line.text) : "<br>"}</div>`;
-    if (block.type === "heading") return `<div ${lineAttrs(block.line, "heading", `md-heading md-h${block.heading.level}`)}>${this._renderHeadingLine(block.line.text, block.heading)}</div>`;
-    if (block.type === "blockquote") return `<div ${lineAttrs(block.line, "blockquote", "md-quote")}>${decorateInline(block.line.text)}</div>`;
-    if (block.type === "horizontal-rule") return `<div class="md-line md-hr-line" part="line" data-kind="horizontal-rule" data-from="${block.line.start}" data-to="${block.line.end}" contenteditable="false" aria-label="Horizontal rule"></div>`;
+    const options = this._rendererOptions();
+    const lineAttrs = (line, kind, extra = "", attrs = "") => `class="md-line ${extra}" part="line" data-editable="line" data-kind="${kind}" data-from="${line.start}" data-to="${line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}"${attrs ? ` ${attrs}` : ""}`;
+    if (block.type === "blank") {
+      const placeholderAttrs = this._value.length === 0 ? `data-placeholder="${escapeAttribute(this.placeholder)}"` : "";
+      const placeholderClass = this._value.length === 0 ? "md-empty-placeholder" : "";
+      return `<div ${lineAttrs(block.line, "blank", placeholderClass, placeholderAttrs)}>${block.line.text ? decorateInline(block.line.text, options) : "<br>"}</div>`;
+    }
+    if (block.type === "heading") {
+      const afterAnchor = block.setext && block.newlineEnd === block.to
+        ? `<div class="md-line md-setext-after" part="line" data-editable="virtual-setext-after" data-kind="blank" data-from="${block.to}" data-to="${block.to}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}" aria-label="After heading"><br></div>`
+        : "";
+      const content = block.setext ? decorateInline(block.line.text, options) : this._renderHeadingLine(block.line.text, block.heading);
+      return `<div ${lineAttrs(block.line, "heading", `md-heading md-h${block.heading.level}`)}>${content}</div>${afterAnchor}`;
+    }
+    if (block.type === "blockquote") return `<div ${lineAttrs(block.line, "blockquote", "md-quote")}>${decorateInline(block.line.text, options)}</div>`;
+    if (block.type === "horizontal-rule") {
+      const afterAnchor = block.line.newlineEnd === block.line.end
+        ? `<div class="md-line md-hr-after" part="line" data-editable="virtual-hr-after" data-kind="blank" data-from="${block.line.end}" data-to="${block.line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}" aria-label="After horizontal rule"><br></div>`
+        : "";
+      return `<div class="md-line md-hr-line" part="line" data-kind="horizontal-rule" data-from="${block.line.start}" data-to="${block.line.end}" contenteditable="false" aria-label="Horizontal rule"></div>${afterAnchor}`;
+    }
     if (block.type === "task-list-item") {
       const list = block.list; const checkOffset = block.line.start + list.indent.length + `${list.marker} [`.length;
       return `<div class="md-line md-task-line md-list" part="line" data-kind="task-list-item" data-from="${block.line.start}" data-to="${block.line.end}" style="--md-list-depth:${Math.floor(list.indent.length / Math.max(1, this.indentString.length))}"><input type="checkbox" part="checkbox" data-task-checkbox="true" data-check-offset="${checkOffset}" ${list.checked ? "checked" : ""} ${this.disabled || this.readonly ? "disabled" : ""}><span class="md-task-source" data-editable="line" data-from="${block.line.start}" data-to="${block.line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${this._renderTaskLine(block.line.text, list)}</span></div>`;
     }
     if (block.type === "bullet-list-item" || block.type === "ordered-list-item") {
       const list = block.list; const depth = Math.floor(list.indent.length / Math.max(1, this.indentString.length));
-      return `<div ${lineAttrs(block.line, block.type, "md-list")} style="--md-list-depth:${depth}">${decorateInline(block.line.text)}</div>`;
+      return `<div ${lineAttrs(block.line, block.type, "md-list")} style="--md-list-depth:${depth}">${decorateInline(block.line.text, options)}</div>`;
     }
     if (block.type === "code-fence") return this._renderCodeFence(block);
     if (block.type === "table") return this._renderTable(block);
-    return `<div ${lineAttrs(block.line, "paragraph")}>${decorateInline(block.line.text)}</div>`;
+    return `<div ${lineAttrs(block.line, "paragraph")}>${decorateInline(block.line.text, options)}</div>`;
   }
   _lineEditable() { return (!this.disabled && !this.readonly && this.mode !== "preview") ? "true" : "false"; }
   _renderHeadingLine(text, heading) {
     const markerEnd = heading.indent.length + heading.markerText.length;
-    return `<span class="md-token">${escapeHtml(text.slice(0, markerEnd))}</span>${decorateInline(text.slice(markerEnd))}`;
+    return `<span class="md-token">${escapeHtml(text.slice(0, markerEnd))}</span>${decorateInline(text.slice(markerEnd), this._rendererOptions())}`;
   }
   _renderTaskLine(text, list) {
     const markerEnd = list.contentStart;
-    return `<span class="md-token">${escapeHtml(text.slice(0, markerEnd))}</span>${decorateInline(text.slice(markerEnd))}`;
+    return `<span class="md-token">${escapeHtml(text.slice(0, markerEnd))}</span>${decorateInline(text.slice(markerEnd), this._rendererOptions())}`;
   }
   _renderCodeFence(block) {
     const editable = this._lineEditable();
@@ -1459,15 +1660,22 @@ class WritemarkEditorElement extends HTMLElement {
     const codeLines = block.codeLines.map(line => `<div class="md-code-line" part="code-line" data-editable="line" data-kind="code-line" data-from="${line.start}" data-to="${line.end}" contenteditable="${editable}" spellcheck="false">${escapeHtml(line.text) || "<br>"}</div>`).join("");
     const virtualOffset = block.codeLines[0]?.start ?? (block.closing ? block.opening.newlineEnd : block.opening.end);
     const virtualLine = `<div class="md-code-line" part="code-line" data-editable="virtual-code" data-kind="code-line" data-from="${virtualOffset}" data-to="${virtualOffset}" contenteditable="${editable}" spellcheck="false"><br></div>`;
-    return `<div class="md-code-block" part="code-block" data-kind="code-fence" data-from="${block.from}" data-to="${block.to}" data-language="${escapeAttribute(language)}">${header}<div class="md-code-lines" part="code-lines">${codeLines || virtualLine}</div></div>`;
+    const afterAnchor = block.closing && block.newlineEnd === block.to
+      ? `<div class="md-line md-code-after" part="line" data-editable="virtual-code-after" data-kind="blank" data-from="${block.to}" data-to="${block.to}" contenteditable="${editable}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}" aria-label="After code block"><br></div>`
+      : "";
+    return `<div class="md-code-block" part="code-block" data-kind="code-fence" data-from="${block.from}" data-to="${block.to}" data-language="${escapeAttribute(language)}">${header}<div class="md-code-lines" part="code-lines">${codeLines || virtualLine}</div></div>${afterAnchor}`;
   }
   _renderTable(block) {
-    const renderCell = (cell, tag, row, col) => `<${tag}><div class="md-cell" part="table-cell" data-editable="cell" data-row="${row}" data-col="${col}" data-from="${cell?.from ?? block.to}" data-to="${cell?.to ?? block.to}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${decorateInline(cell?.text ?? "")}</div></${tag}>`;
     const cols = Math.max(block.header.cells.length, ...block.rows.map(r => r.cells.length), 1);
+    const alignments = Array.from({ length: cols }, (_, i) => tableAlignmentFromDelimiter(block.delimiter.cells[i]?.text));
+    const renderCell = (cell, tag, row, col) => `<${tag}${tableAlignmentStyle(alignments[col])}><div class="md-cell" part="table-cell" data-editable="cell" data-row="${row}" data-col="${col}" data-from="${cell?.from ?? block.to}" data-to="${cell?.to ?? block.to}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${decorateInline(unescapeTableCellText(cell?.text ?? ""), this._rendererOptions())}</div></${tag}>`;
     const header = `<thead><tr>${Array.from({ length: cols }, (_, i) => renderCell(block.header.cells[i] ?? { text: "", from: block.header.end, to: block.header.end }, "th", -1, i)).join("")}</tr></thead>`;
     const bodyRows = block.rows.length ? block.rows : [{ cells: Array.from({ length: cols }, () => ({ text: "", from: block.delimiter.end, to: block.delimiter.end })) }];
     const body = `<tbody>${bodyRows.map((row, r) => `<tr>${Array.from({ length: cols }, (_, i) => renderCell(row.cells[i] ?? { text: "", from: row.end, to: row.end }, "td", r, i)).join("")}</tr>`).join("")}</tbody>`;
-    return `<div class="md-table-block" part="table" data-kind="table" data-from="${block.from}" data-to="${block.to}"><table class="md-table">${header}${body}</table></div>`;
+    const afterAnchor = block.newlineEnd === block.to
+      ? `<div class="md-line md-table-after" part="line" data-editable="virtual-table-after" data-kind="blank" data-from="${block.to}" data-to="${block.to}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}" aria-label="After table"><br></div>`
+      : "";
+    return `<div class="md-table-block" part="table" data-kind="table" data-from="${block.from}" data-to="${block.to}"><table class="md-table">${header}${body}</table></div>${afterAnchor}`;
   }
 
   _onSourceInput(event) {
@@ -1484,6 +1692,8 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _onLiveBeforeInput(event) {
     if (this._isComposing) return;
+    this._ignoreSelectionChangeCount = 0;
+    this._structuredSelection = null;
     const inputType = event?.inputType || "";
     if (!this._isSourceActive() && !this.disabled && !this.readonly) {
       const ctx = this._getContext();
@@ -1504,13 +1714,15 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _onLiveInput(event) {
     if (this.disabled || this.readonly) return;
+    this._ignoreSelectionChangeCount = 0;
+    this._structuredSelection = null;
     const editable = this._closestEditable(event.target) || this._activeEditableFromSelection();
     if (!editable) return;
     const before = this._beforeInputSnapshot;
     const from = Number(editable.dataset.from); const to = Number(editable.dataset.to);
     const raw = this._plainText(editable).replace(/\n/g, "");
     const liveSelection = this._getLiveSelection(editable);
-    const tableEdit = editable.dataset.editable === "cell" ? this._tableCellInputEdit(editable, raw) : null;
+    const tableEdit = editable.dataset.editable === "cell" ? this._tableCellInputEdit(editable, raw, liveSelection) : null;
     if (tableEdit) {
       const previousValue = this._value;
       this._value = tableEdit.nextValue;
@@ -1523,22 +1735,77 @@ class WritemarkEditorElement extends HTMLElement {
       return;
     }
     let insert = raw;
-    if (editable.dataset.editable === "virtual-code") {
+    let virtualPrefixLength = 0;
+    if (editable.dataset.editable === "virtual-code" || editable.dataset.editable === "virtual-code-after" || editable.dataset.editable === "virtual-hr-after" || editable.dataset.editable === "virtual-setext-after" || editable.dataset.editable === "virtual-table-after") {
       const beforeSource = this._value.slice(0, from);
-      if (!beforeSource.endsWith("\n")) insert = `\n${raw}`;
+      if (!beforeSource.endsWith("\n")) {
+        insert = `\n${raw}`;
+        virtualPrefixLength = 1;
+      }
     }
     const previousValue = this._value;
     const nextValue = previousValue.slice(0, from) + insert + previousValue.slice(to);
-    const cursor = clamp(liveSelection?.end ?? from + insert.length, from, from + insert.length);
+    const liveCursor = liveSelection?.end != null ? liveSelection.end - from : insert.length - virtualPrefixLength;
+    const cursor = clamp(from + virtualPrefixLength + liveCursor, from, from + insert.length);
     this._value = nextValue;
     this._selection = { start: cursor, end: cursor, direction: "none" };
-    const after = this._snapshot();
+    const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction);
     if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
     this._beforeInputSnapshot = null;
     this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: true, previousValue, changes: [{ from, to, insert }] });
     if (!this._isComposing) this._scheduleCompletionUpdate();
   }
   _plainText(el) { return (el.innerText ?? el.textContent ?? "").replace(/\u00a0/g, " ").replace(/\n+$/g, ""); }
+  _editableSourceRange(editable) {
+    const from = Number(editable?.dataset?.from);
+    const to = Number(editable?.dataset?.to);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    return { from, to: Math.max(from, to) };
+  }
+  _cellRawSource(editable) {
+    const range = this._editableSourceRange(editable);
+    return range && editable?.dataset?.editable === "cell" ? this._value.slice(range.from, range.to) : null;
+  }
+  _displayOffsetFromSourceOffset(editable, sourceOffset) {
+    const range = this._editableSourceRange(editable);
+    if (!range) return 0;
+    const raw = this._cellRawSource(editable);
+    const rel = clamp(Number(sourceOffset) - range.from, 0, range.to - range.from);
+    if (raw == null) return clamp(rel, 0, this._plainText(editable).length);
+    let display = 0;
+    for (let i = 0; i < raw.length && i < rel;) {
+      if (raw[i] === "\\" && (raw[i + 1] === "|" || raw[i + 1] === "\\")) {
+        if (rel <= i + 1) return display;
+        display += 1;
+        i += 2;
+      } else {
+        display += 1;
+        i += 1;
+      }
+    }
+    return clamp(display, 0, this._plainText(editable).length);
+  }
+  _sourceOffsetFromDisplayOffset(editable, displayOffset) {
+    const range = this._editableSourceRange(editable);
+    if (!range) return null;
+    const raw = this._cellRawSource(editable);
+    const target = clamp(Number(displayOffset) || 0, 0, this._plainText(editable).length);
+    if (raw == null) return clamp(range.from + target, range.from, Math.max(range.to, range.from + this._plainText(editable).length));
+    let display = 0;
+    for (let i = 0; i < raw.length;) {
+      if (display >= target) return range.from + i;
+      if (raw[i] === "\\" && (raw[i + 1] === "|" || raw[i + 1] === "\\")) {
+        if (display + 1 >= target) return range.from + i + 2;
+        display += 1;
+        i += 2;
+      } else {
+        if (display + 1 >= target) return range.from + i + 1;
+        display += 1;
+        i += 1;
+      }
+    }
+    return range.to;
+  }
   _closestEditable(target) { return target?.closest?.("[data-editable]") ?? null; }
   _onLiveClick(event) {
     if (this._suppressLiveClick) {
@@ -1601,16 +1868,41 @@ class WritemarkEditorElement extends HTMLElement {
     this.setSelectionRange(start, end, direction);
   }
 
-  _onNavigationKey(event) { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) this._onSelectionChanged(); }
+  _onNavigationKey(event) { if (NAVIGATION_KEYS.has(event.key)) this._onSelectionChanged(); }
+
+  _maybeHandleLineBoundaryKey(event, activeCell = null) {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || activeCell || this.mode === "preview") return false;
+    const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "");
+    let boundary = null;
+    if (!event.metaKey && (event.key === "Home" || event.key === "End")) boundary = event.key === "Home" ? "start" : "end";
+    else if (isMac && event.metaKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) boundary = event.key === "ArrowLeft" ? "start" : "end";
+    if (!boundary) return false;
+    const selection = this._getCurrentSelection();
+    const focus = selection.direction === "backward" ? selection.start : selection.end;
+    const anchor = selection.direction === "backward" ? selection.end : selection.start;
+    const line = getLineRange(this._value, focus);
+    const target = boundary === "start" ? line.start : line.end;
+    event.preventDefault();
+    if (event.shiftKey) this._setSourceBackedSelection(anchor, target);
+    else this.setSelectionRange(target, target, "none");
+    return true;
+  }
 
   _maybeHandleLiveArrowKey(event, activeEditable = null) {
     if (this._isSourceActive() || event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey) return false;
-    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return false;
-    if (event.shiftKey) return this._maybeExtendLiveVerticalSelection(event);
+    if (!LIVE_ARROW_KEYS.has(event.key)) return false;
     const editable = activeEditable || this._activeEditableFromEvent(event);
     if (!editable || editable.dataset.editable === "cell") return false;
-    const selection = this._getLiveSelection(editable);
-    if (!selection || selection.start !== selection.end) return false;
+    const selection = this._getLiveSelection() || this._getCurrentSelection();
+    if (!selection) return false;
+    if (selection.start !== selection.end && !event.shiftKey) {
+      const target = (event.key === "ArrowLeft" || event.key === "ArrowUp") ? selection.start : selection.end;
+      event.preventDefault();
+      this.setSelectionRange(target, target, "none");
+      return true;
+    }
+    if (event.shiftKey) return this._maybeExtendLiveArrowSelection(event, selection);
+    if (selection.start !== selection.end) return false;
     const direction = (event.key === "ArrowLeft" || event.key === "ArrowUp") ? -1 : 1;
     const target = (event.key === "ArrowLeft" || event.key === "ArrowRight")
       ? this._horizontalArrowTarget(editable, selection.start, direction)
@@ -1621,16 +1913,16 @@ class WritemarkEditorElement extends HTMLElement {
     return true;
   }
 
-  _maybeExtendLiveVerticalSelection(event) {
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return false;
-    const selection = this._getCurrentSelection();
+  _maybeExtendLiveArrowSelection(event, selection = this._getCurrentSelection()) {
     const focus = selection.direction === "backward" ? selection.start : selection.end;
     const anchor = selection.direction === "backward" ? selection.end : selection.start;
     const pos = this._domPositionFromSource(focus);
     const editable = pos?.editable;
     if (!editable || editable.dataset.editable === "cell") return false;
-    const direction = event.key === "ArrowUp" ? -1 : 1;
-    const target = this._verticalArrowTarget(editable, focus, direction);
+    const direction = (event.key === "ArrowLeft" || event.key === "ArrowUp") ? -1 : 1;
+    const target = (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      ? this._horizontalArrowTarget(editable, focus, direction)
+      : this._verticalArrowTarget(editable, focus, direction);
     if (target == null || target === focus) return false;
     event.preventDefault();
     this._setSourceBackedSelection(anchor, target);
@@ -1724,7 +2016,7 @@ class WritemarkEditorElement extends HTMLElement {
 
   _caretRectForSourceOffset(offset, preferredEditable = null) {
     const pos = preferredEditable
-      ? this._textPositionInElement(preferredEditable, clamp(offset - Number(preferredEditable.dataset.from), 0, this._plainText(preferredEditable).length))
+      ? this._textPositionInElement(preferredEditable, this._displayOffsetFromSourceOffset(preferredEditable, offset))
       : this._domPositionFromSource(offset);
     if (!pos) return null;
     return this._caretRectFromDomPosition(pos.node, pos.offset);
@@ -1819,7 +2111,7 @@ class WritemarkEditorElement extends HTMLElement {
       const score = (rowDistance * 1000) + columnDistance;
       if (score < bestScore) { bestScore = score; bestOffset = offset; }
     }
-    return from + bestOffset;
+    return this._sourceOffsetFromDisplayOffset(editable, bestOffset) ?? from;
   }
 
   _onSelectionChanged() {
@@ -1835,9 +2127,10 @@ class WritemarkEditorElement extends HTMLElement {
     if (!this._isComposing) this._scheduleCompletionUpdate();
   }
 
-  _isSourceActive() { return this._shadow.activeElement === this._sourceTextarea || this.mode === "source"; }
+  _isSourceActive() { return this._shadow.activeElement === this._sourceTextarea || this.mode === "source" || this.mode === "split"; }
   _focusEditable(options) {
-    if (this.mode === "source") { this._sourceTextarea?.focus(options); this._sourceTextarea?.setSelectionRange(this._selection.start, this._selection.end, this._selection.direction); return; }
+    if (this.mode === "source" || this.mode === "split") { this._sourceTextarea?.focus(options); this._sourceTextarea?.setSelectionRange(this._selection.start, this._selection.end, this._selection.direction); return; }
+    if (this.mode === "preview") { this._preview?.focus(options); return; }
     this._liveEditor?.focus(options); this._restoreLiveSelection(this._selection);
   }
   _getCurrentSelection() {
@@ -1862,7 +2155,7 @@ class WritemarkEditorElement extends HTMLElement {
     const range = document.createRange(); range.selectNodeContents(editable);
     try { range.setEnd(node, offset); } catch { return from; }
     const text = range.toString().replace(/\u00a0/g, " ").replace(/\n/g, "");
-    return from + text.length;
+    return this._sourceOffsetFromDisplayOffset(editable, text.length) ?? from;
   }
   _restoreLiveSelection(selection = this._selection) {
     if (!this._liveEditor || this.mode === "source") return;
@@ -1921,7 +2214,7 @@ class WritemarkEditorElement extends HTMLElement {
           ? this._textPositionInElement(previous, this._plainText(previous).length)
           : this._textPositionInElement(el, 0);
       }
-      if (safe >= from && safe <= to) return this._textPositionInElement(el, safe - from);
+      if (safe >= from && safe <= to) return this._textPositionInElement(el, this._displayOffsetFromSourceOffset(el, safe));
       previous = el;
     }
     return this._textPositionInElement(previous, this._plainText(previous).length);
@@ -1962,6 +2255,7 @@ class WritemarkEditorElement extends HTMLElement {
     const mod = isMac ? event.metaKey : event.ctrlKey;
     const activeEditable = this._activeEditableFromEvent(event);
     const activeCell = activeEditable?.dataset.editable === "cell" ? activeEditable : null;
+    if (!this._isSourceActive() && NAVIGATION_KEYS.has(event.key)) this._ignoreSelectionChangeCount = 0;
 
     if (mod && !event.altKey && event.key.toLowerCase() === "z") {
       event.preventDefault();
@@ -1985,6 +2279,9 @@ class WritemarkEditorElement extends HTMLElement {
       if (event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) { event.preventDefault(); this._runAction("completion.accept", undefined, { source: "keyboard", apply: true }); return; }
     }
 
+    if (this._maybeHandleTableLineBoundaryKey(event, activeCell)) return;
+    if (this._maybeHandleLineBoundaryKey(event, activeCell)) return;
+    if (activeCell && this._maybeHandleTableArrowKey(event, activeCell)) return;
     if (this._maybeHandleLiveArrowKey(event, activeEditable)) return;
 
     if ((event.key === "Backspace" || event.key === "Delete") && !this._isSourceActive()) {
@@ -2052,6 +2349,11 @@ class WritemarkEditorElement extends HTMLElement {
       if (activeCell) {
         if (event.shiftKey || mod || event.altKey) this._exitTable(activeCell, "after");
         else this._insertTableRowAfterCell(activeCell);
+        return;
+      }
+      const activeEditableType = activeEditable?.dataset.editable;
+      if (activeEditableType === "virtual-code-after" || activeEditableType === "virtual-table-after") {
+        this._runAction("editor.insertParagraph", undefined, { source: "keyboard", apply: true });
         return;
       }
       this._runAction(event.shiftKey ? "editor.insertSoftBreak" : "editor.smartEnter", undefined, { source: "keyboard", apply: true });
@@ -2134,6 +2436,98 @@ class WritemarkEditorElement extends HTMLElement {
     else this._insertTableRowAfterCell(cell);
   }
 
+  _maybeHandleTableLineBoundaryKey(event, activeCell = null) {
+    if (this._isSourceActive() || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return false;
+    if (event.key !== "Home" && event.key !== "End") return false;
+    const selectedEditable = activeCell || this._activeEditableFromSelection();
+    const cell = selectedEditable?.dataset?.editable === "cell" ? selectedEditable : null;
+    if (!cell) return false;
+    const range = this._editableSourceRange(cell);
+    if (!range) return false;
+    const selection = this._getLiveSelection() || this._getCurrentSelection();
+    const focus = selection.direction === "backward" ? selection.start : selection.end;
+    const anchor = selection.direction === "backward" ? selection.end : selection.start;
+    const target = event.key === "Home" ? range.from : range.to;
+    if (target === focus && !event.shiftKey) {
+      event.preventDefault();
+      return true;
+    }
+    event.preventDefault();
+    if (event.shiftKey) this._setSourceBackedSelection(anchor, target);
+    else this.setSelectionRange(target, target, "none");
+    return true;
+  }
+
+  _maybeHandleTableArrowKey(event, cell) {
+    if (this._isSourceActive() || event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey) return false;
+    if (!LIVE_ARROW_KEYS.has(event.key)) return false;
+    const selection = this._getLiveSelection() || this._getCurrentSelection();
+    if (!selection) return false;
+    if (selection.start !== selection.end && !event.shiftKey) {
+      const target = (event.key === "ArrowLeft" || event.key === "ArrowUp") ? selection.start : selection.end;
+      event.preventDefault();
+      this.setSelectionRange(target, target, "none");
+      return true;
+    }
+    const focus = selection.direction === "backward" ? selection.start : selection.end;
+    const anchor = selection.direction === "backward" ? selection.end : selection.start;
+    const direction = (event.key === "ArrowLeft" || event.key === "ArrowUp") ? -1 : 1;
+    const target = (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      ? this._horizontalTableArrowTarget(cell, focus, direction)
+      : this._verticalTableArrowTarget(cell, focus, direction);
+    if (!target) return false;
+    event.preventDefault();
+    if (target.exit) {
+      if (event.shiftKey) this._setSourceBackedSelection(anchor, target.offset);
+      else this._exitTable(cell, target.exit);
+      return true;
+    }
+    if (event.shiftKey) this._setSourceBackedSelection(anchor, target.offset);
+    else this.setSelectionRange(target.offset, target.offset, "none");
+    return true;
+  }
+
+  _tableCellsForCell(cell) {
+    return [...cell.closest(".md-table-block")?.querySelectorAll('[data-editable="cell"]') || []];
+  }
+
+  _tableCellElement(block, row, col) {
+    return this._liveEditor?.querySelector(`.md-table-block[data-from="${block.from}"][data-to="${block.to}"] .md-cell[data-row="${row}"][data-col="${col}"]`) || null;
+  }
+
+  _horizontalTableArrowTarget(cell, offset, direction) {
+    const range = this._editableSourceRange(cell);
+    if (!range) return null;
+    if (direction < 0 && offset <= range.from) {
+      const cells = this._tableCellsForCell(cell);
+      const previous = cells[cells.indexOf(cell) - 1];
+      if (previous) return { offset: Number(previous.dataset.to) };
+      const info = this._tableInfoForCell(cell);
+      return info?.block ? { exit: "before", offset: info.block.from } : null;
+    }
+    if (direction > 0 && offset >= range.to) {
+      const cells = this._tableCellsForCell(cell);
+      const next = cells[cells.indexOf(cell) + 1];
+      if (next) return { offset: Number(next.dataset.from) };
+      const info = this._tableInfoForCell(cell);
+      return info?.block ? { exit: "after", offset: info.block.to } : null;
+    }
+    return null;
+  }
+
+  _verticalTableArrowTarget(cell, offset, direction) {
+    const info = this._tableInfoForCell(cell);
+    if (!info) return null;
+    const nextRow = info.row + direction;
+    if (nextRow < -1) return { exit: "before", offset: info.block.from };
+    if (nextRow >= info.block.rows.length) return { exit: "after", offset: info.block.to };
+    const targetCell = this._tableCellElement(info.block, nextRow, info.col);
+    if (!targetCell) return null;
+    const displayOffset = this._displayOffsetFromSourceOffset(cell, offset);
+    const targetDisplayOffset = Math.min(displayOffset, this._plainText(targetCell).length);
+    return { offset: this._sourceOffsetFromDisplayOffset(targetCell, targetDisplayOffset) ?? Number(targetCell.dataset.from) };
+  }
+
   _maybeExitTableWithArrow(cell, direction) {
     const info = this._tableInfoForCell(cell);
     if (!info) return false;
@@ -2190,11 +2584,9 @@ class WritemarkEditorElement extends HTMLElement {
     return { source: lines.join("\n"), parts, lineStarts };
   }
 
-  _tableCellInputEdit(cell, raw) {
+  _tableCellInputEdit(cell, raw, selection = null) {
     const info = this._tableInfoForCell(cell);
     if (!info) return null;
-    const existingCell = info.line?.cells?.[info.col];
-    if (existingCell && Number.isFinite(existingCell.from) && Number.isFinite(existingCell.to)) return null;
     const cols = info.cols;
     const header = this._tableCellTexts(info.block.header, cols);
     const delimiter = this._tableCellTexts(info.block.delimiter, cols);
@@ -2208,7 +2600,9 @@ class WritemarkEditorElement extends HTMLElement {
     const serialized = this._tableBlockSourceWithOffsets(header, delimiter, rows);
     const lineIndex = info.row < 0 ? 0 : info.row + 2;
     const cellOffsets = serialized.parts[lineIndex]?.offsets?.[info.col];
-    const cursor = info.block.from + (serialized.lineStarts[lineIndex] ?? 0) + (cellOffsets?.to ?? 0);
+    const rawCursor = clamp((selection?.end ?? Number(cell.dataset.from) + raw.length) - Number(cell.dataset.from), 0, raw.length);
+    const escapedCursor = this._escapeTableCellText(raw.slice(0, rawCursor)).length;
+    const cursor = info.block.from + (serialized.lineStarts[lineIndex] ?? 0) + (cellOffsets?.from ?? 0) + escapedCursor;
     return {
       nextValue: this._value.slice(0, info.block.from) + serialized.source + this._value.slice(info.block.to),
       cursor,
@@ -2376,7 +2770,30 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _tableCellTexts(line, cols) {
     const cells = splitTableRow(line?.text ?? "");
-    return Array.from({ length: cols }, (_, i) => cells[i] ?? "");
+    return Array.from({ length: cols }, (_, i) => unescapeTableCellText(cells[i] ?? ""));
+  }
+  _tablePositionForOffset(block, offset) {
+    if (!block) return null;
+    const safe = clamp(Number(offset) || 0, block.from, block.to);
+    const lines = [
+      { line: block.header, row: -1 },
+      { line: block.delimiter, row: -2 },
+      ...block.rows.map((line, row) => ({ line, row })),
+    ];
+    const match = lines.find(entry => safe >= entry.line.start && safe <= entry.line.end)
+      || lines.find(entry => safe >= entry.line.start && safe <= entry.line.newlineEnd)
+      || lines.at(-1);
+    if (!match) return null;
+    const cells = match.line.cells || [];
+    let col = cells.findIndex(cell => safe >= cell.from && safe <= cell.to);
+    if (col === -1 && cells.length) {
+      let bestDistance = Infinity;
+      cells.forEach((cell, index) => {
+        const distance = safe < cell.from ? cell.from - safe : safe > cell.to ? safe - cell.to : 0;
+        if (distance < bestDistance) { bestDistance = distance; col = index; }
+      });
+    }
+    return { row: match.row, col: Math.max(0, col), line: match.line };
   }
   _tableColumnResult(ctx, block, col, mode) {
     const cols = Math.max(block.header.cells.length, ...block.rows.map(r => r.cells.length), 1);
@@ -2449,7 +2866,8 @@ class WritemarkEditorElement extends HTMLElement {
 
   _getContext() {
     const sel = this._getCurrentSelection(); this._selection = sel;
-    const value = this._value; const line = getLineRange(value, sel.start); const currentLine = makeLineInfo(line.start, line.end, line.text); const selectedLines = getSelectedLineRanges(value, sel.start, sel.end); const block = classifyLine(value, sel.start, currentLine); const lineBeforeCursor = currentLine.text.slice(0, sel.start - currentLine.start);
+    const parseOptions = this._parseOptions();
+    const value = this._value; const line = getLineRange(value, sel.start); const currentLine = makeLineInfo(line.start, line.end, line.text, parseOptions); const selectedLines = getSelectedLineRanges(value, sel.start, sel.end, parseOptions); const block = classifyLine(value, sel.start, currentLine, parseOptions); const lineBeforeCursor = currentLine.text.slice(0, sel.start - currentLine.start);
     return { value, selectionStart: sel.start, selectionEnd: sel.end, selectionDirection: sel.direction || "none", mode: this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composing-ime" : this._completion.open ? (this._completion.providerId === "slash" ? "slash-open" : "completion-open") : "idle", currentLine, selectedLines, block, inline: { insideInlineCode: isInsideInlineCode(lineBeforeCursor) }, completion: { ...this._completion }, config: { mode: this.mode, preview: this.preview, markdownFlavor: this.markdownFlavor, tabBehavior: this.tabBehavior, indentString: this.indentString, disabled: this.disabled, readonly: this.readonly }, host: this };
   }
   _runAction(actionId, args, options = {}) {
@@ -2503,9 +2921,9 @@ class WritemarkEditorElement extends HTMLElement {
     r({ id: "block.horizontalRule", label: "Horizontal rule", description: "Insert horizontal rule", group: "Insert", aliases: ["hr", "divider", "rule"], visibleInSlash: true, run: ctx => this._insertHorizontalRule(ctx) });
     r({ id: "block.table", label: "Table", description: "Insert a markdown table", group: "Insert", aliases: ["table", "grid"], visibleInSlash: true, run: (ctx, args = {}) => this._insertTable(ctx, args) });
     r({ id: "table.insertRowAfter", label: "Insert table row", group: "Table", run: ctx => { const block = this._findBlockAtOffset(ctx.selectionStart, "table"); return block ? this._tableRowInsertionResult(ctx, block, ctx.currentLine, "after-row") : fail("not-applicable"); } });
-    r({ id: "table.insertColumnAfter", label: "Insert table column", group: "Table", run: ctx => { const block = this._findBlockAtOffset(ctx.selectionStart, "table"); return block ? this._tableColumnResult(ctx, block, 0, "insert-after") : fail("not-applicable"); } });
-    r({ id: "table.deleteRow", label: "Delete table row", group: "Table", run: ctx => { const block = this._findBlockAtOffset(ctx.selectionStart, "table"); return block ? this._tableDeleteRowResult(ctx, block, 0) : fail("not-applicable"); } });
-    r({ id: "table.deleteColumn", label: "Delete table column", group: "Table", run: ctx => { const block = this._findBlockAtOffset(ctx.selectionStart, "table"); return block ? this._tableColumnResult(ctx, block, 0, "delete") : fail("not-applicable"); } });
+    r({ id: "table.insertColumnAfter", label: "Insert table column", group: "Table", run: ctx => { const block = this._findBlockAtOffset(ctx.selectionStart, "table"); const pos = block ? this._tablePositionForOffset(block, ctx.selectionStart) : null; return block ? this._tableColumnResult(ctx, block, pos?.col ?? 0, "insert-after") : fail("not-applicable"); } });
+    r({ id: "table.deleteRow", label: "Delete table row", group: "Table", run: ctx => { const block = this._findBlockAtOffset(ctx.selectionStart, "table"); const pos = block ? this._tablePositionForOffset(block, ctx.selectionStart) : null; return block ? this._tableDeleteRowResult(ctx, block, pos?.row >= 0 ? pos.row : 0) : fail("not-applicable"); } });
+    r({ id: "table.deleteColumn", label: "Delete table column", group: "Table", run: ctx => { const block = this._findBlockAtOffset(ctx.selectionStart, "table"); const pos = block ? this._tablePositionForOffset(block, ctx.selectionStart) : null; return block ? this._tableColumnResult(ctx, block, pos?.col ?? 0, "delete") : fail("not-applicable"); } });
     r({ id: "code.setLanguage", label: "Set code language", group: "Code", run: (ctx, args = {}) => { const block = this._findBlockAtOffset(ctx.selectionStart, "code-fence"); return block ? this._setCodeLanguageResult(ctx, block, String(args.language ?? "")) : fail("not-applicable"); } });
     r({ id: "inline.bold", label: "Bold", description: "Strong emphasis", group: "Inline", aliases: ["bold", "strong"], defaultShortcut: "Mod+B", visibleInSlash: true, run: ctx => this._wrapInline(ctx, "**", "**", "Bold") });
     r({ id: "inline.italic", label: "Italic", description: "Emphasis", group: "Inline", aliases: ["italic", "em"], defaultShortcut: "Mod+I", visibleInSlash: true, run: ctx => this._wrapInline(ctx, "*", "*", "Italic") });
@@ -2525,7 +2943,7 @@ class WritemarkEditorElement extends HTMLElement {
 
   _installBuiltInProviders() {
     this.registerCompletionProvider({ id: "slash", priority: 100, triggers: ["/"], match: ctx => this._matchSlash(ctx), getItems: match => this._getSlashItems(match), apply: (item, match, ctx) => this._applySlashItem(item, match, ctx) });
-    this.registerCompletionProvider({ id: "code-language", priority: 60, triggers: ["```"], match: ctx => this._matchCodeLanguage(ctx), getItems: match => this._getLanguageItems(match), apply: (item, match, ctx) => { const insert = `\`\`\`${item.label}`; const cursor = match.from + insert.length; return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert }], { start: cursor, end: cursor, direction: "none" }, "completion"), `Language ${item.label}.`); } });
+    this.registerCompletionProvider({ id: "code-language", priority: 60, triggers: ["```", "~~~"], match: ctx => this._matchCodeLanguage(ctx), getItems: match => this._getLanguageItems(match), apply: (item, match, ctx) => { const insert = `${match.sequence || "```"}${item.label}`; const cursor = match.from + insert.length; return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert }], { start: cursor, end: cursor, direction: "none" }, "completion"), `Language ${item.label}.`); } });
   }
   _getLanguageItems(match) {
     const q = match.query.toLowerCase(); const alias = ALIASES.get(q);
@@ -2535,8 +2953,9 @@ class WritemarkEditorElement extends HTMLElement {
   _smartEnter(ctx) {
     if (ctx.selectionStart !== ctx.selectionEnd) return insertionTransaction(ctx, "editor.smartEnter", "\n", 1, "smartEnter");
     const currentTextBeforeCursor = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start);
-    if (isFenceOpenerLine(ctx.currentLine.text) && currentTextBeforeCursor.trim().startsWith("```") && !isInsideFence(ctx.value, ctx.selectionStart) && !hasClosingFenceAfter(ctx.value, ctx.currentLine.end)) {
-      return insertionTransaction(ctx, "editor.smartEnter", "\n\n```", 1, "smartEnter");
+    const fenceInfo = getFenceInfo(ctx.currentLine.text);
+    if (fenceInfo && currentTextBeforeCursor.trim().startsWith(fenceInfo.sequence) && !isInsideFence(ctx.value, ctx.selectionStart) && !hasClosingFenceAfter(ctx.value, ctx.currentLine.end, fenceInfo)) {
+      return insertionTransaction(ctx, "editor.smartEnter", `\n\n${fenceInfo.sequence}`, 1, "smartEnter");
     }
     if (ctx.block.kind === "fenced-code") return insertionTransaction(ctx, "editor.smartEnter", "\n", 1, "smartEnter");
     const list = ctx.block.list;
@@ -2560,7 +2979,7 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _smartTab(ctx) {
     if (ctx.completion?.open) return this._acceptCompletion("tab");
-    const anyList = ctx.selectedLines.some(line => parseListItem(line.text)); if (anyList) return this._indentLines(ctx, ctx.config.indentString);
+    const anyList = ctx.selectedLines.some(line => parseListItem(line.text, ctx.config)); if (anyList) return this._indentLines(ctx, ctx.config.indentString);
     if (ctx.block.kind === "fenced-code") return insertionTransaction(ctx, "editor.smartTab", ctx.config.indentString, ctx.config.indentString.length, "indent");
     if (ctx.config.tabBehavior === "editor-first") return insertionTransaction(ctx, "editor.smartTab", ctx.config.indentString, ctx.config.indentString.length, "indent");
     return fail("not-applicable", "Tab should move focus in accessibility-first mode.");
@@ -2612,14 +3031,24 @@ class WritemarkEditorElement extends HTMLElement {
     return fail("not-applicable");
   }
   _lineOutdentAmount(text) { if (text.startsWith("\t")) return 1; const indent = (text.match(/^ +/) || [""])[0].length; if (indent >= this.indentString.length && this.indentString !== "\t") return this.indentString.length; if (indent >= 4) return 4; if (indent >= 2) return 2; if (indent >= 1) return 1; return 0; }
-  _indentLines(ctx, indent) { const changes = []; let ds = 0; let de = 0; for (const line of ctx.selectedLines) { if (!parseListItem(line.text) && ctx.block.kind !== "fenced-code") continue; changes.push({ from: line.start, to: line.start, insert: indent }); if (line.start < ctx.selectionStart) ds += indent.length; if (line.start < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += indent.length; } if (!changes.length) return fail("not-applicable"); return ok(tx(ctx, "editor.smartTab", changes, { start: ctx.selectionStart + ds, end: ctx.selectionEnd + de, direction: ctx.selectionDirection || "none" }, "indent"), "Indented."); }
+  _indentLines(ctx, indent) { const changes = []; let ds = 0; let de = 0; for (const line of ctx.selectedLines) { if (!parseListItem(line.text, ctx.config) && ctx.block.kind !== "fenced-code") continue; changes.push({ from: line.start, to: line.start, insert: indent }); if (line.start < ctx.selectionStart) ds += indent.length; if (line.start < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += indent.length; } if (!changes.length) return fail("not-applicable"); return ok(tx(ctx, "editor.smartTab", changes, { start: ctx.selectionStart + ds, end: ctx.selectionEnd + de, direction: ctx.selectionDirection || "none" }, "indent"), "Indented."); }
   _outdentLines(ctx) { const changes = []; let ds = 0; let de = 0; for (const line of ctx.selectedLines) { const amount = this._lineOutdentAmount(line.text); if (amount <= 0) continue; changes.push({ from: line.start, to: line.start + amount, insert: "" }); if (line.start < ctx.selectionStart) ds -= amount; if (line.start < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de -= amount; } if (!changes.length) return fail("not-applicable"); const base = ctx.selectedLines[0]?.start ?? 0; return ok(tx(ctx, "editor.smartOutdent", changes, { start: Math.max(base, ctx.selectionStart + ds), end: Math.max(base, ctx.selectionEnd + de), direction: ctx.selectionDirection || "none" }, "outdent"), "Outdented."); }
 
-  _toggleParagraph(ctx) { const changes = []; for (const line of ctx.selectedLines) { const list = parseListItem(line.text); const heading = parseHeading(line.text); const quote = parseBlockquote(line.text); if (list) changes.push({ from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: "" }); else if (heading) changes.push({ from: line.start, to: line.start + heading.contentStart, insert: heading.indent }); else if (quote) changes.push({ from: line.start, to: line.start + quote.contentStart, insert: "" }); } if (!changes.length) return fail("not-applicable"); const d = changes.reduce((sum, c) => c.from < ctx.selectionStart ? sum + c.insert.length - (c.to - c.from) : sum, 0); return ok(tx(ctx, "block.paragraph", changes, { start: Math.max(0, ctx.selectionStart + d), end: Math.max(0, ctx.selectionEnd + d), direction: ctx.selectionDirection || "none" }, "block"), "Converted to paragraph."); }
-  _toggleHeading(ctx, level) { const marker = `${"#".repeat(level)} `; const lines = ctx.selectedLines; const allSame = lines.every(line => { const h = parseHeading(line.text); return h && h.level === level; }); const changes = []; for (const line of lines) { const h = parseHeading(line.text); const list = parseListItem(line.text); const quote = parseBlockquote(line.text); if (allSame && h) changes.push({ from: line.start, to: line.start + h.contentStart, insert: h.indent }); else if (h) changes.push({ from: line.start, to: line.start + h.contentStart, insert: h.indent + marker }); else if (list) changes.push({ from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: marker }); else if (quote) changes.push({ from: line.start, to: line.start + quote.contentStart, insert: marker }); else changes.push({ from: line.start, to: line.start, insert: marker }); } let ds = 0; let de = 0; for (const c of changes) { const diff = c.insert.length - (c.to - c.from); if (c.from < ctx.selectionStart) ds += diff; if (c.from < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += diff; } return ok(tx(ctx, `block.heading.${level}`, changes, { start: Math.max(0, ctx.selectionStart + ds), end: Math.max(0, ctx.selectionEnd + de), direction: ctx.selectionDirection || "none" }, "block"), allSame ? "Converted to paragraph." : `Heading level ${level}.`); }
-  _toggleList(ctx, type) { const markerFor = i => type === "ordered" ? `${i + 1}. ` : type === "task" ? "- [ ] " : "- "; const lines = ctx.selectedLines; const allList = lines.every(line => parseListItem(line.text)); const changes = []; lines.forEach((line, i) => { const list = parseListItem(line.text); const h = parseHeading(line.text); const quote = parseBlockquote(line.text); let c; if (allList && list) c = { from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: "" }; else if (list) c = { from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: markerFor(i) }; else if (h) c = { from: line.start, to: line.start + h.contentStart, insert: h.indent + markerFor(i) }; else if (quote) c = { from: line.start, to: line.start + quote.contentStart, insert: markerFor(i) }; else { const indent = (line.text.match(/^\s*/) || [""])[0]; c = { from: line.start + indent.length, to: line.start + indent.length, insert: markerFor(i) }; } changes.push(c); }); let ds = 0; let de = 0; for (const c of changes) { const diff = c.insert.length - (c.to - c.from); if (c.from < ctx.selectionStart) ds += diff; if (c.from < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += diff; } const id = `block.${type === "bullet" ? "bulletList" : type === "ordered" ? "orderedList" : "taskList"}`; return ok(tx(ctx, id, changes, { start: Math.max(0, ctx.selectionStart + ds), end: Math.max(0, ctx.selectionEnd + de), direction: ctx.selectionDirection || "none" }, "block"), allList ? "Removed list." : type === "ordered" ? "Numbered list." : type === "task" ? "Task list." : "Bullet list."); }
+  _toggleParagraph(ctx) { const changes = []; for (const line of ctx.selectedLines) { const list = parseListItem(line.text, ctx.config); const heading = parseHeading(line.text); const quote = parseBlockquote(line.text); if (list) changes.push({ from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: "" }); else if (heading) changes.push({ from: line.start, to: line.start + heading.contentStart, insert: heading.indent }); else if (quote) changes.push({ from: line.start, to: line.start + quote.contentStart, insert: "" }); } if (!changes.length) return fail("not-applicable"); const d = changes.reduce((sum, c) => c.from < ctx.selectionStart ? sum + c.insert.length - (c.to - c.from) : sum, 0); return ok(tx(ctx, "block.paragraph", changes, { start: Math.max(0, ctx.selectionStart + d), end: Math.max(0, ctx.selectionEnd + d), direction: ctx.selectionDirection || "none" }, "block"), "Converted to paragraph."); }
+  _toggleHeading(ctx, level) { const marker = `${"#".repeat(level)} `; const lines = ctx.selectedLines; const allSame = lines.every(line => { const h = parseHeading(line.text); return h && h.level === level; }); const changes = []; for (const line of lines) { const h = parseHeading(line.text); const list = parseListItem(line.text, ctx.config); const quote = parseBlockquote(line.text); if (allSame && h) changes.push({ from: line.start, to: line.start + h.contentStart, insert: h.indent }); else if (h) changes.push({ from: line.start, to: line.start + h.contentStart, insert: h.indent + marker }); else if (list) changes.push({ from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: marker }); else if (quote) changes.push({ from: line.start, to: line.start + quote.contentStart, insert: marker }); else changes.push({ from: line.start, to: line.start, insert: marker }); } let ds = 0; let de = 0; for (const c of changes) { const diff = c.insert.length - (c.to - c.from); if (c.from < ctx.selectionStart) ds += diff; if (c.from < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += diff; } return ok(tx(ctx, `block.heading.${level}`, changes, { start: Math.max(0, ctx.selectionStart + ds), end: Math.max(0, ctx.selectionEnd + de), direction: ctx.selectionDirection || "none" }, "block"), allSame ? "Converted to paragraph." : `Heading level ${level}.`); }
+  _toggleList(ctx, type) { const markerFor = i => type === "ordered" ? `${i + 1}. ` : type === "task" ? "- [ ] " : "- "; const lines = ctx.selectedLines; const allList = lines.every(line => parseListItem(line.text, ctx.config)); const changes = []; lines.forEach((line, i) => { const list = parseListItem(line.text, ctx.config); const h = parseHeading(line.text); const quote = parseBlockquote(line.text); let c; if (allList && list) c = { from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: "" }; else if (list) c = { from: line.start + list.fullMarkerStart, to: line.start + list.fullMarkerEnd, insert: markerFor(i) }; else if (h) c = { from: line.start, to: line.start + h.contentStart, insert: h.indent + markerFor(i) }; else if (quote) c = { from: line.start, to: line.start + quote.contentStart, insert: markerFor(i) }; else { const indent = (line.text.match(/^\s*/) || [""])[0]; c = { from: line.start + indent.length, to: line.start + indent.length, insert: markerFor(i) }; } changes.push(c); }); let ds = 0; let de = 0; for (const c of changes) { const diff = c.insert.length - (c.to - c.from); if (c.from < ctx.selectionStart) ds += diff; if (c.from < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += diff; } const id = `block.${type === "bullet" ? "bulletList" : type === "ordered" ? "orderedList" : "taskList"}`; return ok(tx(ctx, id, changes, { start: Math.max(0, ctx.selectionStart + ds), end: Math.max(0, ctx.selectionEnd + de), direction: ctx.selectionDirection || "none" }, "block"), allList ? "Removed list." : type === "ordered" ? "Numbered list." : type === "task" ? "Task list." : "Bullet list."); }
   _toggleTaskDone(ctx) { const list = ctx.block.list; if (!list || list.kind !== "task-list-item") return fail("not-applicable"); const checkboxStart = ctx.currentLine.start + list.indent.length + `${list.marker} [`.length; const next = list.checked ? " " : "x"; return ok(tx(ctx, "block.taskDone", [{ from: checkboxStart, to: checkboxStart + 1, insert: next }], { start: ctx.selectionStart, end: ctx.selectionEnd, direction: ctx.selectionDirection || "none" }, "block"), next === "x" ? "Task checked." : "Task unchecked."); }
   _toggleBlockquote(ctx) { const lines = ctx.selectedLines; const allQuote = lines.every(line => parseBlockquote(line.text)); const changes = lines.map(line => { const quote = parseBlockquote(line.text); return allQuote && quote ? { from: line.start, to: line.start + quote.contentStart, insert: "" } : { from: line.start, to: line.start, insert: "> " }; }); let ds = 0; let de = 0; for (const c of changes) { const diff = c.insert.length - (c.to - c.from); if (c.from < ctx.selectionStart) ds += diff; if (c.from < ctx.selectionEnd || ctx.selectionStart === ctx.selectionEnd) de += diff; } return ok(tx(ctx, "block.blockquote", changes, { start: Math.max(0, ctx.selectionStart + ds), end: Math.max(0, ctx.selectionEnd + de), direction: ctx.selectionDirection || "none" }, "block"), allQuote ? "Removed blockquote." : "Blockquote."); }
+  _setCodeLanguageResult(ctx, block, language) {
+    const opening = block?.opening;
+    if (!opening) return fail("not-applicable");
+    const clean = String(language ?? "").replace(/[`~\\\r\n]/g, "").trim().replace(/\s+/g, "-");
+    const match = /^(\s*(?:`{3,}|~{3,}))\s*([^`~]*)$/.exec(opening.text);
+    const prefix = match?.[1] ?? "```";
+    const insert = `${prefix}${clean}`;
+    const cursor = opening.start + insert.length;
+    return ok(tx(ctx, "code.setLanguage", [{ from: opening.start, to: opening.end, insert }], { start: cursor, end: cursor, direction: "none" }, "code"), clean ? `Language ${clean}.` : "Language cleared.");
+  }
   _toggleCodeFence(ctx, args = {}) { const language = String(args.language ?? "").trim(); const langPart = language ? language : ""; if (ctx.selectionStart !== ctx.selectionEnd) { const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd); const insert = `\`\`\`${langPart}\n${selected}\n\`\`\``; const cursor = ctx.selectionStart + 4 + langPart.length + selected.length; return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block."); } const insert = `\`\`\`${langPart}\n\n\`\`\``; const cursor = ctx.selectionStart + 4 + langPart.length; return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block."); }
   _insertHorizontalRule(ctx) { const lead = ctx.selectionStart > 0 && ctx.value[ctx.selectionStart - 1] !== "\n" ? "\n" : ""; const trail = ctx.selectionStart < ctx.value.length && ctx.value[ctx.selectionStart] !== "\n" ? "\n" : "\n"; const insert = `${lead}---${trail}`; return insertionTransaction(ctx, "block.horizontalRule", insert, insert.length, "block"); }
   _insertTable(ctx, args = {}) { const rows = clamp(Number(args.rows) || 2, 1, 20); const cols = clamp(Number(args.cols) || 3, 2, 12); const header = `| ${Array.from({ length: cols }, (_, i) => `Column ${i + 1}`).join(" | ")} |`; const delimiter = `| ${Array.from({ length: cols }, () => "---").join(" | ")} |`; const body = Array.from({ length: rows }, (_, r) => `| ${Array.from({ length: cols }, (_, c) => `Cell ${r * cols + c + 1}`).join(" | ")} |`); const insert = [header, delimiter, ...body].join("\n"); const cursor = ctx.selectionStart + header.indexOf("Column 1"); return ok(tx(ctx, "block.table", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor + "Column 1".length, direction: "none" }, "block"), "Table inserted."); }
@@ -2631,7 +3060,7 @@ class WritemarkEditorElement extends HTMLElement {
   _getSlashItems(match) { const q = match.query.toLowerCase(); const items = []; for (const action of this._actions.values()) { if (!action.visibleInSlash) continue; const hay = [action.label, action.description, ...(action.aliases || []), ...(action.keywords || [])].filter(Boolean).join(" ").toLowerCase(); if (q && !hay.includes(q)) continue; items.push({ id: action.id, label: action.label, detail: action.group, description: action.description || displayShortcut(action.defaultShortcut), kind: "slash-command", actionId: action.id }); } return items.slice(0, 24); }
   _applySlashItem(item, match, ctx) { const repl = this._slashReplacementForAction(item.actionId); if (repl) { const insert = typeof repl.insert === "function" ? repl.insert(ctx) : repl.insert; const off = typeof repl.selectionOffset === "number" ? repl.selectionOffset : insert.length; return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert }], { start: match.from + off, end: match.from + off + (repl.selectionLength || 0), direction: "none" }, "slash"), item.label); } return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert: "" }], { start: match.from, end: match.from, direction: "none" }, "slash"), item.label); }
   _slashReplacementForAction(actionId) { return { "block.paragraph": { insert: "", selectionOffset: 0 }, "block.heading.1": { insert: "# ", selectionOffset: 2 }, "block.heading.2": { insert: "## ", selectionOffset: 3 }, "block.heading.3": { insert: "### ", selectionOffset: 4 }, "block.heading.4": { insert: "#### ", selectionOffset: 5 }, "block.heading.5": { insert: "##### ", selectionOffset: 6 }, "block.heading.6": { insert: "###### ", selectionOffset: 7 }, "block.bulletList": { insert: "- ", selectionOffset: 2 }, "block.orderedList": { insert: "1. ", selectionOffset: 3 }, "block.taskList": { insert: "- [ ] ", selectionOffset: 6 }, "block.blockquote": { insert: "> ", selectionOffset: 2 }, "block.codeFence": { insert: "```\n\n```", selectionOffset: 4 }, "block.horizontalRule": { insert: "---\n", selectionOffset: 4 }, "block.table": { insert: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| Cell 1 | Cell 2 | Cell 3 |", selectionOffset: 2, selectionLength: "Column 1".length }, "inline.link": { insert: "[]()", selectionOffset: 1 }, "inline.image": { insert: "![]()", selectionOffset: 2 }, "inline.bold": { insert: "****", selectionOffset: 2 }, "inline.italic": { insert: "**", selectionOffset: 1 }, "inline.code": { insert: "``", selectionOffset: 1 }, "inline.strikethrough": { insert: "~~~~", selectionOffset: 2 } }[actionId] || null; }
-  _matchCodeLanguage(ctx) { if (ctx.inline.insideInlineCode) return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)```([\w+-]*)$/.exec(before); if (!m) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: "```", query: m[2], providerId: "code-language" }; }
+  _matchCodeLanguage(ctx) { if (ctx.inline.insideInlineCode) return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(before); if (!m) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: m[2], sequence: m[2], query: m[3], providerId: "code-language" }; }
 
   _scheduleCompletionUpdate({ immediate = false } = {}) {
     if (this.disabled || this.readonly || this._isComposing) return;
@@ -2678,7 +3107,7 @@ class WritemarkEditorElement extends HTMLElement {
   _updateFormValue() { if (!this._internals) return; this.disabled ? this._internals.setFormValue(null) : this._internals.setFormValue(this._value); }
   _fallbackValidity() { const flags = this._computeValidityFlags(); return { valid: Object.keys(flags).length === 0, valueMissing: Boolean(flags.valueMissing), tooShort: Boolean(flags.tooShort), tooLong: Boolean(flags.tooLong), customError: Boolean(flags.customError) }; }
   _computeValidityFlags() { const flags = {}; const value = this._value; if (this._customValidityMessage) flags.customError = true; if (this.required) { const empty = DEFAULTS.emptyRequiredTrim ? value.trim().length === 0 : value.length === 0; if (empty) flags.valueMissing = true; } const min = this.getAttribute("minlength"); if (min != null && value.length > 0 && value.length < Number(min)) flags.tooShort = true; const max = this.getAttribute("maxlength"); if (max != null && value.length > Number(max)) flags.tooLong = true; return flags; }
-  _updateValidity() { if (!this._sourceTextarea) return; const flags = this._computeValidityFlags(); let message = this._customValidityMessage || ""; if (!message) { if (flags.valueMissing) message = "Please fill out this field."; else if (flags.tooShort) message = `Please lengthen this text to at least ${this.getAttribute("minlength")} characters.`; else if (flags.tooLong) message = `Please shorten this text to no more than ${this.getAttribute("maxlength")} characters.`; } const valid = Object.keys(flags).length === 0; for (const el of [this._sourceTextarea, this._liveEditor]) el?.setAttribute("aria-invalid", valid ? "false" : "true"); this._validation.textContent = valid ? "" : message; this._validationMessage = message; this._internals?.setValidity(flags, message, this._sourceTextarea); }
+  _updateValidity() { if (!this._sourceTextarea) return; const flags = this._computeValidityFlags(); let message = this._customValidityMessage || ""; if (!message) { if (flags.valueMissing) message = "Please fill out this field."; else if (flags.tooShort) message = `Please lengthen this text to at least ${this.getAttribute("minlength")} characters.`; else if (flags.tooLong) message = `Please shorten this text to no more than ${this.getAttribute("maxlength")} characters.`; } const valid = Object.keys(flags).length === 0; if (valid) this._validationVisible = false; for (const el of [this._sourceTextarea, this._liveEditor]) el?.setAttribute("aria-invalid", valid ? "false" : "true"); this._validation.textContent = !valid && this._validationVisible ? message : ""; this._validationMessage = message; this._internals?.setValidity(flags, message, this._sourceTextarea); }
   _emitSelectionChange() { this._dispatch("md-selection-change", { selectionStart: this._selection.start, selectionEnd: this._selection.end, selectionDirection: this._selection.direction || "none" }); }
   _announce(message) { if (!message || !this._status) return; this._status.textContent = ""; requestAnimationFrame(() => { this._status.textContent = message; }); }
   _dispatch(name, detail = {}, options = {}) { const event = new CustomEvent(name, { detail, bubbles: options.bubbles ?? true, composed: options.composed ?? true, cancelable: options.cancelable ?? false }); this.dispatchEvent(event); return event; }
