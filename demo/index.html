@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>&lt;writemark-editor&gt; v1.2.2 Live Inline Demo</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
@@ -64,12 +65,12 @@
       </label>
       <label>
         Base font size
-        <input id="font-size" type="number" min="12" max="28" step="1" value="15">
+        <input id="font-size" type="number" min="10" max="28" step="1" value="15">
         px
       </label>
       <label>
         Max height
-        <input id="max-height" type="number" min="220" max="1200" step="20" placeholder="none">
+        <input id="max-height" type="number" min="100" max="1200" step="20" placeholder="none">
         px
       </label>
       <button type="button" id="insert-demo">Insert demo content</button>
@@ -123,6 +124,24 @@
     }
 
     function bindDemoControls({ editor, fontFamily, fontSize, maxHeight }) {
+      const minFontSize = 10;
+      const maxFontSize = 28;
+      const minMaxHeight = 100;
+      const maxMaxHeight = 1200;
+      const initialInlineMinHeight = editor.style.getPropertyValue('--md-editor-min-height');
+      const initialComputedMinHeight = Number.parseFloat(getComputedStyle(editor).getPropertyValue('--md-editor-min-height'));
+
+      function restoreMinHeight() {
+        if (initialInlineMinHeight) editor.style.setProperty('--md-editor-min-height', initialInlineMinHeight);
+        else editor.style.removeProperty('--md-editor-min-height');
+      }
+
+      function applyEffectiveMinHeight(height) {
+        if (Number.isFinite(initialComputedMinHeight) && height < initialComputedMinHeight) {
+          editor.style.setProperty('--md-editor-min-height', `${height}px`);
+        } else restoreMinHeight();
+      }
+
       function applyTypography(options = {}) {
         const { commit = false } = options;
         const rawSize = readNumberInputValue(fontSize);
@@ -136,11 +155,11 @@
           editor.style.setProperty('--md-editor-font', fontFamily.value);
           return;
         }
-        if (!commit && (rawSize < 12 || rawSize > 28)) {
+        if (!commit && (rawSize < minFontSize || rawSize > maxFontSize)) {
           editor.style.setProperty('--md-editor-font', fontFamily.value);
           return;
         }
-        const size = commit ? clampNumber(rawSize, 12, 28) : rawSize;
+        const size = commit ? clampNumber(rawSize, minFontSize, maxFontSize) : rawSize;
         if (commit) {
           fontSize.value = String(size);
         }
@@ -156,16 +175,18 @@
             maxHeight.value = '';
           }
           editor.style.removeProperty('--md-editor-max-height');
+          restoreMinHeight();
           return;
         }
-        if (!commit && (rawHeight < 220 || rawHeight > 1200)) {
+        if (!commit && (rawHeight < minMaxHeight || rawHeight > maxMaxHeight)) {
           return;
         }
-        const height = commit ? clampNumber(rawHeight, 220, 1200) : rawHeight;
+        const height = commit ? clampNumber(rawHeight, minMaxHeight, maxMaxHeight) : rawHeight;
         if (commit) {
           maxHeight.value = String(height);
         }
         editor.style.setProperty('--md-editor-max-height', `${height}px`);
+        applyEffectiveMinHeight(height);
       }
 
       applyTypography();

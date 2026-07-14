@@ -63,10 +63,16 @@ const ALIASES = new Map([
 
 const LIVE_ARROW_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
 const NAVIGATION_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
+const ESCAPABLE_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
 function now() { return Date.now(); }
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function normalizeLineEndings(value) { return String(value ?? "").replace(/\r\n?/g, "\n"); }
+function parseLengthConstraint(value) {
+  if (value == null || !/^\d+$/.test(String(value).trim())) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed <= 2_147_483_647 ? parsed : null;
+}
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -87,11 +93,47 @@ function isSafeUrl(url, { allowDataImage = false } = {}) {
   if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return /^(https?:|mailto:|tel:)/i.test(raw);
   return true;
 }
-function safeHref(url, opts = {}) { const raw = String(url ?? "").trim(); return isSafeUrl(raw, opts) ? raw : "#"; }
+function safeHref(url, opts = {}) { const raw = String(url ?? "").trim(); return raw === "" ? "" : isSafeUrl(raw, opts) ? raw : "#"; }
+function isEscapablePunctuation(char) { return Boolean(char) && ESCAPABLE_PUNCTUATION.includes(char); }
+function isBackslashEscaped(source, index) {
+  let slashes = 0;
+  for (let i = index - 1; i >= 0 && source[i] === "\\"; i -= 1) slashes += 1;
+  return slashes % 2 === 1;
+}
+function parseCodeSpanAt(source, index) {
+  if (source[index] !== "`" || source[index - 1] === "`" || isBackslashEscaped(source, index)) return null;
+  let markerLength = 1;
+  while (source[index + markerLength] === "`") markerLength += 1;
+  let cursor = index + markerLength;
+  while (cursor < source.length) {
+    if (source[cursor] !== "`") { cursor += 1; continue; }
+    let closingLength = 1;
+    while (source[cursor + closingLength] === "`") closingLength += 1;
+    if (closingLength === markerLength) {
+      return {
+        from: index,
+        to: cursor + closingLength,
+        marker: source.slice(index, index + markerLength),
+        content: source.slice(index + markerLength, cursor),
+        contentStart: index + markerLength,
+        contentEnd: cursor,
+      };
+    }
+    cursor += closingLength;
+  }
+  return null;
+}
+function normalizeCodeSpanContent(content) {
+  let value = String(content ?? "").replace(/\n/g, " ");
+  if (/^\s[\s\S]*\s$/.test(value) && /\S/.test(value)) value = value.slice(1, -1);
+  return value;
+}
 
 function splitLinkDestinationAndTitle(raw) {
   const value = String(raw ?? "").trim();
   if (!value) return { url: "", title: "" };
+  const angle = /^<([^<>\n]*)>(?:\s+(["'])(.*?)\2)?\s*$/.exec(value);
+  if (angle) return { url: angle[1], title: angle[3] || "" };
   const quoted = /^(.*?)\s+(["'])(.*?)\2\s*$/.exec(value);
   if (quoted && quoted[1].trim()) return { url: quoted[1].trim(), title: quoted[3] };
   return { url: value, title: "" };
@@ -99,16 +141,22 @@ function splitLinkDestinationAndTitle(raw) {
 
 function parseInlineLinkAt(text, start = 0) {
   const source = String(text ?? "");
+  if (isBackslashEscaped(source, start)) return null;
   const bang = source[start] === "!" ? "!" : "";
   let i = start + bang.length;
-  if (source[i] !== "[") return null;
+  if (source[i] !== "[" || isBackslashEscaped(source, i)) return null;
   let escaped = false;
   let labelEnd = -1;
+  let labelDepth = 1;
   for (let j = i + 1; j < source.length; j += 1) {
     const ch = source[j];
     if (escaped) { escaped = false; continue; }
     if (ch === "\\") { escaped = true; continue; }
-    if (ch === "]") { labelEnd = j; break; }
+    if (ch === "[") { labelDepth += 1; continue; }
+    if (ch === "]") {
+      labelDepth -= 1;
+      if (labelDepth === 0) { labelEnd = j; break; }
+    }
   }
   if (labelEnd === -1 || source[labelEnd + 1] !== "(") return null;
   const label = source.slice(i + 1, labelEnd);
@@ -240,16 +288,22 @@ function collectInlineMarkdownRanges(source) {
       const to = match.index + match[0].length;
       const innerFrom = from + openLength;
       const innerTo = to - closeLength;
+      if (isBackslashEscaped(source, from) || isBackslashEscaped(source, to - closeLength)) continue;
       if (innerTo >= innerFrom && label.length >= 0) ranges.push({ from, to, innerFrom, innerTo });
       if (match.index === regex.lastIndex) regex.lastIndex += 1;
     }
   };
-  addMatches(/`([^`\n]+?)`/g, 1, 1);
   addMatches(/\*\*([^*]+)\*\*/g, 2, 2);
   addMatches(/__([^_]+)__/g, 2, 2);
   addMatches(/~~([^~]+)~~/g, 2, 2);
   addMatches(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, 1, 1, 2, 1);
   addMatches(/(^|[^_])_([^_\n]+)_(?!_)/g, 1, 1, 2, 1);
+  for (let i = 0; i < source.length; i += 1) {
+    const code = parseCodeSpanAt(source, i);
+    if (!code) continue;
+    ranges.push({ from: code.from, to: code.to, innerFrom: code.contentStart, innerTo: code.contentEnd });
+    i = code.to - 1;
+  }
   for (let i = 0; i < source.length; i += 1) {
     const link = parseInlineLinkAt(source, i);
     if (!link) continue;
@@ -378,9 +432,22 @@ function parseListItem(line, opts = {}) {
 }
 
 function parseHeading(line) {
-  const m = /^(\s{0,3})(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+  const m = /^(\s{0,3})(#{1,6})(?:([ \t]+)(.*)|[ \t]*)$/.exec(line);
   if (!m) return null;
-  return { indent: m[1], level: m[2].length, markerText: `${m[2]} `, content: m[3], contentStart: m[1].length + m[2].length + 1 };
+  let content = m[4] ?? "";
+  if (/^#+[ \t]*$/.test(content)) content = "";
+  else {
+    const closing = /^(.*?)[ \t]+#+[ \t]*$/.exec(content);
+    content = closing ? closing[1] : content.replace(/[ \t]+$/, "");
+  }
+  const separator = m[3] ?? "";
+  return {
+    indent: m[1],
+    level: m[2].length,
+    markerText: `${m[2]}${separator}`,
+    content,
+    contentStart: m[1].length + m[2].length + separator.length,
+  };
 }
 function parseBlockquote(line) {
   const m = /^(\s*>\s?)(.*)$/.exec(line);
@@ -389,9 +456,12 @@ function parseBlockquote(line) {
 }
 function isHorizontalRule(line) { const t = line.trim(); return /^([-*_])(?:\s*\1){2,}\s*$/.test(t); }
 function getFenceInfo(line) {
-  const m = /^(\s{0,3})(`{3,}|~{3,})\s*([^`~]*)$/.exec(line);
+  const m = /^(\s{0,3})(`{3,}|~{3,})[ \t]*(.*)$/.exec(line);
   if (!m) return null;
-  return { marker: m[2][0], length: m[2].length, sequence: m[2], language: m[3].trim() };
+  const marker = m[2][0];
+  const info = m[3].trim();
+  if (marker === "`" && info.includes("`")) return null;
+  return { marker, length: m[2].length, sequence: m[2], info, language: info.split(/[ \t]+/, 1)[0] || "" };
 }
 function isFenceLine(line) { return Boolean(getFenceInfo(line)); }
 function isFenceCloseLine(line, opener) {
@@ -665,9 +735,14 @@ function decorateInline(raw, opts = {}) {
   let html = "";
   const token = t => `<span class="md-token">${escapeHtml(t)}</span>`;
   while (i < text.length) {
-    if (text.startsWith("`", i)) {
-      const end = text.indexOf("`", i + 1);
-      if (end > i) { html += token("`") + `<code>${escapeHtml(text.slice(i + 1, end))}</code>` + token("`"); i = end + 1; continue; }
+    if (text[i] === "\\" && isEscapablePunctuation(text[i + 1])) {
+      html += token("\\") + escapeHtml(text[i + 1]);
+      i += 2;
+      continue;
+    }
+    if (text[i] === "`") {
+      const code = parseCodeSpanAt(text, i);
+      if (code) { html += token(code.marker) + `<code>${escapeHtml(code.content)}</code>` + token(code.marker); i = code.to; continue; }
     }
     if (text.startsWith("**", i)) {
       const end = text.indexOf("**", i + 2);
@@ -709,7 +784,22 @@ function renderInlineMarkdown(source, opts = {}) {
   let text = String(source ?? "");
   const tokens = [];
   const reserve = html => { const token = `\uE000${tokens.length}\uE001`; tokens.push([token, html]); return token; };
-  text = text.replace(/`([^`\n]+?)`/g, (_, code) => reserve(`<code>${escapeHtml(code)}</code>`));
+  let codeReserved = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const code = parseCodeSpanAt(text, i);
+    if (!code) { codeReserved += text[i]; continue; }
+    codeReserved += reserve(`<code>${escapeHtml(normalizeCodeSpanContent(code.content))}</code>`);
+    i = code.to - 1;
+  }
+  text = codeReserved;
+  let escapesReserved = "";
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "\\" && isEscapablePunctuation(text[i + 1])) {
+      escapesReserved += reserve(escapeHtml(text[i + 1]));
+      i += 1;
+    } else escapesReserved += text[i];
+  }
+  text = escapesReserved;
   let linked = "";
   for (let i = 0; i < text.length; i += 1) {
     const link = parseInlineLinkAt(text, i);
@@ -834,6 +924,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._defaultValue = "";
     this._selection = { start: 0, end: 0, direction: "none" };
     this._dirty = false;
+    this._formDisabled = false;
     this._hasConnected = false;
     this._isComposing = false;
     this._beforeInputSnapshot = null;
@@ -845,6 +936,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._ignoreSelectionChangeCount = 0;
     this._pointerSelection = null;
     this._suppressLiveClick = false;
+    this._focusWithin = false;
     this._blockCacheValue = null;
     this._blockCache = null;
     this._liveBlocks = [];
@@ -897,11 +989,27 @@ class WritemarkEditorElement extends HTMLElement {
   }
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
-    if (name === "value") { if (!this._hasConnected) { this._value = normalizeLineEndings(newValue ?? ""); this._defaultValue = this._value; } return; }
+    if (name === "value") {
+      const nextDefault = normalizeLineEndings(newValue ?? "");
+      if (!this._hasConnected) { this._value = nextDefault; this._defaultValue = nextDefault; return; }
+      const wasDirty = this._dirty;
+      this._defaultValue = nextDefault;
+      if (!wasDirty) this._setValueInternal(nextDefault, { source: "attribute", silent: true, recordUndo: false, preserveSelection: false });
+      else {
+        const oldDirty = this._dirty;
+        this._dirty = this._value !== this._defaultValue;
+        if (oldDirty !== this._dirty) this._dispatch("md-dirty-change", { dirty: this._dirty });
+      }
+      return;
+    }
     if (!this._hasConnected) return;
+    const restoreFocus = (name === "mode" || name === "readonly") && (this._focusWithin || Boolean(this._shadow.activeElement));
+    if ((name === "disabled" || name === "readonly") && (this.disabled || this.readonly)) this._closeCompletion();
     this._syncAttributesToControls();
-    if (name === "mode" || name === "preview") this._renderAll({ restoreSelection: true, force: true });
+    if (name === "disabled" && this.disabled) this.blur();
+    if (["mode", "preview", "disabled", "readonly"].includes(name)) this._renderAll({ restoreSelection: !this.disabled, force: true });
     if (["required", "disabled", "readonly", "maxlength", "minlength"].includes(name)) { this._updateFormValue(); this._updateValidity(); }
+    if (restoreFocus && !this.disabled) this._focusEditable();
   }
 
   get value() { return this._value; }
@@ -924,7 +1032,7 @@ class WritemarkEditorElement extends HTMLElement {
   set tabBehavior(v) { v == null ? this.removeAttribute("tab-behavior") : this.setAttribute("tab-behavior", String(v)); }
   get indentString() { return normalizeIndentAttribute(this.getAttribute("indent-string") ?? DEFAULTS.indentString); }
   set indentString(v) { this.setAttribute("indent-string", v === "\t" ? "tab" : String(v)); }
-  get disabled() { return this.hasAttribute("disabled"); }
+  get disabled() { return this.hasAttribute("disabled") || this._formDisabled; }
   set disabled(v) { this.toggleAttribute("disabled", Boolean(v)); }
   get readonly() { return this.hasAttribute("readonly"); }
   set readonly(v) { this.toggleAttribute("readonly", Boolean(v)); }
@@ -940,7 +1048,7 @@ class WritemarkEditorElement extends HTMLElement {
   get willValidate() { return this._internals?.willValidate ?? !this.disabled; }
 
   focus(options) { this._focusEditable(options); }
-  blur() { this._sourceTextarea?.blur(); this._liveEditor?.blur(); this._preview?.blur(); }
+  blur() { this._focusWithin = false; this._shadow?.activeElement?.blur?.(); this._sourceTextarea?.blur(); this._liveEditor?.blur(); this._preview?.blur(); }
   select() { this.setSelectionRange(0, this._value.length); }
   setSelectionRange(start, end, direction = "none") {
     const s = clamp(Number(start) || 0, 0, this._value.length);
@@ -1107,6 +1215,7 @@ class WritemarkEditorElement extends HTMLElement {
         @keyframes md-editor-pop { from { opacity: 0; transform: translateY(-3px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
         .completion-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
         .completion-item[aria-selected="true"] { background: color-mix(in srgb, Highlight 18%, transparent); }
+        .completion-item[aria-disabled="true"] { cursor: not-allowed; opacity: 0.58; }
         .completion-label { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .completion-detail, .completion-description { color: var(--md-editor-muted); font-size: 0.9em; } .completion-description { grid-column: 1 / -1; }
         .validation { min-block-size: 1.2em; color: var(--md-editor-danger); font-size: 0.92em; } .validation:empty { display: none; }
         .sr-only { position: absolute; inline-size: 1px; block-size: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -1165,7 +1274,10 @@ class WritemarkEditorElement extends HTMLElement {
     this._liveEditor.addEventListener("compositionend", () => { this._isComposing = false; this._onSelectionChanged(); });
 
     this._completionPopup.addEventListener("mousedown", e => e.preventDefault());
-    this._completionPopup.addEventListener("click", e => { const item = e.target.closest("[data-index]"); if (!item) return; this._completion.activeIndex = Number(item.dataset.index); this._acceptCompletion("pointer"); });
+    this._completionPopup.addEventListener("click", e => { const item = e.target.closest("[data-index]"); if (!item) return; const index = Number(item.dataset.index); if (this._completion.items[index]?.disabled) return; this._completion.activeIndex = index; this._acceptCompletion("pointer"); });
+    this._label.addEventListener("click", event => { event.preventDefault(); this._focusEditable(); });
+    this._shadow.addEventListener("focusin", () => { this._focusWithin = true; });
+    this._shadow.addEventListener("focusout", () => { queueMicrotask(() => { this._focusWithin = Boolean(this._shadow.activeElement); }); });
     this._shadow.addEventListener("selectionchange", () => this._onSelectionChanged?.());
   }
 
@@ -1182,15 +1294,27 @@ class WritemarkEditorElement extends HTMLElement {
     this._liveEditor.contentEditable = this._lineEditable();
     this._liveEditor.tabIndex = this.disabled ? -1 : 0;
     this._preview.tabIndex = this.disabled ? -1 : (this.mode === "preview" ? 0 : -1);
-    const maxLength = this.getAttribute("maxlength"); const minLength = this.getAttribute("minlength");
-    maxLength != null ? this._sourceTextarea.maxLength = Number(maxLength) : this._sourceTextarea.removeAttribute("maxlength");
-    minLength != null ? this._sourceTextarea.minLength = Number(minLength) : this._sourceTextarea.removeAttribute("minlength");
-    if (this.hasAttribute("spellcheck")) { const raw = this.getAttribute("spellcheck"); this._sourceTextarea.spellcheck = raw == null || raw === "" || raw === "true"; this._liveEditor.spellcheck = this._sourceTextarea.spellcheck; }
+    const maxLength = parseLengthConstraint(this.getAttribute("maxlength"));
+    const minLength = parseLengthConstraint(this.getAttribute("minlength"));
+    maxLength != null ? this._sourceTextarea.maxLength = maxLength : this._sourceTextarea.removeAttribute("maxlength");
+    minLength != null ? this._sourceTextarea.minLength = minLength : this._sourceTextarea.removeAttribute("minlength");
+    const rawSpellcheck = this.getAttribute("spellcheck");
+    const spellcheck = rawSpellcheck == null || rawSpellcheck === "" || rawSpellcheck === "true";
+    this._sourceTextarea.spellcheck = spellcheck;
+    this._liveEditor.spellcheck = spellcheck;
     const ariaLabel = this.getAttribute("aria-label"); const ariaLabelledby = this.getAttribute("aria-labelledby");
     for (const el of [this._sourceTextarea, this._liveEditor]) {
       if (ariaLabel) el.setAttribute("aria-label", ariaLabel); else el.removeAttribute("aria-label");
       if (ariaLabelledby) el.setAttribute("aria-labelledby", ariaLabelledby); else if (this.label) el.setAttribute("aria-labelledby", this._ids.label); else el.removeAttribute("aria-labelledby");
-      const dir = this.getAttribute("dir"); if (dir) el.dir = dir;
+      const dir = this.getAttribute("dir");
+      if (dir) el.dir = dir; else el.removeAttribute("dir");
+    }
+    if (ariaLabelledby) {
+      this._preview.setAttribute("aria-labelledby", ariaLabelledby);
+      this._preview.removeAttribute("aria-label");
+    } else {
+      this._preview.removeAttribute("aria-labelledby");
+      this._preview.setAttribute("aria-label", ariaLabel ? `${ariaLabel} preview` : this.label ? `${this.label} preview` : "Rendered markdown preview");
     }
   }
 
@@ -1286,7 +1410,9 @@ class WritemarkEditorElement extends HTMLElement {
     return this.mode === "preview" || this.mode === "split" || this.preview !== "none";
   }
   _renderDebounceMs() {
-    const raw = Number(this.getAttribute("render-debounce-ms"));
+    const attribute = this.getAttribute("render-debounce-ms");
+    if (attribute == null) return DEFAULTS.renderDebounceMs;
+    const raw = Number(attribute);
     return Number.isFinite(raw) ? clamp(raw, 0, 1000) : DEFAULTS.renderDebounceMs;
   }
   _schedulePreviewRender({ immediate = false } = {}) {
@@ -1456,7 +1582,7 @@ class WritemarkEditorElement extends HTMLElement {
       const checkbox = node.querySelector("[data-task-checkbox]");
       if (!source) return false;
       if (checkbox) checkbox.dataset.checkOffset = String(block.line.start + block.list.indent.length + `${block.list.marker} [`.length);
-      return this._setEditableMetadata(source, block.line.start, block.line.end);
+      return this._setEditableMetadata(source, block.line.start + block.list.contentStart, block.line.end);
     }
     const editable = node.matches?.("[data-editable]") ? node : node.querySelector?.("[data-editable]");
     if (editable && block.line) return this._setEditableMetadata(editable, block.line.start, block.line.end);
@@ -1628,7 +1754,10 @@ class WritemarkEditorElement extends HTMLElement {
     }
     if (block.type === "task-list-item") {
       const list = block.list; const checkOffset = block.line.start + list.indent.length + `${list.marker} [`.length;
-      return `<div class="md-line md-task-line md-list" part="line" data-kind="task-list-item" data-from="${block.line.start}" data-to="${block.line.end}" style="--md-list-depth:${Math.floor(list.indent.length / Math.max(1, this.indentString.length))}"><input type="checkbox" part="checkbox" data-task-checkbox="true" data-check-offset="${checkOffset}" ${list.checked ? "checked" : ""} ${this.disabled || this.readonly ? "disabled" : ""}><span class="md-task-source" data-editable="line" data-from="${block.line.start}" data-to="${block.line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${this._renderTaskLine(block.line.text, list)}</span></div>`;
+      const contentFrom = block.line.start + list.contentStart;
+      const taskName = textFromMarkdown(list.content, options) || "task";
+      const checkboxLabel = `${list.checked ? "Mark task incomplete" : "Mark task complete"}: ${taskName}`;
+      return `<div class="md-line md-task-line md-list" part="line" data-kind="task-list-item" data-from="${block.line.start}" data-to="${block.line.end}" style="--md-list-depth:${Math.floor(list.indent.length / Math.max(1, this.indentString.length))}"><input type="checkbox" part="checkbox" data-task-checkbox="true" data-check-offset="${checkOffset}" aria-label="${escapeAttribute(checkboxLabel)}" ${list.checked ? "checked" : ""} ${this.disabled || this.readonly ? "disabled" : ""}><span class="md-task-source" data-editable="line" data-from="${contentFrom}" data-to="${block.line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${this._renderTaskLine(list)}</span></div>`;
     }
     if (block.type === "bullet-list-item" || block.type === "ordered-list-item") {
       const list = block.list; const depth = Math.floor(list.indent.length / Math.max(1, this.indentString.length));
@@ -1643,10 +1772,7 @@ class WritemarkEditorElement extends HTMLElement {
     const markerEnd = heading.indent.length + heading.markerText.length;
     return `<span class="md-token">${escapeHtml(text.slice(0, markerEnd))}</span>${decorateInline(text.slice(markerEnd), this._rendererOptions())}`;
   }
-  _renderTaskLine(text, list) {
-    const markerEnd = list.contentStart;
-    return `<span class="md-token">${escapeHtml(text.slice(0, markerEnd))}</span>${decorateInline(text.slice(markerEnd), this._rendererOptions())}`;
-  }
+  _renderTaskLine(list) { return decorateInline(list.content, this._rendererOptions()); }
   _renderCodeFence(block) {
     const editable = this._lineEditable();
     const language = String(block.language || "").trim();
@@ -1811,7 +1937,17 @@ class WritemarkEditorElement extends HTMLElement {
     }
     this._structuredSelection = null;
     const checkbox = event.target.closest?.("[data-task-checkbox]");
-    if (checkbox) { event.preventDefault(); const offset = Number(checkbox.dataset.checkOffset); const current = this._value[offset] || " "; const next = current.toLowerCase() === "x" ? " " : "x"; this._applyTransaction({ changes: [{ from: offset, to: offset + 1, insert: next }], selectionAfter: this._selection, actionId: "block.taskDone", undoGroup: "block", source: "pointer" }, { source: "pointer" }); return; }
+    if (checkbox) {
+      event.preventDefault();
+      const offset = Number(checkbox.dataset.checkOffset);
+      const current = this._value[offset] || " ";
+      const next = current.toLowerCase() === "x" ? " " : "x";
+      const source = event.detail === 0 ? "keyboard" : "pointer";
+      this._applyTransaction({ changes: [{ from: offset, to: offset + 1, insert: next }], selectionAfter: this._selection, actionId: "block.taskDone", undoGroup: "block", source }, { source });
+      if (source === "keyboard") this._liveEditor.querySelector(`[data-task-checkbox][data-check-offset="${offset}"]`)?.focus();
+      this._announce(next === "x" ? "Task checked." : "Task unchecked.");
+      return;
+    }
     this._onSelectionChanged();
   }
 
@@ -1865,7 +2001,7 @@ class WritemarkEditorElement extends HTMLElement {
 
   _onNavigationKey(event) { if (NAVIGATION_KEYS.has(event.key)) this._onSelectionChanged(); }
 
-  _maybeHandleLineBoundaryKey(event, activeCell = null) {
+  _maybeHandleLineBoundaryKey(event, activeCell = null, activeEditable = null) {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || activeCell || this.mode === "preview") return false;
     const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "");
     let boundary = null;
@@ -1876,7 +2012,8 @@ class WritemarkEditorElement extends HTMLElement {
     const focus = selection.direction === "backward" ? selection.start : selection.end;
     const anchor = selection.direction === "backward" ? selection.end : selection.start;
     const line = getLineRange(this._value, focus);
-    const target = boundary === "start" ? line.start : line.end;
+    const editableRange = !this._isSourceActive() ? this._editableSourceRange(activeEditable) : null;
+    const target = boundary === "start" ? (editableRange?.from ?? line.start) : (editableRange?.to ?? line.end);
     event.preventDefault();
     if (event.shiftKey) this._setSourceBackedSelection(anchor, target);
     else this.setSelectionRange(target, target, "none");
@@ -2124,6 +2261,7 @@ class WritemarkEditorElement extends HTMLElement {
 
   _isSourceActive() { return this._shadow.activeElement === this._sourceTextarea || this.mode === "source" || this.mode === "split"; }
   _focusEditable(options) {
+    if (this.disabled) return;
     if (this.mode === "source" || this.mode === "split") { this._sourceTextarea?.focus(options); this._sourceTextarea?.setSelectionRange(this._selection.start, this._selection.end, this._selection.direction); return; }
     if (this.mode === "preview") { this._preview?.focus(options); return; }
     this._liveEditor?.focus(options); this._restoreLiveSelection(this._selection);
@@ -2253,6 +2391,7 @@ class WritemarkEditorElement extends HTMLElement {
     if (!this._isSourceActive() && NAVIGATION_KEYS.has(event.key)) this._ignoreSelectionChangeCount = 0;
 
     if (mod && !event.altKey && event.key.toLowerCase() === "z") {
+      if (this.readonly || this.disabled) return;
       event.preventDefault();
       event.shiftKey ? this._redo() : this._undo();
       return;
@@ -2275,7 +2414,7 @@ class WritemarkEditorElement extends HTMLElement {
     }
 
     if (this._maybeHandleTableLineBoundaryKey(event, activeCell)) return;
-    if (this._maybeHandleLineBoundaryKey(event, activeCell)) return;
+    if (this._maybeHandleLineBoundaryKey(event, activeCell, activeEditable)) return;
     if (activeCell && this._maybeHandleTableArrowKey(event, activeCell)) return;
     if (this._maybeHandleLiveArrowKey(event, activeEditable)) return;
 
@@ -2646,12 +2785,7 @@ class WritemarkEditorElement extends HTMLElement {
         cursor = block.from;
       }
     } else {
-      if (this._value.slice(block.to, block.to + 2) === "\n\n") {
-        cursor = block.to + 1;
-      } else {
-        changes = [{ from: block.to, to: block.to, insert: "\n" }];
-        cursor = block.to + 1;
-      }
+      cursor = block.to < this._value.length ? block.to + 1 : block.to;
     }
     if (changes.length) {
       this._applyTransaction({ changes, selectionAfter: { start: cursor, end: cursor, direction: "none" }, actionId: "table.exit", undoGroup: "table", source: "keyboard" }, { source: "keyboard" });
@@ -2931,8 +3065,8 @@ class WritemarkEditorElement extends HTMLElement {
     r({ id: "completion.close", label: "Close completion", group: "Completion", viewSafe: true, run: () => { this._closeCompletion(); return okNoop("Completion closed."); } });
     r({ id: "completion.next", label: "Next completion", group: "Completion", viewSafe: true, run: () => { this._moveCompletion(1); return okNoop(); } });
     r({ id: "completion.previous", label: "Previous completion", group: "Completion", viewSafe: true, run: () => { this._moveCompletion(-1); return okNoop(); } });
-    r({ id: "completion.first", label: "First completion", group: "Completion", viewSafe: true, run: () => { this._setCompletionIndex(0); return okNoop(); } });
-    r({ id: "completion.last", label: "Last completion", group: "Completion", viewSafe: true, run: () => { this._setCompletionIndex(this._completion.items.length - 1); return okNoop(); } });
+    r({ id: "completion.first", label: "First completion", group: "Completion", viewSafe: true, run: () => { this._setCompletionIndex(0, 1); return okNoop(); } });
+    r({ id: "completion.last", label: "Last completion", group: "Completion", viewSafe: true, run: () => { this._setCompletionIndex(this._completion.items.length - 1, -1); return okNoop(); } });
     r({ id: "completion.accept", label: "Accept completion", group: "Completion", viewSafe: true, run: () => this._acceptCompletion("action") });
   }
 
@@ -3079,13 +3213,21 @@ class WritemarkEditorElement extends HTMLElement {
     try { Promise.resolve(selectedProvider.getItems(selectedMatch, ctx, abort.signal)).then(items => { if (abort.signal.aborted || this._completion.requestId !== requestId) return; const normalized = this._normalizeCompletionItems(items); if (!normalized.length) { this._closeCompletion(); return; } this._openCompletion(selectedProvider.id, selectedMatch, normalized); }).catch(error => { if (!abort.signal.aborted) { this._emitError("completion", error, true, { providerId: selectedProvider.id }); this._closeCompletion(); } }); } catch (error) { this._emitError("completion", error, true, { providerId: selectedProvider.id }); this._closeCompletion(); }
   }
   _normalizeCompletionItems(items) { const seen = new Set(); const out = []; for (const item of items || []) { if (!item?.id || !item?.label) continue; const key = `${item.kind}:${item.id}`; if (seen.has(key)) continue; seen.add(key); out.push(item); } return out; }
-  _openCompletion(providerId, match, items) { const was = this._completion.open; this._completion.open = true; this._completion.providerId = providerId; this._completion.match = match; this._completion.items = items; this._completion.activeIndex = clamp(this._completion.activeIndex, 0, items.length - 1); this._renderCompletion(); if (!was) this._dispatch("md-completion-open", { providerId, match, items }); }
-  _closeCompletion() { if (!this._completion.open) return; const detail = { providerId: this._completion.providerId, match: this._completion.match }; this._completion.abort?.abort(); this._completion = { ...this._completion, open: false, providerId: null, match: null, items: [], activeIndex: 0, abort: null }; this._renderCompletion(); this._dispatch("md-completion-close", detail); }
+  _openCompletion(providerId, match, items) { const was = this._completion.open; this._completion.open = true; this._completion.providerId = providerId; this._completion.match = match; this._completion.items = items; const preferred = clamp(this._completion.activeIndex, 0, items.length - 1); this._completion.activeIndex = this._enabledCompletionIndex(preferred, 1); this._renderCompletion(); if (!was) this._dispatch("md-completion-open", { providerId, match, items }); }
+  _closeCompletion() {
+    const wasOpen = this._completion.open;
+    const detail = { providerId: this._completion.providerId, match: this._completion.match };
+    this._completion.abort?.abort();
+    this._completion = { ...this._completion, open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: this._completion.requestId + 1, abort: null };
+    this._renderCompletion();
+    if (wasOpen) this._dispatch("md-completion-close", detail);
+  }
   _renderCompletion() {
     if (!this._completionPopup) return; const open = this._completion.open && this._completion.items.length > 0; this._completionPopup.hidden = !open; const controller = this._isSourceActive() ? this._sourceTextarea : this._liveEditor; controller?.setAttribute("aria-expanded", open ? "true" : "false");
     if (!open) { this._completionPopup.innerHTML = ""; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
-    const activeId = `${this._ids.completion}-item-${this._completion.activeIndex}`; controller?.setAttribute("aria-activedescendant", activeId);
-    this._completionPopup.innerHTML = this._completion.items.map((item, index) => `<div id="${this._ids.completion}-item-${index}" class="completion-item" part="${index === this._completion.activeIndex ? "completion-item completion-item-active" : "completion-item"}" role="option" aria-selected="${index === this._completion.activeIndex ? "true" : "false"}" data-index="${index}"><div class="completion-label">${escapeHtml(item.label)}</div><div class="completion-detail">${escapeHtml(item.detail || "")}</div>${item.description ? `<div class="completion-description">${escapeHtml(item.description)}</div>` : ""}</div>`).join("");
+    const activeId = this._completion.activeIndex >= 0 ? `${this._ids.completion}-item-${this._completion.activeIndex}` : null;
+    if (activeId) controller?.setAttribute("aria-activedescendant", activeId); else controller?.removeAttribute("aria-activedescendant");
+    this._completionPopup.innerHTML = this._completion.items.map((item, index) => `<div id="${this._ids.completion}-item-${index}" class="completion-item" part="${index === this._completion.activeIndex ? "completion-item completion-item-active" : "completion-item"}" role="option" aria-selected="${index === this._completion.activeIndex ? "true" : "false"}" aria-disabled="${item.disabled ? "true" : "false"}" data-index="${index}"><div class="completion-label">${escapeHtml(item.label)}</div><div class="completion-detail">${escapeHtml(item.detail || "")}</div>${item.description ? `<div class="completion-description">${escapeHtml(item.description)}</div>` : ""}</div>`).join("");
     this._positionCompletionPopup();
   }
   _positionCompletionPopup() {
@@ -3095,20 +3237,47 @@ class WritemarkEditorElement extends HTMLElement {
     const left = clamp((rect?.left ?? shellRect.left) - shellRect.left, 4, Math.max(4, shellRect.width - 260)); const top = clamp((rect?.bottom ?? shellRect.top) - shellRect.top + 6, 4, Math.max(4, shellRect.height - 16));
     this._completionPopup.style.left = `${left}px`; this._completionPopup.style.top = `${top}px`;
   }
-  _moveCompletion(delta) { const n = this._completion.items.length; if (!n) return; this._setCompletionIndex((this._completion.activeIndex + delta + n) % n); }
-  _setCompletionIndex(index) { const n = this._completion.items.length; if (!n) return; this._completion.activeIndex = clamp(index, 0, n - 1); this._renderCompletion(); }
+  _enabledCompletionIndex(start, direction = 1) {
+    const n = this._completion.items.length;
+    if (!n) return -1;
+    const step = direction < 0 ? -1 : 1;
+    for (let distance = 0; distance < n; distance += 1) {
+      const index = (start + (distance * step) + n) % n;
+      if (!this._completion.items[index]?.disabled) return index;
+    }
+    return -1;
+  }
+  _moveCompletion(delta) {
+    const n = this._completion.items.length;
+    if (!n) return;
+    const start = this._completion.activeIndex < 0 ? (delta < 0 ? n - 1 : 0) : this._completion.activeIndex + delta;
+    const index = this._enabledCompletionIndex((start + n) % n, delta);
+    if (index >= 0) this._setCompletionIndex(index, delta);
+  }
+  _setCompletionIndex(index, direction = 1) { const n = this._completion.items.length; if (!n) return; this._completion.activeIndex = this._enabledCompletionIndex(clamp(index, 0, n - 1), direction); this._renderCompletion(); }
   _acceptCompletion(source = "action") { if (!this._completion.open || !this._completion.items.length) return fail("not-applicable"); const provider = this._providers.get(this._completion.providerId); const item = this._completion.items[this._completion.activeIndex]; if (!provider || !item || item.disabled) return fail("not-applicable"); const ctx = this._getContext(); let result; try { result = provider.apply(item, this._completion.match, ctx); } catch (error) { this._emitError("completion", error, true, { providerId: provider.id }); this._closeCompletion(); return fail("provider-error", String(error?.message || error)); } this._closeCompletion(); if (result?.ok && result.transaction) { const before = this._snapshot(); this._applyTransaction({ ...result.transaction, source: source === "pointer" ? "pointer" : "keyboard", actionId: "completion.accept" }, { source: source === "pointer" ? "pointer" : "keyboard" }); const after = this._snapshot(); this._dispatch("md-completion-accept", { providerId: provider.id, item, before, after }); if (result.announcement) this._announce(result.announcement); return okNoop(result.announcement); } return result || fail("not-applicable"); }
 
   _updateFormValue() { if (!this._internals) return; this.disabled ? this._internals.setFormValue(null) : this._internals.setFormValue(this._value); }
   _fallbackValidity() { const flags = this._computeValidityFlags(); return { valid: Object.keys(flags).length === 0, valueMissing: Boolean(flags.valueMissing), tooShort: Boolean(flags.tooShort), tooLong: Boolean(flags.tooLong), customError: Boolean(flags.customError) }; }
-  _computeValidityFlags() { const flags = {}; const value = this._value; if (this._customValidityMessage) flags.customError = true; if (this.required) { const empty = DEFAULTS.emptyRequiredTrim ? value.trim().length === 0 : value.length === 0; if (empty) flags.valueMissing = true; } const min = this.getAttribute("minlength"); if (min != null && value.length > 0 && value.length < Number(min)) flags.tooShort = true; const max = this.getAttribute("maxlength"); if (max != null && value.length > Number(max)) flags.tooLong = true; return flags; }
-  _updateValidity() { if (!this._sourceTextarea) return; const flags = this._computeValidityFlags(); let message = this._customValidityMessage || ""; if (!message) { if (flags.valueMissing) message = "Please fill out this field."; else if (flags.tooShort) message = `Please lengthen this text to at least ${this.getAttribute("minlength")} characters.`; else if (flags.tooLong) message = `Please shorten this text to no more than ${this.getAttribute("maxlength")} characters.`; } const valid = Object.keys(flags).length === 0; if (valid) this._validationVisible = false; for (const el of [this._sourceTextarea, this._liveEditor]) el?.setAttribute("aria-invalid", valid ? "false" : "true"); this._validation.textContent = !valid && this._validationVisible ? message : ""; this._validationMessage = message; this._internals?.setValidity(flags, message, this._sourceTextarea); }
+  _computeValidityFlags() { const flags = {}; const value = this._value; if (this._customValidityMessage) flags.customError = true; if (this.required) { const empty = DEFAULTS.emptyRequiredTrim ? value.trim().length === 0 : value.length === 0; if (empty) flags.valueMissing = true; } const min = parseLengthConstraint(this.getAttribute("minlength")); if (min != null && value.length > 0 && value.length < min) flags.tooShort = true; const max = parseLengthConstraint(this.getAttribute("maxlength")); if (max != null && value.length > max) flags.tooLong = true; return flags; }
+  _updateValidity() { if (!this._sourceTextarea) return; const flags = this._computeValidityFlags(); const min = parseLengthConstraint(this.getAttribute("minlength")); const max = parseLengthConstraint(this.getAttribute("maxlength")); let message = this._customValidityMessage || ""; if (!message) { if (flags.valueMissing) message = "Please fill out this field."; else if (flags.tooShort) message = `Please lengthen this text to at least ${min} characters.`; else if (flags.tooLong) message = `Please shorten this text to no more than ${max} characters.`; } const valid = Object.keys(flags).length === 0; if (valid) this._validationVisible = false; for (const el of [this._sourceTextarea, this._liveEditor]) el?.setAttribute("aria-invalid", valid ? "false" : "true"); this._validation.textContent = !valid && this._validationVisible ? message : ""; this._validationMessage = message; this._internals?.setValidity(flags, message, this._sourceTextarea); }
   _emitSelectionChange() { this._dispatch("md-selection-change", { selectionStart: this._selection.start, selectionEnd: this._selection.end, selectionDirection: this._selection.direction || "none" }); }
   _announce(message) { if (!message || !this._status) return; this._status.textContent = ""; requestAnimationFrame(() => { this._status.textContent = message; }); }
   _dispatch(name, detail = {}, options = {}) { const event = new CustomEvent(name, { detail, bubbles: options.bubbles ?? true, composed: options.composed ?? true, cancelable: options.cancelable ?? false }); this.dispatchEvent(event); return event; }
   _emitError(phase, error, recoverable = true, extra = {}) { this._dispatch("md-error", { phase, error, recoverable, ...extra }); }
   formResetCallback() { this.reset(); }
-  formDisabledCallback(disabled) { this.disabled = disabled; }
+  formDisabledCallback(disabled) {
+    const next = Boolean(disabled);
+    if (this._formDisabled === next) return;
+    this._formDisabled = next;
+    if (!this._hasConnected) return;
+    if (next) this._closeCompletion();
+    this._syncAttributesToControls();
+    if (next) this.blur();
+    this._renderAll({ restoreSelection: !next, force: true });
+    this._updateFormValue();
+    this._updateValidity();
+  }
   formStateRestoreCallback(state) { if (typeof state === "string") this.value = state; }
 }
 

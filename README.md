@@ -4,6 +4,19 @@
 
 The default experience is **inline/live editing**: headings, inline formatting, lists, task checkboxes, code fences, and tables render inside the editor itself while the component preserves raw Markdown as the canonical `value` and form submission value. There is no built-in formatting toolbar; formatting is driven by Markdown shortcuts, slash commands, keyboard shortcuts, and the public action API.
 
+## Documentation
+
+Choose the level that matches what you are building:
+
+| Level | Guide | Use it for |
+|---|---|---|
+| 1 | [Getting started](docs/getting-started.md) | Install the component, create an editor, read its value, and submit it in a form. |
+| 2 | [Features and editing](docs/features.md) | Learn Markdown support, keyboard behavior, slash commands, tables, code blocks, selection, and clipboard handling. |
+| 3 | [Advanced integration](docs/advanced.md) | Build host controls, custom actions, completion providers, file workflows, validation, and production integrations. |
+| Reference | [API reference](docs/api-reference.md) | Look up attributes, properties, methods, actions, events, CSS variables, parts, and exports. |
+
+See the [documentation index](docs/README.md) for suggested learning paths and the core concepts used throughout the guides.
+
 ## Run locally
 
 Open `demo/index.html` directly in a browser, or serve it locally:
@@ -26,6 +39,7 @@ No npm install is required. The dev server uses Node's built-in HTTP module and 
 ```text
 src/      Canonical editor source.
 dist/     Generated package/browser files.
+docs/     Layered usage, feature, integration, and API guides.
 demo/     Direct-open browser demo.
 tests/    Browser test harness.
 perf/     Performance harness.
@@ -109,7 +123,7 @@ Code fences are refined in Live mode: the opening and closing backtick markers r
 
 ## Tables
 
-`/table` or `editor.exec('block.table')` inserts a valid Markdown table:
+`/table` or `editor.exec('block.table', { rows: 1, cols: 3 })` inserts a valid Markdown table:
 
 ```md
 | Column 1 | Column 2 | Column 3 |

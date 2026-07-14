@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "docs",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -41,6 +42,6 @@
     "serve": "node scripts/dev-server.mjs",
     "test:browser": "node scripts/dev-server.mjs --open=tests/browser.html",
     "perf": "node scripts/dev-server.mjs --open=perf/index.html",
-    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check dist/md-live-editor.js && node --check scripts/demo-controls.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs"
+    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check dist/md-live-editor.js && node --check scripts/demo-controls.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/check-docs.mjs && node scripts/check-docs.mjs"
   }
 }

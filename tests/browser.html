@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>&lt;writemark-editor&gt; Live Inline Browser Tests</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
@@ -87,6 +88,16 @@
       return event.defaultPrevented;
     }
 
+    async function createIsolatedEditor(attributes = {}) {
+      const isolated = document.createElement('writemark-editor');
+      isolated.style.position = 'absolute';
+      isolated.style.left = '-9999px';
+      for (const [name, value] of Object.entries(attributes)) isolated.setAttribute(name, value);
+      document.body.append(isolated);
+      await new Promise(requestAnimationFrame);
+      return isolated;
+    }
+
     function pointForSourceOffset(offset) {
       const rect = editor._caretRectForSourceOffset(offset);
       if (rect) return { x: rect.left, y: (rect.top + rect.bottom) / 2 };
@@ -119,6 +130,8 @@
     visualChecks.push({ name: 'live code block hides raw fence markers', passed: !(root.querySelector('.md-code-block')?.textContent || '').includes('```') });
     visualChecks.push({ name: 'live code block renders language header', passed: (root.querySelector('.md-code-label')?.textContent || '') === 'python' });
     visualChecks.push({ name: 'live editor renders task checkbox', passed: Boolean(root.querySelector('[data-task-checkbox]')) });
+    visualChecks.push({ name: 'live task item hides duplicate Markdown marker', passed: root.querySelector('.md-task-line')?.textContent === 'task' });
+    visualChecks.push({ name: 'live task checkbox has a task-specific accessible name', passed: root.querySelector('[data-task-checkbox]')?.getAttribute('aria-label') === 'Mark task complete: task' });
     visualChecks.push({ name: 'live horizontal rule renders divider', passed: Boolean(root.querySelector('.md-hr-line')) });
     visualChecks.push({ name: 'live horizontal rule hides raw marker text', passed: ((root.querySelector('.md-hr-line')?.innerText || root.querySelector('.md-hr-line')?.textContent || '').trim() === '') });
     visualChecks.push({ name: 'live horizontal rule is not a text-editable row', passed: !root.querySelector('.md-hr-line')?.hasAttribute('data-editable') });
@@ -130,6 +143,25 @@
     visualChecks.push({ name: 'component renders no global toolbar', passed: !root.querySelector('[part=\"toolbar\"]') && !root.querySelector('[part=\"mobile-toolbar\"]') });
     visualChecks.push({ name: 'code block renders no embedded action buttons', passed: !root.querySelector('[data-code-copy]') && !root.querySelector('[data-code-lang]') });
     visualChecks.push({ name: 'table renders no embedded table controls', passed: !root.querySelector('[data-table-action]') });
+
+    editor._openCompletion('audit-disabled', { from: 0, to: 0 }, [
+      { id: 'unavailable', kind: 'audit', label: 'Unavailable', disabled: true },
+      { id: 'available', kind: 'audit', label: 'Available' }
+    ]);
+    const auditCompletionOptions = root.querySelectorAll('[role="option"]');
+    visualChecks.push({
+      name: 'Completion skips disabled option and exposes disabled state',
+      passed: editor._completion.activeIndex === 1
+        && auditCompletionOptions[0]?.getAttribute('aria-disabled') === 'true'
+        && auditCompletionOptions[1]?.getAttribute('aria-selected') === 'true'
+    });
+    pressLiveKey('ArrowUp');
+    auditCompletionOptions[0]?.click();
+    visualChecks.push({
+      name: 'Keyboard and pointer completion navigation cannot activate disabled option',
+      passed: editor._completion.open && editor._completion.activeIndex === 1
+    });
+    editor._closeCompletion();
 
     editor.mode = 'live';
     editor.preview = 'none';
@@ -161,6 +193,262 @@
       name: 'preview mode focus targets rendered preview surface',
       passed: root.activeElement === root.querySelector('.preview')
     });
+
+    editor.label = 'Body';
+    editor.mode = 'live';
+    editor.blur();
+    root.querySelector('.label').click();
+    visualChecks.push({
+      name: 'Clicking label focuses active live editor surface',
+      passed: root.querySelector('.live-editor').contains(root.activeElement) || root.activeElement === root.querySelector('.live-editor')
+    });
+    editor.mode = 'source';
+    editor.blur();
+    root.querySelector('.label').click();
+    visualChecks.push({ name: 'Clicking label focuses source textarea in source mode', passed: root.activeElement === root.querySelector('textarea') });
+    editor.mode = 'preview';
+    editor.blur();
+    root.querySelector('.label').click();
+    visualChecks.push({ name: 'Clicking label focuses preview in preview mode', passed: root.activeElement === root.querySelector('.preview') });
+
+    editor.mode = 'live';
+    editor.disabled = true;
+    editor.blur();
+    editor.focus();
+    visualChecks.push({ name: 'Programmatic focus does not enter disabled editor', passed: root.activeElement == null });
+    editor.disabled = false;
+
+    editor.setAttribute('dir', 'rtl');
+    editor.removeAttribute('dir');
+    visualChecks.push({
+      name: 'Removing dir clears stale direction from editing surfaces',
+      passed: !root.querySelector('.live-editor').hasAttribute('dir') && !root.querySelector('textarea').hasAttribute('dir')
+    });
+    editor.setAttribute('spellcheck', 'false');
+    editor.removeAttribute('spellcheck');
+    visualChecks.push({
+      name: 'Removing spellcheck restores default checking on editing surfaces',
+      passed: root.querySelector('.live-editor').spellcheck === true && root.querySelector('textarea').spellcheck === true
+    });
+
+    let isolated = await createIsolatedEditor({ label: 'Body' });
+    isolated.value = 'alpha';
+    isolated.setSelectionRange(3, 3);
+    isolated.focus();
+    isolated.mode = 'source';
+    const focusedSourceAfterModeChange = isolated.shadowRoot.activeElement === isolated.shadowRoot.querySelector('textarea');
+    isolated.mode = 'live';
+    const isolatedLive = isolated.shadowRoot.querySelector('.live-editor');
+    const focusedLiveAfterModeChange = isolatedLive.contains(isolated.shadowRoot.activeElement) || isolated.shadowRoot.activeElement === isolatedLive;
+    isolated.mode = 'preview';
+    const focusedPreviewAfterModeChange = isolated.shadowRoot.activeElement === isolated.shadowRoot.querySelector('.preview');
+    visualChecks.push({
+      name: 'Focused editor transfers focus across source live and preview modes',
+      passed: focusedSourceAfterModeChange && focusedLiveAfterModeChange && focusedPreviewAfterModeChange && isolated.selectionStart === 3
+    });
+    isolated.blur();
+    isolated.mode = 'source';
+    visualChecks.push({ name: 'Mode change does not steal focus when editor was blurred', passed: isolated.shadowRoot.activeElement == null });
+    isolated.remove();
+
+    isolated = await createIsolatedEditor({ label: 'Body', mode: 'preview' });
+    const previewUsesVisibleLabel = isolated.shadowRoot.querySelector('.preview').getAttribute('aria-label') === 'Body preview';
+    isolated.setAttribute('aria-label', 'Notes');
+    const previewUsesAriaLabel = isolated.shadowRoot.querySelector('.preview').getAttribute('aria-label') === 'Notes preview';
+    const externalLabel = document.createElement('span');
+    externalLabel.id = 'isolated-preview-label';
+    externalLabel.textContent = 'External notes';
+    document.body.append(externalLabel);
+    isolated.removeAttribute('aria-label');
+    isolated.setAttribute('aria-labelledby', externalLabel.id);
+    visualChecks.push({
+      name: 'Preview surface follows component accessible naming',
+      passed: previewUsesVisibleLabel && previewUsesAriaLabel
+        && isolated.shadowRoot.querySelector('.preview').getAttribute('aria-labelledby') === externalLabel.id
+        && !isolated.shadowRoot.querySelector('.preview').hasAttribute('aria-label')
+    });
+    isolated.remove();
+    externalLabel.remove();
+
+    isolated = await createIsolatedEditor();
+    isolated.value = '- [ ] task';
+    isolated.readonly = true;
+    const readonlyLine = isolated.shadowRoot.querySelector('[data-editable]');
+    const readonlyCheckbox = isolated.shadowRoot.querySelector('[data-task-checkbox]');
+    visualChecks.push({
+      name: 'Readonly state reaches rendered lines and task checkbox',
+      passed: readonlyLine?.contentEditable === 'false' && readonlyCheckbox?.disabled
+        && isolated.shadowRoot.querySelector('.live-editor').getAttribute('aria-readonly') === 'true'
+    });
+    isolated.readonly = false;
+    isolated.disabled = true;
+    const disabledLine = isolated.shadowRoot.querySelector('[data-editable]');
+    const disabledCheckbox = isolated.shadowRoot.querySelector('[data-task-checkbox]');
+    visualChecks.push({
+      name: 'Disabled state reaches rendered lines checkbox and tab order',
+      passed: disabledLine?.contentEditable === 'false' && disabledCheckbox?.disabled
+        && isolated.shadowRoot.querySelector('.live-editor').tabIndex === -1
+    });
+    isolated.disabled = false;
+    visualChecks.push({
+      name: 'Clearing disabled state restores rendered editability',
+      passed: isolated.shadowRoot.querySelector('[data-editable]')?.contentEditable === 'true'
+        && !isolated.shadowRoot.querySelector('[data-task-checkbox]')?.disabled
+    });
+    isolated.remove();
+
+    isolated = await createIsolatedEditor();
+    isolated._openCompletion('state-audit', { from: 0, to: 0 }, [{ id: 'one', kind: 'audit', label: 'One' }]);
+    isolated.readonly = true;
+    visualChecks.push({
+      name: 'Readonly state closes open completion popup and ARIA state',
+      passed: !isolated._completion.open && isolated.shadowRoot.querySelector('.completion-popup').hidden
+        && isolated.shadowRoot.querySelector('.live-editor').getAttribute('aria-expanded') === 'false'
+    });
+    isolated.readonly = false;
+    isolated._openCompletion('state-audit', { from: 0, to: 0 }, [
+      { id: 'one', kind: 'audit', label: 'One', disabled: true },
+      { id: 'two', kind: 'audit', label: 'Two', disabled: true }
+    ]);
+    visualChecks.push({
+      name: 'All-disabled completion list has no active descendant',
+      passed: isolated._completion.activeIndex === -1
+        && !isolated.shadowRoot.querySelector('.live-editor').hasAttribute('aria-activedescendant')
+        && [...isolated.shadowRoot.querySelectorAll('[role="option"]')].every(option => option.getAttribute('aria-disabled') === 'true')
+    });
+    isolated._closeCompletion();
+    isolated.remove();
+
+    isolated = await createIsolatedEditor();
+    isolated.registerCompletionProvider({
+      id: 'delayed-audit',
+      priority: 999,
+      match: () => ({ from: 0, to: 0 }),
+      getItems: () => new Promise(resolve => setTimeout(() => resolve([{ id: 'late', kind: 'audit', label: 'Late' }]), 20)),
+      apply: () => ({ ok: false })
+    });
+    isolated._maybeUpdateCompletions();
+    isolated.readonly = true;
+    await new Promise(resolve => setTimeout(resolve, 35));
+    visualChecks.push({
+      name: 'Readonly state cancels pending asynchronous completion',
+      passed: !isolated._completion.open && isolated.shadowRoot.querySelector('.completion-popup').hidden
+    });
+    isolated.remove();
+
+    isolated = await createIsolatedEditor();
+    isolated.value = 'a';
+    isolated.setSelectionRange(1, 1);
+    isolated.insertMarkdown('b');
+    const modKey = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+    isolated.readonly = true;
+    const blockedUndoEvent = new KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true, ...modKey });
+    isolated.shadowRoot.querySelector('.live-editor').dispatchEvent(blockedUndoEvent);
+    const readonlyBlockedUndo = isolated.value === 'ab' && !blockedUndoEvent.defaultPrevented;
+    isolated.readonly = false;
+    const undoEvent = new KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true, ...modKey });
+    isolated.shadowRoot.querySelector('.live-editor').dispatchEvent(undoEvent);
+    const redoEvent = new KeyboardEvent('keydown', { key: 'z', shiftKey: true, bubbles: true, cancelable: true, ...modKey });
+    isolated.shadowRoot.querySelector('.live-editor').dispatchEvent(redoEvent);
+    visualChecks.push({
+      name: 'Readonly blocks undo while editable undo and redo still work',
+      passed: readonlyBlockedUndo && undoEvent.defaultPrevented && redoEvent.defaultPrevented && isolated.value === 'ab'
+    });
+    isolated.remove();
+
+    isolated = await createIsolatedEditor({ value: 'initial' });
+    isolated.value = 'changed';
+    isolated.setAttribute('value', 'new default');
+    const dirtyAttributePreservedValue = isolated.value === 'changed' && isolated.defaultValue === 'new default';
+    isolated.reset();
+    visualChecks.push({
+      name: 'Value attribute updates reset default without replacing dirty value',
+      passed: dirtyAttributePreservedValue && isolated.value === 'new default' && isolated.defaultValue === 'new default'
+    });
+    isolated.remove();
+
+    isolated = await createIsolatedEditor({ value: 'initial' });
+    isolated.setAttribute('value', 'new pristine');
+    visualChecks.push({
+      name: 'Value attribute updates current value while editor is pristine',
+      passed: isolated.value === 'new pristine' && isolated.defaultValue === 'new pristine' && !isolated.dirty
+    });
+    isolated.remove();
+
+    isolated = await createIsolatedEditor();
+    isolated.value = 'abcd';
+    for (const invalidLength of ['-1', 'abc', '2.5', '999999999999999999999']) isolated.setAttribute('maxlength', invalidLength);
+    const invalidMaxIgnored = !isolated.shadowRoot.querySelector('textarea').hasAttribute('maxlength') && isolated.validity.valid;
+    isolated.setAttribute('maxlength', '3');
+    const validMaxApplied = isolated.shadowRoot.querySelector('textarea').maxLength === 3 && isolated.validity.tooLong;
+    isolated.removeAttribute('maxlength');
+    isolated.setAttribute('minlength', '5');
+    const validMinApplied = isolated.shadowRoot.querySelector('textarea').minLength === 5 && isolated.validity.tooShort;
+    isolated.setAttribute('minlength', '-1');
+    visualChecks.push({
+      name: 'Length constraints ignore invalid values and apply valid integers',
+      passed: invalidMaxIgnored && validMaxApplied && validMinApplied
+        && !isolated.shadowRoot.querySelector('textarea').hasAttribute('minlength') && isolated.validity.valid
+    });
+    isolated.remove();
+
+    const testForm = document.createElement('form');
+    const formEditor = document.createElement('writemark-editor');
+    formEditor.name = 'notes';
+    formEditor.setAttribute('value', 'initial');
+    testForm.append(formEditor);
+    document.body.append(testForm);
+    await new Promise(requestAnimationFrame);
+    const initialFormValue = new FormData(testForm).get('notes');
+    formEditor.value = 'changed';
+    const changedFormValue = new FormData(testForm).get('notes');
+    formEditor.disabled = true;
+    const disabledFormValue = new FormData(testForm).has('notes');
+    formEditor.disabled = false;
+    visualChecks.push({
+      name: 'FormData tracks current value and excludes disabled editor',
+      passed: initialFormValue === 'initial' && changedFormValue === 'changed' && !disabledFormValue
+    });
+    testForm.reset();
+    visualChecks.push({
+      name: 'Native form reset restores editor default value and clean state',
+      passed: formEditor.value === 'initial' && formEditor.defaultValue === 'initial' && !formEditor.dirty
+    });
+    formEditor.required = true;
+    formEditor.value = '';
+    const emptyFormInvalid = !testForm.checkValidity() && formEditor.validity.valueMissing;
+    formEditor.value = 'filled';
+    visualChecks.push({
+      name: 'Editor validity participates in native form validation',
+      passed: emptyFormInvalid && testForm.checkValidity() && formEditor.validity.valid
+    });
+    testForm.remove();
+
+    const fieldsetForm = document.createElement('form');
+    const fieldset = document.createElement('fieldset');
+    const fieldsetEditor = document.createElement('writemark-editor');
+    fieldset.append(fieldsetEditor);
+    fieldsetForm.append(fieldset);
+    document.body.append(fieldsetForm);
+    await new Promise(requestAnimationFrame);
+    fieldset.disabled = true;
+    await new Promise(requestAnimationFrame);
+    const fieldsetDisabledEditor = fieldsetEditor.disabled && !fieldsetEditor.hasAttribute('disabled');
+    fieldset.disabled = false;
+    await new Promise(requestAnimationFrame);
+    visualChecks.push({
+      name: 'Fieldset disabled state does not become a permanent editor attribute',
+      passed: fieldsetDisabledEditor && !fieldsetEditor.disabled && !fieldsetEditor.hasAttribute('disabled')
+    });
+    fieldsetEditor.disabled = true;
+    fieldset.disabled = true;
+    fieldset.disabled = false;
+    visualChecks.push({
+      name: 'Explicit disabled attribute survives fieldset state changes',
+      passed: fieldsetEditor.disabled && fieldsetEditor.hasAttribute('disabled')
+    });
+    fieldsetEditor.disabled = false;
+    fieldsetForm.remove();
 
     editor.mode = 'live';
     editor.required = true;
@@ -266,6 +554,28 @@
         && !editor.shadowRoot.querySelector('.md-hr-line')
     });
 
+    editor.value = '# keep#\n\n# trim #\n\n###';
+    await new Promise(requestAnimationFrame);
+    const atxDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'ATX heading keeps trailing hash when it is not a closing sequence',
+      passed: atxDoc.querySelectorAll('h1')[0]?.textContent === 'keep#'
+    });
+    visualChecks.push({
+      name: 'ATX heading removes space-delimited closing sequence',
+      passed: atxDoc.querySelectorAll('h1')[1]?.textContent === 'trim'
+    });
+    visualChecks.push({ name: 'ATX parser supports empty headings', passed: atxDoc.querySelector('h3')?.textContent === '' });
+
+    editor.value = '#   title';
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(4, 4);
+    const removedSpacedHeadingMarker = pressLiveKey('Backspace');
+    visualChecks.push({
+      name: 'Backspace at content start removes full spaced heading marker',
+      passed: removedSpacedHeadingMarker && editor.value === 'title' && editor.selectionStart === 0
+    });
+
     editor.value = '~~~js\nconsole.log(1)\n~~~';
     await new Promise(requestAnimationFrame);
     const tildeFenceDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
@@ -293,6 +603,50 @@
       passed: smartEnterClosedTildeFence && editor.value === '~~~\n\n~~~'
     });
 
+    editor.value = '~~~lang `meta`\ncode\n~~~';
+    await new Promise(requestAnimationFrame);
+    const tildeInfoDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'Tilde fence accepts backticks in info string',
+      passed: tildeInfoDoc.querySelector('pre > code.language-lang')?.textContent === 'code'
+        && editor.shadowRoot.querySelector('.md-code-block')?.dataset.language === 'lang'
+    });
+
+    editor.value = '```lang~meta\ncode\n```';
+    await new Promise(requestAnimationFrame);
+    const backtickInfoDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'Backtick fence accepts tildes in info string',
+      passed: backtickInfoDoc.querySelector('pre > code')?.className === 'language-lang~meta'
+        && editor.shadowRoot.querySelector('.md-code-block')?.dataset.language === 'lang~meta'
+    });
+
+    editor.value = '\\*literal* and ``a`b``';
+    await new Promise(requestAnimationFrame);
+    const escapedInlineDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'Escaped punctuation remains literal instead of becoming emphasis',
+      passed: escapedInlineDoc.querySelector('p')?.textContent === '*literal* and a`b'
+        && !escapedInlineDoc.querySelector('em')
+        && !editor.shadowRoot.querySelector('.md-line em')
+    });
+    visualChecks.push({
+      name: 'Multi-backtick code span can contain a backtick',
+      passed: escapedInlineDoc.querySelector('code')?.textContent === 'a`b'
+        && editor.shadowRoot.querySelectorAll('.md-line code').length === 1
+        && editor.shadowRoot.querySelector('.md-line code')?.textContent === 'a`b'
+    });
+
+    editor.value = '```unmatched``';
+    await new Promise(requestAnimationFrame);
+    const unmatchedCodeDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    visualChecks.push({
+      name: 'Unmatched backtick run stays literal instead of parsing from inside opener',
+      passed: unmatchedCodeDoc.querySelector('p')?.textContent === '```unmatched``'
+        && !unmatchedCodeDoc.querySelector('code')
+        && !editor.shadowRoot.querySelector('.md-line code')
+    });
+
     editor.value = '[](https://example.com) [x](https://example.com/a(b)) ![alt](https://example.com/a(b).png "Title")';
     await new Promise(requestAnimationFrame);
     const nestedLinkDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
@@ -316,6 +670,28 @@
       name: 'live renderer decorates nested-parenthesis links without truncating URLs',
       passed: editor.shadowRoot.querySelectorAll('.md-url')[1]?.textContent === 'https://example.com/a(b)'
         && editor.shadowRoot.querySelectorAll('.md-url')[2]?.textContent === 'https://example.com/a(b).png'
+    });
+
+    editor.value = '[outer [inner]](https://example.com) [empty]() [angle](<https://example.com/a(b)>)';
+    await new Promise(requestAnimationFrame);
+    const advancedLinkDoc = new DOMParser().parseFromString(editor.getHTML(), 'text/html');
+    const advancedLinks = advancedLinkDoc.querySelectorAll('a');
+    visualChecks.push({
+      name: 'Link parser supports balanced brackets in labels',
+      passed: advancedLinks[0]?.textContent === 'outer [inner]'
+        && advancedLinks[0]?.getAttribute('href') === 'https://example.com'
+    });
+    visualChecks.push({
+      name: 'Link parser supports empty and angle-bracket destinations',
+      passed: advancedLinks[1]?.textContent === 'empty' && advancedLinks[1]?.getAttribute('href') === ''
+        && advancedLinks[2]?.textContent === 'angle' && advancedLinks[2]?.getAttribute('href') === 'https://example.com/a(b)'
+    });
+    visualChecks.push({
+      name: 'Live renderer preserves advanced link source text and targets',
+      passed: editor.shadowRoot.querySelectorAll('.md-url').length === 3
+        && editor.shadowRoot.querySelectorAll('.md-url')[0]?.textContent === 'https://example.com'
+        && editor.shadowRoot.querySelectorAll('.md-url')[1]?.textContent === ''
+        && editor.shadowRoot.querySelectorAll('.md-url')[2]?.textContent === 'https://example.com/a(b)'
     });
 
     editor.value = '| L | C | R |\n| :--- | :---: | ---: |\n| a | b | c |';
@@ -364,8 +740,8 @@
         <option value='system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' selected>System UI</option>
         <option value='Arial, Helvetica, sans-serif'>Arial</option>
       </select>
-      <input data-test-font-size type="number" min="12" max="28" step="1" value="15">
-      <input data-test-max-height type="number" min="220" max="1200" step="20">
+      <input data-test-font-size type="number" min="10" max="28" step="1" value="15">
+      <input data-test-max-height type="number" min="100" max="1200" step="20">
     `;
     document.body.append(demoControls);
     const testFontFamily = demoControls.querySelector('[data-test-font-family]');
@@ -382,9 +758,16 @@
     testMaxHeight.value = '520';
     testMaxHeight.dispatchEvent(new InputEvent('input', { bubbles: true }));
     const maxHeightComplete = testMaxHeight.value === '520' && editor.style.getPropertyValue('--md-editor-max-height') === '520px';
+    testMaxHeight.value = '100';
+    testMaxHeight.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const maxHeightMinimumApplies = testMaxHeight.value === '100'
+      && editor.style.getPropertyValue('--md-editor-max-height') === '100px'
+      && editor.style.getPropertyValue('--md-editor-min-height') === '100px';
     testMaxHeight.value = '5';
     testMaxHeight.dispatchEvent(new Event('change', { bubbles: true }));
-    const maxHeightCommitClamps = testMaxHeight.value === '220' && editor.style.getPropertyValue('--md-editor-max-height') === '220px';
+    const maxHeightCommitClamps = testMaxHeight.value === '100'
+      && editor.style.getPropertyValue('--md-editor-max-height') === '100px'
+      && editor.style.getPropertyValue('--md-editor-min-height') === '100px';
 
     testFontSize.value = '2';
     testFontSize.dispatchEvent(new InputEvent('input', { bubbles: true }));
@@ -392,20 +775,30 @@
     testFontSize.value = '20';
     testFontSize.dispatchEvent(new InputEvent('input', { bubbles: true }));
     const fontSizeComplete = testFontSize.value === '20' && editor.style.getPropertyValue('--md-editor-font-size') === '20px';
+    testFontSize.value = '10';
+    testFontSize.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const fontSizeMinimumApplies = testFontSize.value === '10' && editor.style.getPropertyValue('--md-editor-font-size') === '10px';
     testFontSize.value = '2';
     testFontSize.dispatchEvent(new Event('change', { bubbles: true }));
-    const fontSizeCommitClamps = testFontSize.value === '12' && editor.style.getPropertyValue('--md-editor-font-size') === '12px';
+    const fontSizeCommitClamps = testFontSize.value === '10' && editor.style.getPropertyValue('--md-editor-font-size') === '10px';
 
     visualChecks.push({ name: 'Max height input preserves partial value while typing', passed: maxHeightPartialStart && maxHeightPartialContinues });
     visualChecks.push({ name: 'Max height input applies complete in-range value', passed: maxHeightComplete });
+    visualChecks.push({ name: 'Max height input supports 100px minimum', passed: maxHeightMinimumApplies });
     visualChecks.push({ name: 'Max height input clamps only on commit', passed: maxHeightCommitClamps });
     visualChecks.push({ name: 'Base font size input preserves partial value while typing', passed: fontSizePartialStart });
     visualChecks.push({ name: 'Base font size input applies complete in-range value', passed: fontSizeComplete });
+    visualChecks.push({ name: 'Base font size input supports 10px minimum', passed: fontSizeMinimumApplies });
     visualChecks.push({ name: 'Base font size input clamps only on commit', passed: fontSizeCommitClamps });
     testFontSize.value = '15';
     testFontSize.dispatchEvent(new Event('change', { bubbles: true }));
     testMaxHeight.value = '';
     testMaxHeight.dispatchEvent(new Event('change', { bubbles: true }));
+    visualChecks.push({
+      name: 'Clearing max height restores original editor minimum height',
+      passed: editor.style.getPropertyValue('--md-editor-max-height') === ''
+        && editor.style.getPropertyValue('--md-editor-min-height') === ''
+    });
 
     editor.value = '```';
     await new Promise(requestAnimationFrame);
@@ -454,6 +847,55 @@
     visualChecks.push({
       name: 'Typing in auto-created empty table body cell creates a Markdown row',
       passed: editor.value === '| Col [A] | Col [B] |\n| --- | --- |\n| a |  |'
+    });
+
+    editor.value = '- [x] original';
+    await new Promise(requestAnimationFrame);
+    const taskSource = editor.shadowRoot.querySelector('.md-task-source');
+    taskSource.textContent = 'updated';
+    const taskText = taskSource.firstChild;
+    const taskRange = document.createRange();
+    taskRange.setStart(taskText, taskText.nodeValue.length);
+    taskRange.collapse(true);
+    const taskSelection = editor.shadowRoot.getSelection();
+    taskSelection.removeAllRanges();
+    taskSelection.addRange(taskRange);
+    taskSource.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: 'updated', bubbles: true }));
+    visualChecks.push({
+      name: 'Editing rendered task text preserves hidden Markdown task marker',
+      passed: editor.value === '- [x] updated' && editor.selectionStart === editor.value.length
+    });
+
+    editor.value = '- [ ] keyboard task';
+    await new Promise(requestAnimationFrame);
+    editor.shadowRoot.querySelector('[data-task-checkbox]').click();
+    const toggledTaskCheckbox = editor.shadowRoot.querySelector('[data-task-checkbox]');
+    visualChecks.push({
+      name: 'Keyboard task toggle updates source and preserves checkbox focus',
+      passed: editor.value === '- [x] keyboard task' && root.activeElement === toggledTaskCheckbox && toggledTaskCheckbox.checked
+    });
+
+    editor.value = '- [ ] first\n- [ ] second';
+    await new Promise(requestAnimationFrame);
+    const firstTaskEnd = editor.value.indexOf('first') + 'first'.length;
+    const secondTaskStart = editor.value.indexOf('second');
+    editor.setSelectionRange(secondTaskStart + 3, secondTaskStart + 3);
+    const taskHomeHandled = pressLiveKey('Home');
+    visualChecks.push({
+      name: 'Home in rendered task item moves to visible text start',
+      passed: taskHomeHandled && editor.selectionStart === secondTaskStart && editor.selectionEnd === secondTaskStart
+    });
+    editor.setSelectionRange(secondTaskStart + 'second'.length, secondTaskStart + 'second'.length);
+    const taskShiftHomeHandled = pressLiveKey('Home', { shiftKey: true });
+    visualChecks.push({
+      name: 'Shift+Home in rendered task item excludes hidden Markdown marker',
+      passed: taskShiftHomeHandled && editor.selectionStart === secondTaskStart && editor.selectionEnd === secondTaskStart + 'second'.length && editor.getSelectionMarkdown() === 'second'
+    });
+    editor.setSelectionRange(firstTaskEnd, firstTaskEnd);
+    const taskArrowRightHandled = pressLiveKey('ArrowRight');
+    visualChecks.push({
+      name: 'ArrowRight crosses between rendered task texts without entering hidden markers',
+      passed: taskArrowRightHandled && editor.selectionStart === secondTaskStart && editor.selectionEnd === secondTaskStart
     });
 
     editor.value = '# Section\n\nParagraph text\n\n## Child\n\nChild text\n\n# Next\n\nEnd';
@@ -654,6 +1096,38 @@ Paragraph`;
     const codeCopy = copyFromEditor();
     visualChecks.push({ name: 'copying visible inline code includes backticks', passed: codeCopy.out['text/plain'] === '`code`' });
 
+    editor.value = '``a`b`` and [outer [inner]](https://example.com)';
+    const multiCodeStart = editor.value.indexOf('a`b');
+    editor.setSelectionRange(multiCodeStart, multiCodeStart + 'a`b'.length);
+    const multiCodeCopy = copyFromEditor();
+    visualChecks.push({
+      name: 'Copying multi-backtick code content includes matching delimiters',
+      passed: multiCodeCopy.out['text/plain'] === '``a`b``' && multiCodeCopy.out['text/markdown'] === '``a`b``'
+    });
+    const nestedLabelStart = editor.value.indexOf('outer');
+    editor.setSelectionRange(nestedLabelStart, nestedLabelStart + 'outer [inner]'.length);
+    const nestedLabelCopy = copyFromEditor();
+    visualChecks.push({
+      name: 'Copying balanced-bracket link label includes complete link target',
+      passed: nestedLabelCopy.out['text/plain'] === '[outer [inner]](https://example.com)'
+    });
+
+    editor.value = '\\*literal* and \\[site](https://example.com)';
+    const escapedLiteralStart = editor.value.indexOf('literal');
+    editor.setSelectionRange(escapedLiteralStart, escapedLiteralStart + 'literal'.length);
+    const escapedLiteralCopy = copyFromEditor();
+    visualChecks.push({
+      name: 'Copying escaped emphasis content does not add formatting markers',
+      passed: escapedLiteralCopy.out['text/plain'] === 'literal'
+    });
+    const escapedLinkLabelStart = editor.value.indexOf('site');
+    editor.setSelectionRange(escapedLinkLabelStart, escapedLinkLabelStart + 'site'.length);
+    const escapedLinkCopy = copyFromEditor();
+    visualChecks.push({
+      name: 'Copying escaped link text does not expand to a link',
+      passed: escapedLinkCopy.out['text/plain'] === 'site'
+    });
+
     editor.value = `alpha
 beta`;
     editor.setSelectionRange(6, 6);
@@ -788,8 +1262,18 @@ beta`;
     editor.setSelectionRange(terminalTableLastCellEnd, terminalTableLastCellEnd);
     const tableArrowDownExited = pressLiveKey('ArrowDown');
     visualChecks.push({
-      name: 'ArrowDown exits terminal live table to following blank line',
-      passed: tableArrowDownExited && editor.value === `${terminalTableBlock}\n` && editor.selectionStart === editor.value.length && editor.selectionEnd === editor.value.length
+      name: 'ArrowDown exits terminal live table without editing source',
+      passed: tableArrowDownExited && editor.value === terminalTableBlock && editor.selectionStart === editor.value.length && editor.selectionEnd === editor.value.length
+    });
+
+    const followedTable = `${terminalTableBlock}\nafter`;
+    editor.value = followedTable;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(terminalTableLastCellEnd, terminalTableLastCellEnd);
+    const followedTableArrowDownExited = pressLiveKey('ArrowDown');
+    visualChecks.push({
+      name: 'ArrowDown exits live table into following paragraph without inserting blank line',
+      passed: followedTableArrowDownExited && editor.value === followedTable && editor.selectionStart === terminalTableBlock.length + 1
     });
 
     editor.value = terminalTableBlock;
@@ -893,6 +1377,50 @@ beta`;
     const tableHomeMovesToCellStart = pressLiveKey('Home');
     visualChecks.push({ name: 'Home in live table cell moves to cell start', passed: tableHomeMovesToCellStart && editor.selectionStart === tableBOffset && editor.selectionEnd === tableBOffset });
 
+    editor.setSelectionRange(tableAOffset, tableAOffset);
+    const tableTabMovesCell = pressLiveKey('Tab');
+    visualChecks.push({
+      name: 'Tab in live table selects next cell contents',
+      passed: tableTabMovesCell && editor.selectionStart === tableBOffset && editor.selectionEnd === tableBOffset + 1
+    });
+
+    editor.value = keyboardTable;
+    await new Promise(requestAnimationFrame);
+    const tableDOffset = keyboardTable.indexOf('D');
+    editor.setSelectionRange(tableDOffset + 1, tableDOffset + 1);
+    const tableTabCreatesRow = pressLiveKey('Tab');
+    const tableWithEmptyRow = `${keyboardTable}\n|  |  |`;
+    visualChecks.push({
+      name: 'Tab from final nonempty table cell creates a new row',
+      passed: tableTabCreatesRow && editor.value === tableWithEmptyRow && editor.selectionStart === keyboardTable.length + 3
+    });
+
+    const finalEmptyCell = editor.shadowRoot.querySelector('tbody tr:last-child td:last-child .md-cell');
+    editor.setSelectionRange(Number(finalEmptyCell.dataset.from), Number(finalEmptyCell.dataset.from));
+    const tableTabExitsEmptyRow = pressLiveKey('Tab');
+    visualChecks.push({
+      name: 'Tab from terminal empty table row exits without editing source',
+      passed: tableTabExitsEmptyRow && editor.value === tableWithEmptyRow && editor.selectionStart === editor.value.length
+    });
+
+    editor.value = keyboardTable;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(tableDOffset + 1, tableDOffset + 1);
+    const tableEscapeExits = pressLiveKey('Escape');
+    visualChecks.push({
+      name: 'Escape exits terminal live table without editing source',
+      passed: tableEscapeExits && editor.value === keyboardTable && editor.selectionStart === editor.value.length
+    });
+
+    editor.value = keyboardTable;
+    await new Promise(requestAnimationFrame);
+    editor.setSelectionRange(tableDOffset + 1, tableDOffset + 1);
+    const tableShiftEnterExits = pressLiveKey('Enter', { shiftKey: true });
+    visualChecks.push({
+      name: 'Shift+Enter exits terminal live table without editing source',
+      passed: tableShiftEnterExits && editor.value === keyboardTable && editor.selectionStart === editor.value.length
+    });
+
     const escapedCellTable = '| A | B |\n| --- | --- |\n| a\\|b | c |';
     editor.value = escapedCellTable;
     await new Promise(requestAnimationFrame);
@@ -906,6 +1434,18 @@ beta`;
       name: 'Escaped live table pipe maps between source and displayed offsets',
       passed: escapedPipeDisplayOffset === 2 && escapedPipeRoundTrip === escapedPipeSourceOffset && escapedPipeDomRoundTrip === escapedPipeSourceOffset
     });
+
+    editor.removeAttribute('render-debounce-ms');
+    visualChecks.push({ name: 'Preview debounce defaults to 100ms when attribute is absent', passed: editor._renderDebounceMs() === 100 });
+    editor.setAttribute('render-debounce-ms', 'invalid');
+    visualChecks.push({ name: 'Preview debounce uses default for invalid values', passed: editor._renderDebounceMs() === 100 });
+    editor.setAttribute('render-debounce-ms', '-20');
+    visualChecks.push({ name: 'Preview debounce clamps negative values to zero', passed: editor._renderDebounceMs() === 0 });
+    editor.setAttribute('render-debounce-ms', '2500');
+    visualChecks.push({ name: 'Preview debounce clamps large values to 1000ms', passed: editor._renderDebounceMs() === 1000 });
+    editor.setAttribute('render-debounce-ms', '250');
+    visualChecks.push({ name: 'Preview debounce accepts in-range values', passed: editor._renderDebounceMs() === 250 });
+    editor.removeAttribute('render-debounce-ms');
 
     editor.mode = 'live';
     editor.preview = 'none';
