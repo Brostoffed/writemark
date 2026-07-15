@@ -4,6 +4,24 @@
 
 The default experience is **inline/live editing**: headings, inline formatting, lists, task checkboxes, code fences, and tables render inside the editor itself while the component preserves raw Markdown as the canonical `value` and form submission value. There is no built-in formatting toolbar; formatting is driven by Markdown shortcuts, slash commands, keyboard shortcuts, and the public action API.
 
+![Writemark live inline Markdown editor demo](https://raw.githubusercontent.com/Brostoffed/writemark/main/assets/writemark-demo.gif)
+
+## Install
+
+```sh
+npm install writemark-editor
+```
+
+Importing the package registers `<writemark-editor>`:
+
+```js
+import 'writemark-editor';
+```
+
+```html
+<writemark-editor name="body" label="Body"></writemark-editor>
+```
+
 ## Documentation
 
 Choose the level that matches what you are building:
@@ -61,11 +79,13 @@ For direct browser usage without a module server:
 ></writemark-editor>
 ```
 
-For ESM/npm usage:
+For an npm package loaded by a bundler:
+
+```js
+import 'writemark-editor';
+```
 
 ```html
-<script type="module" src="./dist/writemark-editor.js"></script>
-
 <writemark-editor
   name="body"
   label="Body"
@@ -381,6 +401,10 @@ http://127.0.0.1:5173/tests/browser.html
 ```
 
 The test harness verifies action fixtures and live-rendered structure.
+
+## Releasing
+
+See [RELEASING.md](RELEASING.md) for the one-time first npm publish and the automated GitHub Release workflow used for later versions.
 
 ## Current engineering caveats
 

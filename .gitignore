@@ -1,1 +1,3 @@
 /.idea/
+/.playwright-cli/
+/output/
