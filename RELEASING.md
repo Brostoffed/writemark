@@ -10,8 +10,13 @@ The first publish establishes ownership of the unscoped npm package. Do this
 once from a trusted local machine:
 
 1. Create or sign in to an npm account and enable two-factor authentication.
-2. Use a current supported Node.js/npm combination (Node.js 24 is also used by
-   the release workflow).
+2. Use Node.js 24 and its bundled npm version, matching the release workflow.
+   Confirm both executables before continuing:
+
+   ```sh
+   node --version
+   npm --version
+   ```
 3. From the repository root, authenticate and verify the account:
 
    ```sh
@@ -46,16 +51,16 @@ The workflow uses short-lived OpenID Connect credentials, so no npm token or
 GitHub repository secret is required. npm generates provenance automatically.
 
 7. In GitHub, create and publish the first Release from `main` with the tag
-   `v1.2.2`. The workflow will verify the release and exit successfully because
-   `writemark-editor@1.2.2` was already published manually.
+   `v1.3.0`. The workflow will verify the release and exit successfully because
+   `writemark-editor@1.3.0` was already published manually.
 
 ## Publish a version after the first one
 
 1. Choose the next semantic version:
 
-   - Patch (`1.2.2` to `1.2.3`) for a backward-compatible fix.
-   - Minor (`1.2.2` to `1.3.0`) for a backward-compatible feature.
-   - Major (`1.2.2` to `2.0.0`) for a breaking change.
+   - Patch (`1.3.0` to `1.3.1`) for a backward-compatible fix.
+   - Minor (`1.3.0` to `1.4.0`) for a backward-compatible feature.
+   - Major (`1.3.0` to `2.0.0`) for a breaking change.
 
 2. Update `CHANGELOG.md`, then bump `package.json` without creating a tag yet:
 
@@ -69,7 +74,7 @@ GitHub repository secret is required. npm generates provenance automatically.
 
 3. Commit and push the release changes to `main`.
 4. In GitHub, create a new Release whose tag is exactly `v` plus the package
-   version, such as `v1.2.3`, and publish it from `main`.
+   version, such as `v1.3.1`, and publish it from `main`.
 
 Publishing the GitHub Release runs `.github/workflows/publish.yml`. The workflow
 installs Chromium, Firefox, and WebKit, runs the complete Playwright and

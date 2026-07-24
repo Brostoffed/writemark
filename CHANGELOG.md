@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-07-24
+
 - Replaced the wrapper-only browser check with independent Playwright specs for
   the component contract, live/source editing, completion UI, tables, forms,
   multiple instances, safe rendering, and the published demo. Migrated all 230
