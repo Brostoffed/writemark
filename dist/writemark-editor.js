@@ -94,6 +94,31 @@ function isSafeUrl(url, { allowDataImage = false } = {}) {
   return true;
 }
 function safeHref(url, opts = {}) { const raw = String(url ?? "").trim(); return raw === "" ? "" : isSafeUrl(raw, opts) ? raw : "#"; }
+function headingSlug(value) {
+  const text = String(value ?? "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/\\([\\`*_[\]{}()#+\-.!])/g, "$1")
+    .replace(/[`*_~]/g, "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .trim()
+    .replace(/\s+/g, "-");
+  return text || "section";
+}
+function assignHeadingIds(blocks) {
+  const seen = new Map();
+  for (const block of blocks) {
+    if (block.type !== "heading" || !block.heading) continue;
+    const base = headingSlug(block.heading.content);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    block.heading.id = count === 0 ? base : `${base}-${count}`;
+  }
+  return blocks;
+}
 function isEscapablePunctuation(char) { return Boolean(char) && ESCAPABLE_PUNCTUATION.includes(char); }
 function isBackslashEscaped(source, index) {
   let slashes = 0;
@@ -653,27 +678,6 @@ function removePrefixFromLine(ctx, actionId, prefixEndOffset, announcement) {
   return ok(tx(ctx, actionId, [{ from, to, insert: "" }], { start: from, end: from, direction: "none" }, actionId), announcement);
 }
 
-function parseFixtureMarkedValue(marked) {
-  let value = ""; let selectionStart = -1; let selectionEnd = -1;
-  for (let i = 0; i < marked.length; i += 1) {
-    const char = marked[i];
-    if (char === "|") { selectionStart = value.length; selectionEnd = value.length; continue; }
-    if (char === "[" && marked[i + 1] === "]") { value += char; continue; }
-    if (char === "[" && /^(?: |x|X)\]/.test(marked.slice(i + 1, i + 3))) { value += char; continue; }
-    if (char === "]" && /\[(?: |x|X)$/.test(value.slice(-2))) { value += char; continue; }
-    if (char === "[" && selectionStart === -1) { selectionStart = value.length; continue; }
-    if (char === "]" && selectionStart !== -1 && selectionEnd === -1) { selectionEnd = value.length; continue; }
-    value += char;
-  }
-  if (selectionStart === -1) selectionStart = value.length;
-  if (selectionEnd === -1) selectionEnd = selectionStart;
-  return { value, selectionStart, selectionEnd };
-}
-function serializeMarkedValue(value, start, end) {
-  if (start === end) return value.slice(0, start) + "|" + value.slice(start);
-  return value.slice(0, start) + "[" + value.slice(start, end) + "]" + value.slice(end);
-}
-
 function parseBlocks(markdown, opts = {}) {
   const source = normalizeLineEndings(markdown);
   const lines = getLines(source);
@@ -726,7 +730,7 @@ function parseBlocks(markdown, opts = {}) {
     blocks.push({ type: line.text.trim() ? "paragraph" : "blank", from: line.start, to: line.end, newlineEnd: line.newlineEnd, line });
   }
   if (blocks.length === 0) blocks.push({ type: "blank", from: 0, to: 0, newlineEnd: 0, line: { start: 0, end: 0, newlineEnd: 0, text: "" } });
-  return blocks;
+  return assignHeadingIds(blocks);
 }
 
 function decorateInline(raw, opts = {}) {
@@ -837,7 +841,7 @@ function renderMarkdown(markdown, opts = {}) {
   for (let i = 0; i < blocks.length; i += 1) {
     const block = blocks[i];
     if (block.type === "blank") continue;
-    if (block.type === "heading") { out.push(`<h${block.heading.level}>${renderInlineMarkdown(block.heading.content, options)}</h${block.heading.level}>`); continue; }
+    if (block.type === "heading") { out.push(`<h${block.heading.level} id="${escapeAttribute(block.heading.id)}">${renderInlineMarkdown(block.heading.content, options)}</h${block.heading.level}>`); continue; }
     if (block.type === "horizontal-rule") { out.push("<hr>"); continue; }
     if (block.type === "blockquote") {
       const quotes = [block];
@@ -1090,11 +1094,6 @@ class WritemarkEditorElement extends HTMLElement {
   checkValidity() { this._updateValidity(); return this._internals ? this._internals.checkValidity() : this._fallbackValidity().valid; }
   reportValidity() { this._validationVisible = true; this._updateValidity(); return this._internals ? this._internals.reportValidity() : this.checkValidity(); }
   setCustomValidity(message) { this._customValidityMessage = String(message ?? ""); this._updateValidity(); }
-  runFixture(fixture) {
-    const p = parseFixtureMarkedValue(fixture.before); this.value = p.value; this.setSelectionRange(p.selectionStart, p.selectionEnd);
-    const passedExec = this.exec(fixture.action, fixture.args); const sel = this._selection; const actual = serializeMarkedValue(this.value, sel.start, sel.end);
-    return { name: fixture.name, passedExec, expected: fixture.after, actual, passed: actual === fixture.after };
-  }
 
   _upgradeProperties() {
     for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tabBehavior", "indentString", "disabled", "readonly", "required"]) {
@@ -1106,6 +1105,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._shadow.innerHTML = `
       <style>
         :host {
+          color-scheme: light dark;
           --md-editor-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           --md-editor-mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           --md-editor-font-size: 15px;
@@ -1272,6 +1272,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._liveEditor.addEventListener("drop", event => this._onDrop(event));
     this._liveEditor.addEventListener("compositionstart", () => { this._isComposing = true; this._closeCompletion(); });
     this._liveEditor.addEventListener("compositionend", () => { this._isComposing = false; this._onSelectionChanged(); });
+    this._preview.addEventListener("click", event => this._onPreviewClick(event));
 
     this._completionPopup.addEventListener("mousedown", e => e.preventDefault());
     this._completionPopup.addEventListener("click", e => { const item = e.target.closest("[data-index]"); if (!item) return; const index = Number(item.dataset.index); if (this._completion.items[index]?.disabled) return; this._completion.activeIndex = index; this._acceptCompletion("pointer"); });
@@ -1442,6 +1443,7 @@ class WritemarkEditorElement extends HTMLElement {
     return blocks;
   }
   _setBlockCache(blocks, mode = "full") {
+    assignHeadingIds(blocks);
     this._blockCacheValue = this._value;
     this._blockCache = blocks;
     this._lastParseMode = mode;
@@ -1583,6 +1585,12 @@ class WritemarkEditorElement extends HTMLElement {
       if (!source) return false;
       if (checkbox) checkbox.dataset.checkOffset = String(block.line.start + block.list.indent.length + `${block.list.marker} [`.length);
       return this._setEditableMetadata(source, block.line.start + block.list.contentStart, block.line.end);
+    }
+    if (block.type === "heading") {
+      const heading = node.matches?.(".md-heading") ? node : node.querySelector?.(".md-heading");
+      if (!heading) return false;
+      heading.id = block.heading.id;
+      return this._setEditableMetadata(heading, block.line.start, block.line.end);
     }
     const editable = node.matches?.("[data-editable]") ? node : node.querySelector?.("[data-editable]");
     if (editable && block.line) return this._setEditableMetadata(editable, block.line.start, block.line.end);
@@ -1743,7 +1751,7 @@ class WritemarkEditorElement extends HTMLElement {
         ? `<div class="md-line md-setext-after" part="line" data-editable="virtual-setext-after" data-kind="blank" data-from="${block.to}" data-to="${block.to}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}" aria-label="After heading"><br></div>`
         : "";
       const content = block.setext ? decorateInline(block.line.text, options) : this._renderHeadingLine(block.line.text, block.heading);
-      return `<div ${lineAttrs(block.line, "heading", `md-heading md-h${block.heading.level}`)}>${content}</div>${afterAnchor}`;
+      return `<div ${lineAttrs(block.line, "heading", `md-heading md-h${block.heading.level}`, `id="${escapeAttribute(block.heading.id)}"`)}>${content}</div>${afterAnchor}`;
     }
     if (block.type === "blockquote") return `<div ${lineAttrs(block.line, "blockquote", "md-quote")}>${decorateInline(block.line.text, options)}</div>`;
     if (block.type === "horizontal-rule") {
@@ -1816,15 +1824,26 @@ class WritemarkEditorElement extends HTMLElement {
     this._ignoreSelectionChangeCount = 0;
     this._structuredSelection = null;
     const inputType = event?.inputType || "";
+    if (this._value.length === 0 && inputType.startsWith("delete")) {
+      event.preventDefault();
+      this._ensureEmptyLiveEditable();
+      return;
+    }
     if (!this._isSourceActive() && !this.disabled && !this.readonly) {
       const ctx = this._getContext();
       const hasSelection = ctx.selectionStart !== ctx.selectionEnd;
-      if (hasSelection && inputType.startsWith("delete")) {
+      const editable = this._closestEditable(event.target) || this._activeEditableFromSelection();
+      const editableRange = this._editableSourceRange(editable);
+      const selectionInsideTableCell = editable?.dataset.editable === "cell"
+        && editableRange
+        && ctx.selectionStart >= editableRange.from
+        && ctx.selectionEnd <= editableRange.to;
+      if (hasSelection && inputType.startsWith("delete") && !selectionInsideTableCell) {
         event.preventDefault();
         this._applyActionResult("editor.deleteSelection", this._deleteSelectionResult(ctx, "editor.deleteSelection"), { source: "user" });
         return;
       }
-      if (hasSelection && inputType === "insertText" && event.data != null) {
+      if (hasSelection && inputType === "insertText" && event.data != null && !selectionInsideTableCell) {
         event.preventDefault();
         const text = normalizeLineEndings(event.data);
         this._applyActionResult("editor.replaceSelection", insertionTransaction(ctx, "editor.replaceSelection", text, text.length, "typing"), { source: "user" });
@@ -1843,7 +1862,8 @@ class WritemarkEditorElement extends HTMLElement {
     const from = Number(editable.dataset.from); const to = Number(editable.dataset.to);
     const raw = this._plainText(editable).replace(/\n/g, "");
     const liveSelection = this._getLiveSelection(editable);
-    const tableEdit = editable.dataset.editable === "cell" ? this._tableCellInputEdit(editable, raw, liveSelection) : null;
+    const tableDisplayCursor = editable.dataset.editable === "cell" ? this._displayOffsetFromSelection(editable) : null;
+    const tableEdit = editable.dataset.editable === "cell" ? this._tableCellInputEdit(editable, raw, tableDisplayCursor) : null;
     if (tableEdit) {
       const previousValue = this._value;
       this._value = tableEdit.nextValue;
@@ -1928,6 +1948,39 @@ class WritemarkEditorElement extends HTMLElement {
     return range.to;
   }
   _closestEditable(target) { return target?.closest?.("[data-editable]") ?? null; }
+  _fragmentIdForLink(link) {
+    const href = link?.getAttribute?.("href")?.trim() ?? "";
+    if (!href.startsWith("#") || href.length === 1) return "";
+    try { return decodeURIComponent(href.slice(1)); } catch { return href.slice(1); }
+  }
+  _headingElementForId(surface, id) {
+    return [...surface?.querySelectorAll?.(".md-heading[id], h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]") || []]
+      .find(heading => heading.id === id) || null;
+  }
+  _navigateFragmentLink(event, surface) {
+    const link = event.target?.closest?.("a[href]");
+    const id = this._fragmentIdForLink(link);
+    if (!link || !surface?.contains(link) || !id) return false;
+    let target = this._headingElementForId(surface, id);
+    let label = target?.textContent?.trim() || "";
+    if (surface === this._liveEditor) {
+      const block = this._getBlocks().find(candidate => candidate.type === "heading" && candidate.heading?.id === id);
+      if (!block) return false;
+      label = block.heading.content;
+      event.preventDefault();
+      this.setSelectionRange(block.from, block.from, "none");
+      target = this._headingElementForId(surface, id);
+    } else {
+      if (!target) return false;
+      event.preventDefault();
+    }
+    target?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    this._announce(`Navigated to ${label || id}.`);
+    return true;
+  }
+  _onPreviewClick(event) {
+    this._navigateFragmentLink(event, this._preview);
+  }
   _onLiveClick(event) {
     if (this._suppressLiveClick) {
       this._suppressLiveClick = false;
@@ -1935,6 +1988,7 @@ class WritemarkEditorElement extends HTMLElement {
       event.stopPropagation();
       return;
     }
+    if (this._navigateFragmentLink(event, this._liveEditor)) return;
     this._structuredSelection = null;
     const checkbox = event.target.closest?.("[data-task-checkbox]");
     if (checkbox) {
@@ -1943,9 +1997,19 @@ class WritemarkEditorElement extends HTMLElement {
       const current = this._value[offset] || " ";
       const next = current.toLowerCase() === "x" ? " " : "x";
       const source = event.detail === 0 ? "keyboard" : "pointer";
-      this._applyTransaction({ changes: [{ from: offset, to: offset + 1, insert: next }], selectionAfter: this._selection, actionId: "block.taskDone", undoGroup: "block", source }, { source });
+      const ctx = this._getContext();
+      const result = ok(
+        tx(
+          ctx,
+          "block.taskDone",
+          [{ from: offset, to: offset + 1, insert: next }],
+          this._selection,
+          "block"
+        ),
+        next === "x" ? "Task checked." : "Task unchecked."
+      );
+      this._applyActionResult("block.taskDone", result, { source });
       if (source === "keyboard") this._liveEditor.querySelector(`[data-task-checkbox][data-check-offset="${offset}"]`)?.focus();
-      this._announce(next === "x" ? "Task checked." : "Task unchecked.");
       return;
     }
     this._onSelectionChanged();
@@ -2283,6 +2347,15 @@ class WritemarkEditorElement extends HTMLElement {
     if (start == null || end == null) return null;
     return { start: Math.min(start, end), end: Math.max(start, end), direction: start <= end ? "forward" : "backward" };
   }
+  _displayOffsetFromSelection(editable) {
+    const sel = this._shadow.getSelection?.() || globalThis.getSelection?.();
+    const node = sel?.focusNode;
+    if (!sel || sel.rangeCount === 0 || !node || (node !== editable && !editable.contains(node))) return null;
+    const range = document.createRange();
+    range.selectNodeContents(editable);
+    try { range.setEnd(node, sel.focusOffset); } catch { return null; }
+    return range.toString().replace(/\u00a0/g, " ").replace(/\n/g, "").length;
+  }
   _sourceOffsetFromDom(editable, node, offset) {
     const from = Number(editable.dataset.from); if (!Number.isFinite(from)) return null;
     const range = document.createRange(); range.selectNodeContents(editable);
@@ -2364,6 +2437,17 @@ class WritemarkEditorElement extends HTMLElement {
     if (lastText) return { node: lastText, offset: lastText.nodeValue.length, editable: el };
     const text = document.createTextNode(""); el.appendChild(text); return { node: text, offset: 0, editable: el };
   }
+  _ensureEmptyLiveEditable() {
+    if (this._value.length !== 0 || !this._liveEditor) return;
+    if (!this._liveEditor.querySelector("[data-editable]")) {
+      const blocks = this._getBlocks();
+      this._renderLiveFull(blocks);
+      this._liveBlocks = blocks;
+      this._rebuildLiveIndex();
+    }
+    this._selection = { start: 0, end: 0, direction: "none" };
+    this._restoreLiveSelection(this._selection);
+  }
 
   _snapshot() { const sel = this._getCurrentSelection(); this._selection = sel; return makeSnapshot(this._value, sel.start, sel.end, sel.direction || "none"); }
   _recordUndo(before, after, group, { coalesce = false } = {}) {
@@ -2386,9 +2470,20 @@ class WritemarkEditorElement extends HTMLElement {
   _onKeyDown(event) {
     const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "");
     const mod = isMac ? event.metaKey : event.ctrlKey;
+    const taskCheckbox = event.target.closest?.("[data-task-checkbox]");
+    if (!this._isSourceActive() && taskCheckbox && (event.key === " " || event.key === "Spacebar")) {
+      event.preventDefault();
+      taskCheckbox.click();
+      return;
+    }
     const activeEditable = this._activeEditableFromEvent(event);
     const activeCell = activeEditable?.dataset.editable === "cell" ? activeEditable : null;
     if (!this._isSourceActive() && NAVIGATION_KEYS.has(event.key)) this._ignoreSelectionChangeCount = 0;
+    if (!this._isSourceActive() && this._value.length === 0 && (event.key === "Backspace" || event.key === "Delete")) {
+      event.preventDefault();
+      this._ensureEmptyLiveEditable();
+      return;
+    }
 
     if (mod && !event.altKey && event.key.toLowerCase() === "z") {
       if (this.readonly || this.disabled) return;
@@ -2718,7 +2813,7 @@ class WritemarkEditorElement extends HTMLElement {
     return { source: lines.join("\n"), parts, lineStarts };
   }
 
-  _tableCellInputEdit(cell, raw, selection = null) {
+  _tableCellInputEdit(cell, raw, displayCursor = null) {
     const info = this._tableInfoForCell(cell);
     if (!info) return null;
     const cols = info.cols;
@@ -2734,7 +2829,7 @@ class WritemarkEditorElement extends HTMLElement {
     const serialized = this._tableBlockSourceWithOffsets(header, delimiter, rows);
     const lineIndex = info.row < 0 ? 0 : info.row + 2;
     const cellOffsets = serialized.parts[lineIndex]?.offsets?.[info.col];
-    const rawCursor = clamp((selection?.end ?? Number(cell.dataset.from) + raw.length) - Number(cell.dataset.from), 0, raw.length);
+    const rawCursor = clamp(displayCursor ?? raw.length, 0, raw.length);
     const escapedCursor = this._escapeTableCellText(raw.slice(0, rawCursor)).length;
     const cursor = info.block.from + (serialized.lineStarts[lineIndex] ?? 0) + (cellOffsets?.from ?? 0) + escapedCursor;
     return {
@@ -3189,7 +3284,7 @@ class WritemarkEditorElement extends HTMLElement {
   _getSlashItems(match) { const q = match.query.toLowerCase(); const items = []; for (const action of this._actions.values()) { if (!action.visibleInSlash) continue; const hay = [action.label, action.description, ...(action.aliases || []), ...(action.keywords || [])].filter(Boolean).join(" ").toLowerCase(); if (q && !hay.includes(q)) continue; items.push({ id: action.id, label: action.label, detail: action.group, description: action.description || displayShortcut(action.defaultShortcut), kind: "slash-command", actionId: action.id }); } return items.slice(0, 24); }
   _applySlashItem(item, match, ctx) { const repl = this._slashReplacementForAction(item.actionId); if (repl) { const insert = typeof repl.insert === "function" ? repl.insert(ctx) : repl.insert; const off = typeof repl.selectionOffset === "number" ? repl.selectionOffset : insert.length; return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert }], { start: match.from + off, end: match.from + off + (repl.selectionLength || 0), direction: "none" }, "slash"), item.label); } return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert: "" }], { start: match.from, end: match.from, direction: "none" }, "slash"), item.label); }
   _slashReplacementForAction(actionId) { return { "block.paragraph": { insert: "", selectionOffset: 0 }, "block.heading.1": { insert: "# ", selectionOffset: 2 }, "block.heading.2": { insert: "## ", selectionOffset: 3 }, "block.heading.3": { insert: "### ", selectionOffset: 4 }, "block.heading.4": { insert: "#### ", selectionOffset: 5 }, "block.heading.5": { insert: "##### ", selectionOffset: 6 }, "block.heading.6": { insert: "###### ", selectionOffset: 7 }, "block.bulletList": { insert: "- ", selectionOffset: 2 }, "block.orderedList": { insert: "1. ", selectionOffset: 3 }, "block.taskList": { insert: "- [ ] ", selectionOffset: 6 }, "block.blockquote": { insert: "> ", selectionOffset: 2 }, "block.codeFence": { insert: "```\n\n```", selectionOffset: 4 }, "block.horizontalRule": { insert: "---\n", selectionOffset: 4 }, "block.table": { insert: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| Cell 1 | Cell 2 | Cell 3 |", selectionOffset: 2, selectionLength: "Column 1".length }, "inline.link": { insert: "[]()", selectionOffset: 1 }, "inline.image": { insert: "![]()", selectionOffset: 2 }, "inline.bold": { insert: "****", selectionOffset: 2 }, "inline.italic": { insert: "**", selectionOffset: 1 }, "inline.code": { insert: "``", selectionOffset: 1 }, "inline.strikethrough": { insert: "~~~~", selectionOffset: 2 } }[actionId] || null; }
-  _matchCodeLanguage(ctx) { if (ctx.inline.insideInlineCode) return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(before); if (!m) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: m[2], sequence: m[2], query: m[3], providerId: "code-language" }; }
+  _matchCodeLanguage(ctx) { if (ctx.block.kind === "fenced-code") return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(before); if (!m || LANGUAGES.includes(m[3].toLowerCase())) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: m[2], sequence: m[2], query: m[3], providerId: "code-language" }; }
 
   _scheduleCompletionUpdate({ immediate = false } = {}) {
     if (this.disabled || this.readonly || this._isComposing) return;
@@ -3224,11 +3319,25 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _renderCompletion() {
     if (!this._completionPopup) return; const open = this._completion.open && this._completion.items.length > 0; this._completionPopup.hidden = !open; const controller = this._isSourceActive() ? this._sourceTextarea : this._liveEditor; controller?.setAttribute("aria-expanded", open ? "true" : "false");
-    if (!open) { this._completionPopup.innerHTML = ""; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
+    if (!open) { this._completionPopup.innerHTML = ""; this._completionPopup.scrollTop = 0; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
+    const previousScrollTop = this._completionPopup.scrollTop;
     const activeId = this._completion.activeIndex >= 0 ? `${this._ids.completion}-item-${this._completion.activeIndex}` : null;
     if (activeId) controller?.setAttribute("aria-activedescendant", activeId); else controller?.removeAttribute("aria-activedescendant");
     this._completionPopup.innerHTML = this._completion.items.map((item, index) => `<div id="${this._ids.completion}-item-${index}" class="completion-item" part="${index === this._completion.activeIndex ? "completion-item completion-item-active" : "completion-item"}" role="option" aria-selected="${index === this._completion.activeIndex ? "true" : "false"}" aria-disabled="${item.disabled ? "true" : "false"}" data-index="${index}"><div class="completion-label">${escapeHtml(item.label)}</div><div class="completion-detail">${escapeHtml(item.detail || "")}</div>${item.description ? `<div class="completion-description">${escapeHtml(item.description)}</div>` : ""}</div>`).join("");
+    this._completionPopup.scrollTop = previousScrollTop;
     this._positionCompletionPopup();
+    this._scrollActiveCompletionIntoView();
+  }
+  _scrollActiveCompletionIntoView() {
+    const popup = this._completionPopup;
+    const option = popup?.querySelector('[role="option"][aria-selected="true"]');
+    if (!popup || !option) return;
+    const optionTop = option.offsetTop;
+    const optionBottom = optionTop + option.offsetHeight;
+    const visibleTop = popup.scrollTop;
+    const visibleBottom = visibleTop + popup.clientHeight;
+    if (optionTop < visibleTop) popup.scrollTop = optionTop;
+    else if (optionBottom > visibleBottom) popup.scrollTop = optionBottom - popup.clientHeight;
   }
   _positionCompletionPopup() {
     const shell = this._shadow.querySelector(".editor-shell"); if (!shell || !this._completionPopup) return; const shellRect = shell.getBoundingClientRect(); let rect = null;
@@ -3288,4 +3397,4 @@ if (globalThis.customElements) {
   if (!customElements.get(LEGACY_TAG_NAME)) customElements.define(LEGACY_TAG_NAME, MdLiveEditorElement);
 }
 
-export { WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown, parseBlocks, parseListItem, parseHeading, parseBlockquote, parseFixtureMarkedValue, serializeMarkedValue, htmlToMarkdown, tsvToMarkdownTable };
+export { WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown, parseBlocks, parseListItem, parseHeading, parseBlockquote, htmlToMarkdown, tsvToMarkdownTable };

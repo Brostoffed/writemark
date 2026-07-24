@@ -12,7 +12,7 @@ const legacyPath = resolve(distDir, "md-live-editor.js");
 const checkOnly = process.argv.includes("--check");
 
 const source = await readFile(sourcePath, "utf8");
-const exportStatement = "export { WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown, parseBlocks, parseListItem, parseHeading, parseBlockquote, parseFixtureMarkedValue, serializeMarkedValue, htmlToMarkdown, tsvToMarkdownTable };";
+const exportStatement = "export { WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown, parseBlocks, parseListItem, parseHeading, parseBlockquote, htmlToMarkdown, tsvToMarkdownTable };";
 const globalStatement = `globalThis.WritemarkEditor = Object.freeze({
   WritemarkEditorElement,
   MdLiveEditorElement,
@@ -22,8 +22,6 @@ const globalStatement = `globalThis.WritemarkEditor = Object.freeze({
   parseListItem,
   parseHeading,
   parseBlockquote,
-  parseFixtureMarkedValue,
-  serializeMarkedValue,
   htmlToMarkdown,
   tsvToMarkdownTable
 });`;

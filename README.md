@@ -4,6 +4,8 @@
 
 The default experience is **inline/live editing**: headings, inline formatting, lists, task checkboxes, code fences, and tables render inside the editor itself while the component preserves raw Markdown as the canonical `value` and form submission value. There is no built-in formatting toolbar; formatting is driven by Markdown shortcuts, slash commands, keyboard shortcuts, and the public action API.
 
+> **100% vibe-coded.** Writemark was built entirely by directing coding agents rather than manually writing the implementation. The result is still held to ordinary software constraints: zero runtime dependencies, canonical Markdown as the source of truth, generated-build verification, package dry runs, and a cross-browser Playwright suite.
+
 ![Writemark live inline Markdown editor demo](https://raw.githubusercontent.com/Brostoffed/writemark/main/assets/writemark-demo.gif)
 
 ## Install
@@ -21,6 +23,10 @@ import 'writemark-editor';
 ```html
 <writemark-editor name="body" label="Body"></writemark-editor>
 ```
+
+## Why Writemark
+
+Writemark explores a specific tradeoff: make Markdown feel rendered while it is being edited without replacing the Markdown with an opaque document model. Raw Markdown remains the value that forms submit and application code reads. The component owns the editing mechanics; the host application keeps control of its toolbar, persistence, uploads, and product UI.
 
 ## Documentation
 
@@ -59,7 +65,7 @@ src/      Canonical editor source.
 dist/     Generated package/browser files.
 docs/     Layered usage, feature, integration, and API guides.
 demo/     Direct-open browser demo.
-tests/    Browser test harness.
+tests/    Isolated Playwright specs, fixture, support code, and test guide.
 perf/     Performance harness.
 scripts/  Build and local server utilities.
 ```
@@ -114,9 +120,12 @@ Compatibility: `md-live-editor.js` and `<md-live-editor>` are still registered a
 | `split` | Source textarea plus rendered preview. |
 | `preview` | Read-only rendered preview. |
 
-The old separate-preview workflow is still available through `mode="split"` or `preview="below"`, but it is no longer the default product behavior.
+Inline/live editing is the primary workflow. Use `mode="source"` when every
+Markdown marker must be directly visible, `mode="split"` for source beside a
+rendered preview, or the `preview` setting to add an optional preview to an
+editing mode.
 
-Code fences are refined in Live mode: the opening and closing backtick markers remain in canonical Markdown source, but they do not appear inside the rendered editable code block. Use Source mode to edit the fence markers directly.
+Code fences are refined in `live` mode: the opening and closing backtick markers remain in canonical Markdown source, but they do not appear inside the rendered editable code block. Use `source` mode to edit the fence markers directly.
 
 ## Key behavior
 
@@ -162,7 +171,7 @@ Code blocks render without leaking fence markers into the editable code content.
 
 ## Clipboard and paste behavior
 
-Live mode now routes copy, cut, and paste through the canonical Markdown source instead of trusting browser `contenteditable` mutations.
+Live mode routes copy, cut, and paste through the canonical Markdown source instead of trusting browser `contenteditable` mutations.
 
 Copy/cut behavior:
 
@@ -391,16 +400,38 @@ Still validate and sanitize server-side when storing or rendering user-generated
 
 ```sh
 npm run check
-npm run serve
+npm test
 ```
 
-Then open:
+`npm test` verifies generated files and documentation, starts the local test
+server, and runs every Playwright project supported on the current host. The
+Linux CI gate always runs Chromium, Firefox, and WebKit. Playwright no longer
+provides a current WebKit build for macOS 14 and older, so the local config
+omits only that unavailable project on those hosts.
 
-```text
-http://127.0.0.1:5173/tests/browser.html
+The current suite registers 261 independent cases per browser project,
+including every one of the 230 checks migrated from the retired page-hosted
+suite. Playwright owns discovery, isolation, browser lifecycle, and assertions;
+the specs drive real keyboard, pointer, form, and host-API workflows. Failed
+expectations, uncaught page errors, and browser console errors make the command
+exit nonzero.
+
+For a faster Chromium-only development pass:
+
+```sh
+npm run test:browser:chromium
 ```
 
-The test harness verifies action fixtures and live-rendered structure.
+For an interactive Chromium run:
+
+```sh
+npm run test:browser:headed
+```
+
+The Playwright tests are organized by component contract, state and forms,
+editing, completion, Markdown rendering, clipboard, navigation, tables,
+performance, and the published demo. See [tests/README.md](tests/README.md) for
+the suite structure and debugging workflow.
 
 ## Releasing
 
@@ -408,4 +439,8 @@ See [RELEASING.md](RELEASING.md) for the one-time first npm publish and the auto
 
 ## Current engineering caveats
 
-This version implements source-backed live inline editing without third-party dependencies. It is suitable for evaluating the intended product behavior, but production certification still requires cross-browser manual QA, screen-reader verification, IME testing, mobile virtual-keyboard testing, and an independent security review.
+This version implements source-backed live inline editing without third-party
+runtime dependencies. Development tooling includes Playwright coverage in
+Chromium, Firefox, and WebKit. Production certification still requires
+screen-reader verification, IME testing, mobile virtual-keyboard testing,
+high-contrast review, and an independent security review.

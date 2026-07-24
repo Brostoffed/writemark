@@ -25,10 +25,14 @@ once from a trusted local machine:
 5. Verify the exact package contents, then publish the current version:
 
    ```sh
-   npm run check
+   npm test
    npm pack --dry-run
    npm publish --access public
    ```
+
+   `npm test` checks generated artifacts and documentation, then runs every
+   Playwright project supported on the host. Before publishing, confirm the
+   GitHub Test workflow passed its Chromium, Firefox, and WebKit gate on Linux.
 
 6. On npmjs.com, open the new `writemark-editor` package settings and add a
    GitHub Actions trusted publisher with these exact values:
@@ -57,7 +61,7 @@ GitHub repository secret is required. npm generates provenance automatically.
 
    ```sh
    npm version patch --no-git-tag-version
-   npm run check
+   npm test
    npm pack --dry-run
    ```
 
@@ -68,10 +72,11 @@ GitHub repository secret is required. npm generates provenance automatically.
    version, such as `v1.2.3`, and publish it from `main`.
 
 Publishing the GitHub Release runs `.github/workflows/publish.yml`. The workflow
-checks that the Git tag matches `package.json`, reruns the repository checks,
-and publishes that version to npm. It exits successfully without republishing
-when the same version is already present, which also makes the first GitHub
-Release safe to create after the one-time manual npm publish.
+installs Chromium, Firefox, and WebKit, runs the complete Playwright and
+repository checks, verifies that the Git tag matches `package.json`, and
+publishes that version to npm. It exits successfully without republishing when
+the same version is already present, which also makes the first GitHub Release
+safe to create after the one-time manual npm publish.
 
 ## Verification
 

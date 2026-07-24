@@ -22,8 +22,14 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
-      - name: Verify generated files and documentation
-        run: npm run check
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Verify source, documentation, and browser behavior
+        run: npm test
 
       - name: Verify the release tag matches package.json
         shell: bash

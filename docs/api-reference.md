@@ -1,7 +1,9 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.2.2. For a guided setup, start
-with [Getting started](getting-started.md). For custom actions and providers, see
+This page is the lookup reference for Writemark 1.2.2. The default `live` mode
+is the primary inline editing surface; `source`, `split`, and `preview` are
+explicit alternate modes. For a guided setup, start with
+[Getting started](getting-started.md). For custom actions and providers, see
 [Advanced integration](advanced.md).
 
 ## Package entry points
@@ -148,12 +150,6 @@ Find options:
 | `reportValidity()` | `boolean` | Run and expose validation. |
 | `setCustomValidity(message)` | `void` | Set or clear a custom error. Empty string clears it. |
 
-### Test helper
-
-`runFixture(fixture)` applies the marked-value fixture format used by the local
-browser harness and returns comparison details. Application integrations should
-prefer the ordinary action and selection APIs.
-
 ## Built-in actions
 
 ### Editor and history
@@ -218,10 +214,10 @@ prefer the ordinary action and selection APIs.
 | `view.live` | None | Set `mode="live"`. |
 | `view.source` | None | Set `mode="source"`. |
 | `completion.close` | None | Close the active popup. |
-| `completion.next` | None | Activate the next enabled item. |
-| `completion.previous` | None | Activate the previous enabled item. |
-| `completion.first` | None | Activate the first enabled item. |
-| `completion.last` | None | Activate the last enabled item. |
+| `completion.next` | None | Activate the next enabled item and keep it visible. |
+| `completion.previous` | None | Activate the previous enabled item and keep it visible. |
+| `completion.first` | None | Activate the first enabled item and keep it visible. |
+| `completion.last` | None | Activate the last enabled item and keep it visible. |
 | `completion.accept` | None | Apply the active completion. |
 
 ## Custom action contract
@@ -408,8 +404,6 @@ import {
   parseListItem,
   parseHeading,
   parseBlockquote,
-  parseFixtureMarkedValue,
-  serializeMarkedValue,
   htmlToMarkdown,
   tsvToMarkdownTable
 } from 'writemark-editor';
@@ -427,8 +421,6 @@ import {
 | `parseBlockquote(line)` | Parse one blockquote line. |
 | `htmlToMarkdown(html)` | Convert supported clipboard-style HTML to Markdown. |
 | `tsvToMarkdownTable(text)` | Convert tab-separated rows to a Markdown table. |
-| `parseFixtureMarkedValue(marked)` | Parse browser-harness caret/selection notation. |
-| `serializeMarkedValue(value, start, end)` | Serialize source and selection to fixture notation. |
 
 Parser return objects are useful for inspection and tests, but host editing
 commands should use actions rather than mutating parser metadata or shadow-DOM

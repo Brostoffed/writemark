@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Writemark Playwright fixture</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: system-ui, sans-serif;
+    }
+
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+    }
+
+    writemark-editor {
+      --md-editor-min-height: 240px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <button id="before-editor" type="button">Before editor</button>
+    <form id="editor-form">
+      <writemark-editor
+        id="editor"
+        name="body"
+        label="Body"
+        mode="live"
+        preview="none"
+        placeholder="Write Markdown"
+      ></writemark-editor>
+      <button id="after-editor" type="button">After editor</button>
+      <button id="reset-form" type="reset">Reset form</button>
+    </form>
+    <output id="submitted-value"></output>
+  </main>
+
+  <script type="module">
+    await import("../../dist/writemark-editor.js");
+    await customElements.whenDefined("writemark-editor");
+
+    const editor = document.querySelector("#editor");
+    const form = document.querySelector("#editor-form");
+    const trackedEvents = [
+      "md-action",
+      "md-before-change",
+      "md-change",
+      "md-completion-accept",
+      "md-completion-close",
+      "md-completion-open",
+      "md-dirty-change",
+      "md-file-drop",
+      "md-file-paste",
+      "md-input",
+      "md-paste",
+      "md-render",
+      "md-selection-change"
+    ];
+
+    window.testEvents = [];
+    for (const type of trackedEvents) {
+      editor.addEventListener(type, event => {
+        const detail = event.detail || {};
+        window.testEvents.push({
+          type,
+          actionId: detail.actionId,
+          dirty: detail.dirty,
+          inputType: detail.inputType,
+          kind: detail.kind,
+          markdown: detail.markdown,
+          providerId: detail.providerId,
+          source: detail.source,
+          value: detail.value
+        });
+      });
+    }
+
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      document.querySelector("#submitted-value").value =
+        new FormData(form).get("body") ?? "";
+    });
+
+    await new Promise(requestAnimationFrame);
+    document.body.dataset.ready = "true";
+  </script>
+</body>
+</html>

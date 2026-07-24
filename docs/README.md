@@ -1,8 +1,10 @@
 # Writemark documentation
 
-Writemark is a source-backed Markdown editor delivered as the
-`<writemark-editor>` web component. These guides progress from a first editor to
-custom application integrations.
+Writemark is a source-backed, live inline Markdown editor delivered as the
+`<writemark-editor>` web component. Inline/live editing is the default and
+primary surface; raw source and separate previews are explicit alternate
+workflows. These guides progress from a first editor to custom application
+integrations.
 
 ## Choose a level
 
@@ -15,22 +17,22 @@ custom application integrations.
 
 The main [README](../README.md) remains the compact project overview. The live
 [demo](../demo/index.html) exposes the editor's modes, sizing, typography, and
-state controls. The [browser harness](../tests/browser.html) is an executable
-behavior reference.
+state controls. The [Playwright suite](../tests/README.md) verifies the
+component across its public workflows and isolated browser behavior cases.
 
 ## Core concepts
 
 ### Markdown is canonical
 
-`editor.value` is always raw Markdown. Live mode renders structure inside the
+`editor.value` is always raw Markdown. `live` mode renders structure inside the
 editing surface, but formatting markers, code fences, table delimiters, and task
 markers remain in the canonical source. Form submission, undo, selection
 offsets, actions, clipboard handling, and events all operate on that source.
 
 ### Live rendering is still editing
 
-Live mode is not a separate preview. Headings, tasks, tables, code blocks, and
-inline formatting are editable rendered views over source ranges. Use Source
+`live` mode is not a separate preview. Headings, tasks, tables, code blocks, and
+inline formatting are editable rendered views over source ranges. Use `source`
 mode when direct access to every Markdown marker is preferable.
 
 ### The host owns application policy
@@ -53,9 +55,9 @@ and accessibility sections in [Features and editing](features.md).
 For a custom application editor, read all three levels, then keep the
 [API reference](api-reference.md) nearby while implementing host controls.
 
-For debugging editor behavior, reproduce the case in
-[the browser harness](../tests/browser.html), inspect the source-backed value and
-selection, and run the verification commands in
+For debugging editor behavior, add or isolate a focused Playwright case,
+inspect the source-backed value and selection with a trace, then run the
+verification commands in
 [Advanced integration](advanced.md#testing-and-release-checks).
 
 ## Keyboard notation

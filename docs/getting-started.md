@@ -52,8 +52,10 @@ The legacy `<md-live-editor>` name remains available through
 ></writemark-editor>
 ```
 
-The default mode is `live`. A visible `label` gives the editor an accessible
-name and moves focus into the active editing surface when clicked.
+The default and primary mode is `live`: Markdown renders inline in the editable
+surface, so a separate preview is not required. A visible `label` gives the
+editor an accessible name and moves focus into the active editing surface when
+clicked.
 
 Wait until the component module has loaded before querying its API:
 
@@ -137,7 +139,8 @@ editor.mode = 'source';
 editor.mode = 'live';
 ```
 
-The separate `preview` setting can add a preview to an editing mode:
+Keep `live` for the inline-first workflow. When a second rendered view is useful,
+the optional `preview` setting can add one to an editing mode:
 
 ```html
 <writemark-editor mode="live" preview="below"></writemark-editor>

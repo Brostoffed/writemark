@@ -44,9 +44,15 @@
     "build": "node scripts/build.mjs",
     "start": "node scripts/dev-server.mjs --open=demo/index.html",
     "serve": "node scripts/dev-server.mjs",
-    "test:browser": "node scripts/dev-server.mjs --open=tests/browser.html",
+    "test": "npm run check && npm run test:browser",
+    "test:browser": "playwright test",
+    "test:browser:chromium": "playwright test --project=chromium",
+    "test:browser:headed": "playwright test --project=chromium --headed",
     "perf": "node scripts/dev-server.mjs --open=perf/index.html",
     "prepack": "npm run build && npm run check",
-    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check dist/md-live-editor.js && node --check scripts/demo-controls.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/check-docs.mjs && node scripts/check-docs.mjs"
+    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/check-docs.mjs && node scripts/check-docs.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
   }
 }

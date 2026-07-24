@@ -3,7 +3,7 @@ import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const ignoredDirectories = new Set(['.git', 'node_modules']);
+const ignoredDirectories = new Set(['.git', '.playwright-cli', 'node_modules', 'output']);
 const markdownFiles = [];
 
 function collectMarkdown(directory) {
@@ -93,6 +93,85 @@ for (const [file, document] of parsed) {
         }
       }
     }
+  }
+}
+
+const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const apiReference = readFileSync(join(root, 'docs/api-reference.md'), 'utf8');
+const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
+const demo = readFileSync(join(root, 'demo/index.html'), 'utf8');
+const source = readFileSync(join(root, 'src/writemark-editor.js'), 'utf8');
+const testGuide = readFileSync(join(root, 'tests/README.md'), 'utf8');
+
+if (!apiReference.includes(`Writemark ${packageJson.version}`)) {
+  failures.push(`docs/api-reference.md does not identify package version ${packageJson.version}`);
+}
+if (!changelog.includes(`## ${packageJson.version}`)) {
+  failures.push(`CHANGELOG.md does not contain a ${packageJson.version} release heading`);
+}
+if (!demo.includes(`v${packageJson.version} Live Inline Demo`)) {
+  failures.push(`demo/index.html does not identify package version ${packageJson.version}`);
+}
+if (packageJson.scripts?.['test:browser'] !== 'playwright test') {
+  failures.push('package.json test:browser must invoke Playwright directly');
+}
+if (existsSync(join(root, 'tests/browser.html'))) {
+  failures.push('tests/browser.html is retired; browser coverage belongs in Playwright specs');
+}
+
+const retiredDocumentationTerms = [
+  'tests/browser.html',
+  'browser.spec.js',
+  'regressions.spec.js',
+  'browser-regressions.js',
+  'runFixture(',
+  'parseFixtureMarkedValue',
+  'serializeMarkedValue'
+];
+
+for (const file of markdownFiles) {
+  if (relative(root, file) === 'CHANGELOG.md') continue;
+  const lines = readFileSync(file, 'utf8').split(/\r?\n/);
+  lines.forEach((line, index) => {
+    for (const term of retiredDocumentationTerms) {
+      if (line.includes(term)) {
+        failures.push(`${relative(root, file)}:${index + 1} uses retired test term ${term}`);
+      }
+    }
+  });
+}
+
+const exportStatements = [...source.matchAll(/^export\s*\{([^}]+)\};\s*$/gm)];
+const publicExports = exportStatements.at(-1)?.[1]
+  .split(',')
+  .map(name => name.trim())
+  .filter(Boolean) ?? [];
+
+if (!publicExports.length) {
+  failures.push('src/writemark-editor.js has no discoverable public export statement');
+} else {
+  for (const name of publicExports) {
+    if (!apiReference.includes(name)) {
+      failures.push(`docs/api-reference.md does not document public export ${name}`);
+    }
+  }
+}
+
+const specFiles = readdirSync(join(root, 'tests'))
+  .filter(name => name.endsWith('.spec.js'))
+  .sort();
+const documentedSpecs = new Set(
+  [...testGuide.matchAll(/`([^`/]+\.spec\.js)`/g)].map(match => match[1])
+);
+
+for (const specFile of specFiles) {
+  if (!documentedSpecs.has(specFile)) {
+    failures.push(`tests/README.md does not document ${specFile}`);
+  }
+}
+for (const documentedSpec of documentedSpecs) {
+  if (!specFiles.includes(documentedSpec)) {
+    failures.push(`tests/README.md documents missing spec ${documentedSpec}`);
   }
 }
 

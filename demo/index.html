@@ -24,7 +24,7 @@
   <main>
     <header>
       <h1>&lt;writemark-editor&gt; live inline editor</h1>
-      <p>Dependency-free markdown web component. This demo opens directly from disk or through a local server. The default mode is inline/live: headings, inline formatting, tables, code blocks, task checkboxes, and lists render inside the editor itself while markdown source remains canonical. There is no built-in toolbar; use Markdown shortcuts, slash commands, keyboard shortcuts, or the public action API.</p>
+      <p>Dependency-free markdown web component. This demo opens directly from disk or through a local server. Inline/live is the primary editing surface: headings, inline formatting, tables, code blocks, task checkboxes, and lists render inside the editor itself while markdown source remains canonical. Source, split, preview-only, and optional companion-preview modes remain available when a host needs them. There is no built-in toolbar; use Markdown shortcuts, slash commands, keyboard shortcuts, or the public action API.</p>
     </header>
 
     <div class="controls" aria-label="Demo controls">
@@ -38,7 +38,7 @@
         </select>
       </label>
       <label>
-        Extra preview
+        Optional preview
         <select id="preview-mode">
           <option value="none" selected>none</option>
           <option value="below">below</option>
@@ -223,6 +223,13 @@ Type these at the start of a line and press Space: \`#\`, \`##\`, \`-\`, \`1.\`,
 - [x] Built as a web component
 - [ ] Click this checkbox inside the editor
 
+## Relative links
+
+- [README](../README.md)
+- [Getting started](../docs/getting-started.md)
+- [API reference](../docs/api-reference.md)
+- [Jump to the Code section](#code)
+
 ## Divider
 
 ---
@@ -239,7 +246,7 @@ Type these at the start of a line and press Space: \`#\`, \`##\`, \`-\`, \`1.\`,
 
 ## Code
 
-Code fences render as clean blocks in Live mode; the backtick fences stay in Source mode:
+Code fences render as clean blocks in live mode; the backtick fences stay in source mode:
 
 \`\`\`python
 print("hello")

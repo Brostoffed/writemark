@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+- Replaced the wrapper-only browser check with independent Playwright specs for
+  the component contract, live/source editing, completion UI, tables, forms,
+  multiple instances, safe rendering, and the published demo. Migrated all 230
+  original browser checks into individually reported Playwright cases and
+  removed the in-page `tests/browser.html` harness.
+- Reorganized the migrated coverage into isolated behavior-owned specs; removed
+  the shared serial regression iterator, source-name parsing, and browser-side
+  pass/fail protocol.
+- Expanded the final suite to 261 directly reported cases per browser project,
+  organized across 12 behavior-owned spec files.
+- Removed the obsolete browser-harness-only `runFixture()` method and
+  caret-notation parser exports from the shipped component API.
+- Added Chromium, Firefox, and WebKit projects, retained failure traces,
+  screenshots, videos, and HTML reports, and added a cross-browser GitHub
+  Actions test gate before release publishing.
+- Fixed selected table-cell replacement so typed pipe characters remain escaped
+  in canonical Markdown instead of splitting the rendered row.
+- Fixed task-checkbox pointer changes so they emit the same `md-action` event as
+  other action paths.
+- Fixed code-language completion so it opens during real fence typing and stays
+  closed after an exact language is accepted, allowing Enter to create the
+  fenced block.
+- Fixed code-language completion so a closing fence cannot reopen the language
+  menu and consume Enter after the caret exits a completed code block.
+- Fixed keyboard navigation in scrollable completion popovers so the active
+  option remains visible, including when Up or Down wraps between the first and
+  last item.
+- Fixed Space on focused task checkboxes in Firefox so it toggles the task and
+  preserves checkbox focus instead of inserting text into the live editor.
+- Reworked all current documentation, demo copy, test guidance, and release
+  guidance around the inline/live-first product model and the direct Playwright
+  architecture; added drift checks for versions, public exports, retired test
+  terminology, and undocumented spec files.
+
 ## 1.2.2
 
 - Removed the built-in global formatting toolbar and mobile toolbar from the component UI.

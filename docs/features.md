@@ -36,7 +36,7 @@ below.
 | Emphasis | Asterisk and underscore emphasis and strong emphasis. |
 | Strikethrough | `~~text~~` in GFM mode. |
 | Inline code | Backtick code spans, including matching multi-backtick delimiters. |
-| Links and images | Inline destinations, optional titles, nested parentheses, angle-bracket destinations, and balanced link labels. |
+| Links and images | Inline destinations, optional titles, nested parentheses, angle-bracket destinations, balanced link labels, and same-document heading fragments. |
 | Escapes | Backslash-escaped Markdown punctuation remains literal. |
 | Blockquotes | Lines beginning with `>`. |
 | Lists | Unordered, ordered, and GFM task list items. |
@@ -57,6 +57,11 @@ rendered as those structures. Their source text is still preserved.
 Raw HTML is intentionally not executed. See
 [Security and rendered output](advanced.md#security-and-rendered-output).
 
+Headings receive predictable lowercase IDs derived from their text. A fragment
+link such as `[Jump to details](#details)` scrolls to `## Details` inside the
+same live editor or preview. Repeated heading names use `-1`, `-2`, and later
+suffixes in document order.
+
 ## Slash commands and completions
 
 Type `/` at the start of an otherwise empty line to open the built-in command
@@ -74,7 +79,7 @@ Completion keyboard behavior:
 
 | Key | Behavior |
 |---|---|
-| ArrowDown / ArrowUp | Move to the next / previous enabled item. |
+| ArrowDown / ArrowUp | Move to the next / previous enabled item, wrapping at the ends and scrolling the active option into view. |
 | Home / End | Move to the first / last enabled item. |
 | PageDown / PageUp | Move by several items. |
 | Enter or Tab | Accept the active item. |
@@ -360,10 +365,12 @@ const replacedAll = editor.replaceAll('TODO', 'Done', {
   navigation except inside structures where Tab has an explicit table or list
   function.
 
-Browser automation covers keyboard, focus, labels, read-only and disabled
-state, selection mapping, and completion ARIA state. Production certification
-should still include manual screen-reader, IME, mobile keyboard, high-contrast,
-and target-browser testing.
+The Linux Playwright gate runs Chromium, Firefox, and WebKit and covers
+keyboard, focus, labels, read-only and disabled state, selection mapping, and
+completion ARIA state. Local runs execute every project supported on the host;
+macOS 14 and older omit the unavailable WebKit project. Production
+certification should still include manual screen-reader, IME, mobile keyboard,
+high-contrast, and target-device testing.
 
 ## Next step
 

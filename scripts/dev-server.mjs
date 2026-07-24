@@ -90,7 +90,7 @@ server.listen(port, '127.0.0.1', () => {
   const baseUrl = `http://127.0.0.1:${port}`;
   console.log(`Serving <writemark-editor> from ${root}`);
   console.log(`Demo:  ${baseUrl}/demo/index.html`);
-  console.log(`Tests: ${baseUrl}/tests/browser.html`);
+  console.log('Tests: npm test');
   console.log(`Perf:  ${baseUrl}/perf/index.html`);
   console.log('Press Ctrl+C to stop.');
   if (openPath) {

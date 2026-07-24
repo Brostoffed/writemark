@@ -457,19 +457,37 @@ Run source/build verification:
 npm run check
 ```
 
-Serve the project and open the browser harness:
+Run every Playwright browser project supported on the current host:
 
 ```sh
-npm run serve
+npm test
 ```
 
-```text
-http://127.0.0.1:5173/tests/browser.html
+Playwright starts and stops the local server automatically. The Linux CI gate
+always runs Chromium, Firefox, and WebKit. Because Playwright no longer supplies
+a current WebKit build for macOS 14 and older, local runs on those hosts omit
+only that unavailable project. The independent specs use real keyboard,
+pointer, form, completion, and host-API workflows. A failed expectation,
+uncaught page error, or browser console error makes the command exit nonzero.
+
+For a faster local Chromium pass:
+
+```sh
+npm run test:browser:chromium
 ```
 
-The harness covers action fixtures, rendering, movement, terminal blocks,
-selection, tables, tasks, clipboard conversion, forms, validation, completion,
-focus, state changes, incremental rendering, and large-document virtualization.
+Run the Chromium suite in a visible browser with:
+
+```sh
+npm run test:browser:headed
+```
+
+The current suite registers 261 independent cases per browser project. It
+covers the public component contract, live and source editing, keyboard
+shortcuts, undo/redo, tasks, completion providers, tables, forms, validation,
+multiple instances, safe rendering, performance, and the published demo. Every
+one of the 230 checks migrated from the retired page-hosted suite is a directly
+reported Playwright case. See [`tests/README.md`](../tests/README.md).
 
 Open the performance harness at:
 
