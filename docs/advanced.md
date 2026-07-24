@@ -435,6 +435,29 @@ stored Markdown and apply its own rendering and sanitization policy wherever
 content is displayed outside Writemark. Treat custom action, completion, upload,
 and link data as untrusted input.
 
+Writemark's security regression suite is broader than feature examples. It
+checks a reviewed hostile-input corpus in both serialized preview HTML and the
+live shadow DOM, generates arbitrary Markdown to verify sanitizer, parser-range,
+and determinism invariants, and compares an unambiguous CommonMark subset with a
+pinned reference renderer. Each generated failure includes a seed and minimized
+shrink path for exact replay.
+
+Run the standard 200 cases per property:
+
+```sh
+npm run test:fuzz
+```
+
+Raise the budget for a deeper local pass:
+
+```sh
+WRITEMARK_FUZZ_RUNS=5000 npm run test:fuzz
+```
+
+The weekly `Markdown fuzz` workflow runs the same deep budget with a rotating,
+logged seed. See [`tests/README.md`](../tests/README.md) for replay controls and
+the corpus ownership rules.
+
 ## Performance and large documents
 
 - Preview rendering is debounced by 100ms by default. Override it with
@@ -482,12 +505,14 @@ Run the Chromium suite in a visible browser with:
 npm run test:browser:headed
 ```
 
-The current suite registers 261 independent cases per browser project. It
+The current suite registers 317 independent cases per browser project. It
 covers the public component contract, live and source editing, keyboard
 shortcuts, undo/redo, tasks, completion providers, tables, forms, validation,
-multiple instances, safe rendering, performance, and the published demo. Every
-one of the 230 checks migrated from the retired page-hosted suite is a directly
-reported Playwright case. See [`tests/README.md`](../tests/README.md).
+multiple instances, hostile rendering, property-based parser and sanitizer
+invariants, CommonMark differential behavior, performance, and the published
+demo. Every one of the 230 checks migrated from the retired page-hosted suite
+is a directly reported Playwright case. See
+[`tests/README.md`](../tests/README.md).
 
 Open the performance harness at:
 

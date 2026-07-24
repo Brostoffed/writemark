@@ -396,6 +396,15 @@ The renderer is safe by construction for built-in Markdown output:
 
 Still validate and sanitize server-side when storing or rendering user-generated content outside this component.
 
+The browser suite exercises this boundary with a reviewed hostile-input corpus,
+seeded and shrinkable property tests over arbitrary Markdown, source-range and
+determinism invariants, and differential tests against a pinned CommonMark
+reference renderer. Run the focused security suite with:
+
+```sh
+npm run test:fuzz
+```
+
 ## Tests
 
 ```sh
@@ -409,12 +418,13 @@ Linux CI gate always runs Chromium, Firefox, and WebKit. Playwright no longer
 provides a current WebKit build for macOS 14 and older, so the local config
 omits only that unavailable project on those hosts.
 
-The current suite registers 261 independent cases per browser project,
+The current suite registers 317 independent cases per browser project,
 including every one of the 230 checks migrated from the retired page-hosted
-suite. Playwright owns discovery, isolation, browser lifecycle, and assertions;
-the specs drive real keyboard, pointer, form, and host-API workflows. Failed
-expectations, uncaught page errors, and browser console errors make the command
-exit nonzero.
+suite. It also includes a hostile Markdown corpus, property-based parser and
+sanitizer checks, and CommonMark differential coverage. Playwright owns
+discovery, isolation, browser lifecycle, and assertions; the specs drive real
+keyboard, pointer, form, and host-API workflows. Failed expectations, uncaught
+page errors, and browser console errors make the command exit nonzero.
 
 For a faster Chromium-only development pass:
 
@@ -429,9 +439,10 @@ npm run test:browser:headed
 ```
 
 The Playwright tests are organized by component contract, state and forms,
-editing, completion, Markdown rendering, clipboard, navigation, tables,
-performance, and the published demo. See [tests/README.md](tests/README.md) for
-the suite structure and debugging workflow.
+editing, completion, Markdown rendering, security, clipboard, navigation,
+tables, performance, and the published demo. See
+[tests/README.md](tests/README.md) for the suite structure, fuzz replay, and
+debugging workflow.
 
 ## Releasing
 

@@ -1,0 +1,54 @@
+name: Markdown fuzz
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Generated cases per property
+        required: false
+        default: "5000"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WRITEMARK_FUZZ_RUNS: ${{ inputs.runs || '5000' }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Set replayable fuzz seed
+        shell: bash
+        run: |
+          seed=$(( (GITHUB_RUN_ID % 2147483646) + 1 ))
+          echo "WRITEMARK_FUZZ_SEED=${seed}" >> "${GITHUB_ENV}"
+          echo "Running ${WRITEMARK_FUZZ_RUNS} cases per property with seed ${seed}"
+
+      - name: Run deep Markdown fuzzing
+        run: npm run test:fuzz
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: markdown-fuzz-report
+          path: output/playwright/report
+          retention-days: 14

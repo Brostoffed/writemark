@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.3.1 - 2026-07-24
+
+- Expanded the suite to 317 directly reported cases per browser project,
+  organized across 13 behavior-owned spec files.
+- Added a reviewed hostile-Markdown corpus, seeded and shrinkable sanitizer and
+  parser property tests, and semantic differential tests against a pinned
+  CommonMark reference renderer.
+- Added a weekly rotating-seed fuzz workflow that runs 5,000 generated cases per
+  property while retaining the seed and shrink path needed for exact replay.
+- Fixed CommonMark loose-list rendering so same-type list items separated by one
+  blank line remain one list and wrap item contents in paragraphs.
+
 ## 1.3.0 - 2026-07-24
 
 - Replaced the wrapper-only browser check with independent Playwright specs for

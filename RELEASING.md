@@ -36,8 +36,14 @@ once from a trusted local machine:
    ```
 
    `npm test` checks generated artifacts and documentation, then runs every
-   Playwright project supported on the host. Before publishing, confirm the
-   GitHub Test workflow passed its Chromium, Firefox, and WebKit gate on Linux.
+   Playwright project supported on the host, including the standard seeded
+   security properties. Before publishing, confirm the GitHub Test workflow
+   passed its Chromium, Firefox, and WebKit gate on Linux. For a security-heavy
+   parser or renderer release, also run the deep budget:
+
+   ```sh
+   WRITEMARK_FUZZ_RUNS=5000 npm run test:fuzz
+   ```
 
 6. On npmjs.com, open the new `writemark-editor` package settings and add a
    GitHub Actions trusted publisher with these exact values:
@@ -50,17 +56,17 @@ once from a trusted local machine:
 The workflow uses short-lived OpenID Connect credentials, so no npm token or
 GitHub repository secret is required. npm generates provenance automatically.
 
-7. In GitHub, create and publish the first Release from `main` with the tag
-   `v1.3.0`. The workflow will verify the release and exit successfully because
-   `writemark-editor@1.3.0` was already published manually.
+7. In GitHub, create and publish the first Release from `main` with a tag that
+   is exactly `v` plus the package version. The workflow will verify the release
+   and exit successfully when that version was already published manually.
 
 ## Publish a version after the first one
 
 1. Choose the next semantic version:
 
-   - Patch (`1.3.0` to `1.3.1`) for a backward-compatible fix.
-   - Minor (`1.3.0` to `1.4.0`) for a backward-compatible feature.
-   - Major (`1.3.0` to `2.0.0`) for a breaking change.
+   - Patch (`1.3.1` to `1.3.2`) for a backward-compatible fix.
+   - Minor (`1.3.1` to `1.4.0`) for a backward-compatible feature.
+   - Major (`1.3.1` to `2.0.0`) for a breaking change.
 
 2. Update `CHANGELOG.md`, then bump `package.json` without creating a tag yet:
 
@@ -74,7 +80,7 @@ GitHub repository secret is required. npm generates provenance automatically.
 
 3. Commit and push the release changes to `main`.
 4. In GitHub, create a new Release whose tag is exactly `v` plus the package
-   version, such as `v1.3.1`, and publish it from `main`.
+   version, such as `v1.3.2`, and publish it from `main`.
 
 Publishing the GitHub Release runs `.github/workflows/publish.yml`. The workflow
 installs Chromium, Firefox, and WebKit, runs the complete Playwright and
@@ -82,6 +88,11 @@ repository checks, verifies that the Git tag matches `package.json`, and
 publishes that version to npm. It exits successfully without republishing when
 the same version is already present, which also makes the first GitHub Release
 safe to create after the one-time manual npm publish.
+
+The weekly `Markdown fuzz` workflow adds a rotating-seed, 5,000-case-per-property
+security run between releases. Its logged seed and any reported shrink path can
+be supplied through `WRITEMARK_FUZZ_SEED` and `WRITEMARK_FUZZ_PATH` to reproduce
+a failure locally.
 
 ## Verification
 

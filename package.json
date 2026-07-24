@@ -1,6 +1,6 @@
 {
   "name": "writemark-editor",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Writemark is a dependency-free live inline Markdown editor web component with slash commands, smart editing, form integration, source fallback, and no built-in toolbar.",
   "type": "module",
   "main": "./dist/writemark-editor.js",
@@ -48,11 +48,14 @@
     "test:browser": "playwright test",
     "test:browser:chromium": "playwright test --project=chromium",
     "test:browser:headed": "playwright test --project=chromium --headed",
+    "test:fuzz": "npm run check && playwright test tests/security.spec.js --project=chromium",
     "perf": "node scripts/dev-server.mjs --open=perf/index.html",
     "prepack": "npm run build && npm run check",
     "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/check-docs.mjs && node scripts/check-docs.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "1.61.1"
+    "@playwright/test": "1.61.1",
+    "commonmark": "0.31.2",
+    "fast-check": "4.9.0"
   }
 }

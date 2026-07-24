@@ -4,7 +4,7 @@
  */
 (() => {
 /*
- * <writemark-editor> v1.3.0 live inline Markdown editor.
+ * <writemark-editor> v1.3.1 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -859,11 +859,20 @@ function renderMarkdown(markdown, opts = {}) {
     }
     if (block.type === "bullet-list-item" || block.type === "ordered-list-item" || block.type === "task-list-item") {
       const items = [block];
+      const sameList = candidate =>
+        ["bullet-list-item", "ordered-list-item", "task-list-item"].includes(candidate?.type)
+        && candidate.list.listType === block.list.listType
+        && candidate.list.indent === block.list.indent;
+      let loose = false;
       let j = i + 1;
       while (j < blocks.length) {
         const next = blocks[j];
-        if (!["bullet-list-item", "ordered-list-item", "task-list-item"].includes(next.type)) break;
-        if (next.list.listType !== block.list.listType || next.list.indent !== block.list.indent) break;
+        if (next.type === "blank" && sameList(blocks[j + 1])) {
+          loose = true;
+          j += 1;
+          continue;
+        }
+        if (!sameList(next)) break;
         items.push(next);
         j += 1;
       }
@@ -872,7 +881,8 @@ function renderMarkdown(markdown, opts = {}) {
       const listHtml = items.map(item => {
         const list = item.list;
         const checkbox = list.kind === "task-list-item" ? `<input type="checkbox" disabled${list.checked ? " checked" : ""}> ` : "";
-        return `<li>${checkbox}${renderInlineMarkdown(list.content, options)}</li>`;
+        const content = `${checkbox}${renderInlineMarkdown(list.content, options)}`;
+        return `<li>${loose ? `<p>${content}</p>` : content}</li>`;
       }).join("");
       out.push(`<${tag}${start}>${listHtml}</${tag}>`);
       i = j - 1;
