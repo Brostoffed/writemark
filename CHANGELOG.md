@@ -31,6 +31,13 @@
   last item.
 - Fixed Space on focused task checkboxes in Firefox so it toggles the task and
   preserves checkbox focus instead of inserting text into the live editor.
+- Added a WebKit-safe shadow-DOM editing fallback for focus, selection,
+  keyboard navigation, live typing, empty-editor recovery, terminal block
+  anchors, and table-cell serialization.
+- Made completion acceptance rematch the current query before applying an item,
+  preventing a stale asynchronous popup update from leaving query text behind.
+- Anchored native validity reporting to the visible editing surface and kept
+  browser tests free of expected network-error noise.
 - Reworked all current documentation, demo copy, test guidance, and release
   guidance around the inline/live-first product model and the direct Playwright
   architecture; added drift checks for versions, public exports, retired test

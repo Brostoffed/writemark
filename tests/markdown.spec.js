@@ -190,14 +190,20 @@ test.describe("heading fragments", () => {
 test.describe("table and task source preservation", () => {
   test("editing live table cell re-escapes pipe characters in Markdown source", async ({ editor }) => {
     await editor.reset({ value: "| A | B |\n| --- | --- |\n| value | keep |" });
-    await editor.host.locator("tbody .md-cell").first().fill("left|right");
+    await editor.replaceEditable(
+      editor.host.locator("tbody .md-cell").first(),
+      "left|right"
+    );
     await expect.poll(() => editor.value())
       .toBe("| A | B |\n| --- | --- |\n| left\\|right | keep |");
   });
 
   test("Editing rendered task text preserves hidden Markdown task marker", async ({ editor }) => {
     await editor.reset({ value: "- [x] original" });
-    await editor.host.locator(".md-task-source").fill("updated");
+    await editor.replaceEditable(
+      editor.host.locator(".md-task-source"),
+      "updated"
+    );
     await expect.poll(() => editor.value()).toBe("- [x] updated");
   });
 

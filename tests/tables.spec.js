@@ -27,7 +27,7 @@ test.describe("table editing", () => {
     await editor.reset({ value: twoColumnTable });
 
     const firstBodyCell = editor.host.locator("tbody .md-cell").first();
-    await firstBodyCell.fill("left|right");
+    await editor.replaceEditable(firstBodyCell, "left|right");
 
     await expect.poll(() => editor.value()).toBe(
       "| A | B |\n" +
@@ -180,7 +180,10 @@ test.describe("table editing", () => {
     const markdown = "| Col A | Col B |\n| --- | ---";
     await editor.reset({ value: markdown });
     await editor.setSelection(markdown.length);
-    await editor.host.locator("tbody .md-cell").first().fill("a");
+    await editor.replaceEditable(
+      editor.host.locator("tbody .md-cell").first(),
+      "a"
+    );
     await expect.poll(() => editor.value()).toBe(`${markdown} |\n| a |  |`);
   });
 
@@ -189,7 +192,7 @@ test.describe("table editing", () => {
     await editor.reset({ value: markdown });
     await editor.setSelection(markdown.length);
     const cell = editor.host.locator("tbody .md-cell").first();
-    await cell.fill("a");
+    await editor.replaceEditable(cell, "a");
     const state = await editor.host.evaluate(element => {
       const selection = element.shadowRoot.getSelection?.() || getSelection();
       return {

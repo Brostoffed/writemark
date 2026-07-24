@@ -85,6 +85,31 @@ class EditorDriver {
     }, { direction, end, start });
   }
 
+  async replaceEditable(locator, text) {
+    const range = await locator.evaluate(element => ({
+      from: Number(element.dataset.from),
+      to: Number(element.dataset.to)
+    }));
+    await this.setSelection(range.from, range.to);
+    await locator.evaluate(element => {
+      const editor = element.getRootNode().host;
+      if (editor._liveSelectionAPI !== false) return;
+      editor._fallbackEditable = element;
+      editor._fallbackSelectionPending = true;
+      element.focus();
+    });
+    if (text) await this.page.keyboard.type(text);
+    else await this.page.keyboard.press("Backspace");
+  }
+
+  async liveHasFocus() {
+    return this.host.evaluate(editor => {
+      const live = editor.shadowRoot.querySelector(".live-editor");
+      const active = editor.shadowRoot.activeElement;
+      return active === live || Boolean(active && live.contains(active));
+    });
+  }
+
   async selection() {
     return this.host.evaluate(editor => ({
       end: editor.selectionEnd,

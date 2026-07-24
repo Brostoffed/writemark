@@ -3,7 +3,7 @@ import { expect, test } from "./support/editor-fixture.js";
 test.describe("focus and accessible naming", () => {
   test("Clicking label focuses active live editor surface", async ({ editor }) => {
     await editor.host.locator(".label").click();
-    await expect(editor.live).toBeFocused();
+    await expect.poll(() => editor.liveHasFocus()).toBe(true);
   });
 
   test("Clicking label focuses source textarea in source mode", async ({ editor }) => {
@@ -48,7 +48,7 @@ test.describe("focus and accessible naming", () => {
 
   test("Focused editor transfers focus across source live and preview modes", async ({ editor }) => {
     await editor.host.evaluate(element => element.focus());
-    await expect(editor.live).toBeFocused();
+    await expect.poll(() => editor.liveHasFocus()).toBe(true);
 
     await editor.host.evaluate(element => {
       element.mode = "source";
@@ -63,7 +63,7 @@ test.describe("focus and accessible naming", () => {
     await editor.host.evaluate(element => {
       element.mode = "live";
     });
-    await expect(editor.live).toBeFocused();
+    await expect.poll(() => editor.liveHasFocus()).toBe(true);
   });
 
   test("Mode change does not steal focus when editor was blurred", async ({ editor, page }) => {

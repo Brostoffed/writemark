@@ -198,8 +198,8 @@ const previewCases = [
   },
   {
     name: "preview renderer supports nested parentheses and titles in images",
-    markdown: '![alt](https://example.com/a_(b).png "Title")',
-    selector: 'img[src="https://example.com/a_(b).png"][title="Title"]',
+    markdown: '![alt](/tests/fixtures/a_(b).svg "Title")',
+    selector: 'img[src="/tests/fixtures/a_(b).svg"][title="Title"]',
     count: 1
   },
   {
