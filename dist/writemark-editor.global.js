@@ -223,6 +223,196 @@ function parseInlineLinkAt(text, start = 0) {
   return null;
 }
 
+function normalizeReferenceLabel(label) {
+  return String(label ?? "")
+    .replace(/\\([!-/:-@[-`{-~])/g, "$1")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function parseReferenceDefinition(line) {
+  const match = /^ {0,3}\[([^\]\n]+)\]:[ \t]*(.+?)\s*$/.exec(String(line ?? ""));
+  if (!match) return null;
+  const label = normalizeReferenceLabel(match[1]);
+  if (!label) return null;
+  const destination = splitLinkDestinationAndTitle(match[2]);
+  if (!destination.url) return null;
+  return { label, ...destination };
+}
+
+function extractReferenceDefinitions(markdown, inherited = null) {
+  const references = new Map(inherited instanceof Map ? inherited : []);
+  const lines = normalizeLineEndings(markdown).split("\n");
+  const output = lines.map(line => {
+    const definition = parseReferenceDefinition(line);
+    if (!definition) return line;
+    if (!references.has(definition.label)) references.set(definition.label, definition);
+    return "";
+  });
+  return { markdown: output.join("\n"), references };
+}
+
+function parseReferenceLinkAt(text, references, start = 0) {
+  if (!(references instanceof Map) || references.size === 0) return null;
+  const source = String(text ?? "");
+  if (isBackslashEscaped(source, start)) return null;
+  const bang = source[start] === "!" ? "!" : "";
+  const labelStartMarker = start + bang.length;
+  if (source[labelStartMarker] !== "[" || isBackslashEscaped(source, labelStartMarker)) return null;
+  let escaped = false;
+  let depth = 1;
+  let labelEnd = -1;
+  for (let i = labelStartMarker + 1; i < source.length; i += 1) {
+    const char = source[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\") { escaped = true; continue; }
+    if (char === "[") { depth += 1; continue; }
+    if (char !== "]") continue;
+    depth -= 1;
+    if (depth === 0) { labelEnd = i; break; }
+  }
+  if (labelEnd === -1 || source[labelEnd + 1] === "(") return null;
+  const label = source.slice(labelStartMarker + 1, labelEnd);
+  let referenceLabel = label;
+  let to = labelEnd + 1;
+  if (source[to] === "[") {
+    const referenceEnd = source.indexOf("]", to + 1);
+    if (referenceEnd === -1 || isBackslashEscaped(source, referenceEnd)) return null;
+    referenceLabel = source.slice(to + 1, referenceEnd) || label;
+    to = referenceEnd + 1;
+  }
+  const reference = references.get(normalizeReferenceLabel(referenceLabel));
+  if (!reference) return null;
+  return {
+    bang,
+    label,
+    url: reference.url,
+    title: reference.title,
+    from: start,
+    to,
+    labelStart: labelStartMarker + 1,
+    labelEnd,
+    full: source.slice(start, to),
+  };
+}
+
+function isInlineWhitespace(char) {
+  return !char || /\s/u.test(char);
+}
+
+function isInlinePunctuation(char) {
+  return Boolean(char) && /[\p{P}\p{S}]/u.test(char);
+}
+
+function emphasisDelimiterRuns(source) {
+  const runs = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const marker = source[i];
+    if ((marker !== "*" && marker !== "_") || isBackslashEscaped(source, i)) continue;
+    let length = 1;
+    while (source[i + length] === marker) length += 1;
+    const before = source[i - 1] || "";
+    const after = source[i + length] || "";
+    const beforeWhitespace = isInlineWhitespace(before);
+    const afterWhitespace = isInlineWhitespace(after);
+    const beforePunctuation = isInlinePunctuation(before);
+    const afterPunctuation = isInlinePunctuation(after);
+    const leftFlanking = !afterWhitespace
+      && (!afterPunctuation || beforeWhitespace || beforePunctuation);
+    const rightFlanking = !beforeWhitespace
+      && (!beforePunctuation || afterWhitespace || afterPunctuation);
+    const canOpen = marker === "*"
+      ? leftFlanking
+      : leftFlanking && (!rightFlanking || beforePunctuation);
+    const canClose = marker === "*"
+      ? rightFlanking
+      : rightFlanking && (!leftFlanking || afterPunctuation);
+    runs.push({
+      start: i,
+      length,
+      marker,
+      canOpen,
+      canClose,
+      leftUsed: 0,
+      rightUsed: 0,
+      get remaining() { return this.length - this.leftUsed - this.rightUsed; },
+    });
+    i += length - 1;
+  }
+  return runs;
+}
+
+function emphasisPairs(source) {
+  const runs = emphasisDelimiterRuns(source);
+  const pairs = [];
+  const openers = { "*": [], "_": [] };
+  for (const closer of runs) {
+    if (closer.canClose) {
+      while (closer.remaining > 0) {
+        const candidates = openers[closer.marker];
+        while (candidates.length && candidates.at(-1).remaining <= 0) candidates.pop();
+        let opener = null;
+        for (let openerIndex = candidates.length - 1; openerIndex >= 0; openerIndex -= 1) {
+          const candidate = candidates[openerIndex];
+          if (candidate.remaining <= 0) continue;
+          const blockedByRuleOfThree = (candidate.canClose || closer.canOpen)
+            && (candidate.remaining + closer.remaining) % 3 === 0
+            && (candidate.remaining % 3 !== 0 || closer.remaining % 3 !== 0);
+          if (blockedByRuleOfThree) continue;
+          opener = candidate;
+          break;
+        }
+        if (!opener) break;
+        const use = opener.remaining >= 2 && closer.remaining >= 2 ? 2 : 1;
+        const openEnd = opener.start + opener.length - opener.rightUsed;
+        const openStart = openEnd - use;
+        const closeStart = closer.start + closer.leftUsed;
+        const closeEnd = closeStart + use;
+        opener.rightUsed += use;
+        closer.leftUsed += use;
+        pairs.push({
+          openStart,
+          openEnd,
+          closeStart,
+          closeEnd,
+          marker: source.slice(openStart, openEnd),
+          tag: use === 2 ? "strong" : "em",
+        });
+      }
+    }
+    if (closer.canOpen && closer.remaining > 0) openers[closer.marker].push(closer);
+  }
+  return pairs;
+}
+
+function renderEmphasisMarkdown(source, markerHtml = () => "") {
+  const spans = [];
+  for (const pair of emphasisPairs(source)) {
+    spans.push({
+      from: pair.openStart,
+      to: pair.openEnd,
+      html: `${markerHtml(pair.marker)}<${pair.tag}>`,
+    });
+    spans.push({
+      from: pair.closeStart,
+      to: pair.closeEnd,
+      html: `</${pair.tag}>${markerHtml(pair.marker)}`,
+    });
+  }
+  spans.sort((a, b) => a.from - b.from || b.to - a.to);
+  let html = "";
+  let cursor = 0;
+  for (const span of spans) {
+    if (span.from < cursor) continue;
+    html += escapeHtml(source.slice(cursor, span.from));
+    html += span.html;
+    cursor = span.to;
+  }
+  html += escapeHtml(source.slice(cursor));
+  return html;
+}
+
 function htmlToMarkdown(html) {
   const template = document.createElement("template");
   template.innerHTML = String(html ?? "");
@@ -740,52 +930,58 @@ function parseBlocks(markdown, opts = {}) {
 
 function decorateInline(raw, opts = {}) {
   const text = String(raw ?? "");
-  let i = 0;
-  let html = "";
+  const tokens = [];
+  const reserve = html => {
+    const placeholder = `\uE000${tokens.length}\uE001`;
+    tokens.push([placeholder, html]);
+    return placeholder;
+  };
   const token = t => `<span class="md-token">${escapeHtml(t)}</span>`;
-  while (i < text.length) {
-    if (text[i] === "\\" && isEscapablePunctuation(text[i + 1])) {
-      html += token("\\") + escapeHtml(text[i + 1]);
-      i += 2;
-      continue;
-    }
+  let prepared = "";
+  for (let i = 0; i < text.length; i += 1) {
     if (text[i] === "`") {
       const code = parseCodeSpanAt(text, i);
-      if (code) { html += token(code.marker) + `<code>${escapeHtml(code.content)}</code>` + token(code.marker); i = code.to; continue; }
+      if (code) {
+        prepared += reserve(`${token(code.marker)}<code>${escapeHtml(code.content)}</code>${token(code.marker)}`);
+        i = code.to - 1;
+        continue;
+      }
     }
-    if (text.startsWith("**", i)) {
-      const end = text.indexOf("**", i + 2);
-      if (end > i + 2) { html += token("**") + `<strong>${decorateInline(text.slice(i + 2, end), opts)}</strong>` + token("**"); i = end + 2; continue; }
+    if (text[i] === "\\" && isEscapablePunctuation(text[i + 1])) {
+      prepared += reserve(token("\\") + escapeHtml(text[i + 1]));
+      i += 2;
+      i -= 1;
+      continue;
     }
-    if (text.startsWith("__", i)) {
-      const end = text.indexOf("__", i + 2);
-      if (end > i + 2) { html += token("__") + `<strong>${decorateInline(text.slice(i + 2, end), opts)}</strong>` + token("__"); i = end + 2; continue; }
-    }
-    if (usesGfm(opts) && text.startsWith("~~", i)) {
-      const end = text.indexOf("~~", i + 2);
-      if (end > i + 2) { html += token("~~") + `<del>${decorateInline(text.slice(i + 2, end), opts)}</del>` + token("~~"); i = end + 2; continue; }
-    }
-    if (text[i] === "*" && text[i + 1] !== "*") {
-      const end = text.indexOf("*", i + 1);
-      if (end > i + 1) { html += token("*") + `<em>${decorateInline(text.slice(i + 1, end), opts)}</em>` + token("*"); i = end + 1; continue; }
-    }
-    if (text[i] === "_" && text[i + 1] !== "_" && !/\w/.test(text[i - 1] || "")) {
-      const end = text.indexOf("_", i + 1);
-      if (end > i + 1 && !/\w/.test(text[end + 1] || "")) { html += token("_") + `<em>${decorateInline(text.slice(i + 1, end), opts)}</em>` + token("_"); i = end + 1; continue; }
-    }
-    const link = parseInlineLinkAt(text, i);
+    const link = parseInlineLinkAt(text, i)
+      || parseReferenceLinkAt(text, opts.references, i);
     if (link) {
       const safe = safeHref(link.url);
       const labelHtml = decorateInline(link.label, opts);
-      if (link.bang) html += token("![") + labelHtml + token("](") + `<span class="md-url">${escapeHtml(link.url)}</span>` + token(")");
-      else html += token("[") + `<a href="${escapeAttribute(safe)}" tabindex="-1">${labelHtml}</a>` + token("](") + `<span class="md-url">${escapeHtml(link.url)}</span>` + token(")");
-      i = link.to;
+      const prefix = token(`${link.bang}[`);
+      const inline = text[link.labelEnd + 1] === "(";
+      const suffix = inline
+        ? `${token("](")}<span class="md-url">${escapeHtml(link.url)}</span>${token(")")}`
+        : token(text.slice(link.labelEnd, link.to));
+      const rendered = link.bang
+        ? `${prefix}${labelHtml}${suffix}`
+        : `${prefix}<a href="${escapeAttribute(safe)}" tabindex="-1">${labelHtml}</a>${suffix}`;
+      prepared += reserve(rendered);
+      i = link.to - 1;
       continue;
     }
-    html += escapeHtml(text[i]);
-    i += 1;
+    prepared += text[i];
   }
-  return html || "<br>";
+  if (usesGfm(opts)) {
+    prepared = prepared.replace(/~~([^~\n]+)~~/g, (_, content) =>
+      reserve(`${token("~~")}<del>${decorateInline(content, opts)}</del>${token("~~")}`));
+  }
+  const html = renderEmphasisMarkdown(prepared, token);
+  let restored = html;
+  for (const [placeholder, reserved] of tokens) {
+    restored = restored.replaceAll(escapeHtml(placeholder), reserved).replaceAll(placeholder, reserved);
+  }
+  return restored || "<br>";
 }
 
 function renderInlineMarkdown(source, opts = {}) {
@@ -811,7 +1007,8 @@ function renderInlineMarkdown(source, opts = {}) {
   text = escapesReserved;
   let linked = "";
   for (let i = 0; i < text.length; i += 1) {
-    const link = parseInlineLinkAt(text, i);
+    const link = parseInlineLinkAt(text, i)
+      || parseReferenceLinkAt(text, opts.references, i);
     if (!link) { linked += text[i]; continue; }
     if (link.bang) {
       const safe = safeHref(link.url, { allowDataImage: false });
@@ -828,20 +1025,147 @@ function renderInlineMarkdown(source, opts = {}) {
     i = link.to - 1;
   }
   text = linked;
-  text = escapeHtml(text);
-  text = text.replace(/(^|[\s(])((?:https?:\/\/)[^\s<]+[^\s<.,;:!?\])}])/g, (m, p, url) => `${p}<a href="${escapeAttribute(safeHref(url))}">${escapeHtml(url)}</a>`);
-  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  text = text.replace(/__([^_]+)__/g, "<strong>$1</strong>");
-  text = text.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
-  text = text.replace(/(?<![\w_])_([^_\n]+)_(?![\w_])/g, "<em>$1</em>");
-  if (usesGfm(opts)) text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  if (usesGfm(opts)) {
+    text = text.replace(/~~([^~\n]+)~~/g, (_, content) =>
+      reserve(`<del>${renderInlineMarkdown(content, opts)}</del>`));
+  }
+  text = text.replace(/(^|[\s(])((?:https?:\/\/)[^\s<]+[^\s<.,;:!?\])}])/g, (match, prefix, url) =>
+    `${prefix}${reserve(`<a href="${escapeAttribute(safeHref(url))}">${escapeHtml(url)}</a>`)}`);
+  text = text.replace(/(?: {2,}|\\)\n/g, () => `${reserve("<br>")}\n`);
+  text = renderEmphasisMarkdown(text);
   for (const [token, html] of tokens) text = text.replaceAll(escapeHtml(token), html).replaceAll(token, html);
   return text;
 }
 
+function isListBlock(block) {
+  return ["bullet-list-item", "ordered-list-item", "task-list-item"].includes(block?.type);
+}
+
+function listIndentWidth(block) {
+  return String(block?.list?.indent ?? "").replace(/\t/g, "    ").length;
+}
+
+function lineIndentWidth(line) {
+  return (/^[ \t]*/.exec(String(line?.text ?? ""))?.[0] ?? "").replace(/\t/g, "    ").length;
+}
+
+function stripContinuationIndent(text, width) {
+  let remaining = Math.max(0, width);
+  let index = 0;
+  const source = String(text ?? "");
+  while (index < source.length && remaining > 0) {
+    if (source[index] === " ") { index += 1; remaining -= 1; continue; }
+    if (source[index] === "\t") { index += 1; remaining = Math.max(0, remaining - 4); continue; }
+    break;
+  }
+  return source.slice(index);
+}
+
+function renderListFromBlocks(blocks, start, options) {
+  const first = blocks[start];
+  const baseIndent = listIndentWidth(first);
+  const listType = first.list.listType;
+  const sameLevel = block =>
+    isListBlock(block)
+    && block.list.listType === listType
+    && listIndentWidth(block) === baseIndent;
+  const items = [];
+  let loose = false;
+  let index = start;
+  let stopList = false;
+
+  while (sameLevel(blocks[index])) {
+    const block = blocks[index];
+    const contentIndent = baseIndent + block.list.contentStart - block.list.indent.length;
+    const item = {
+      block,
+      paragraphs: [[block.list.content]],
+      children: [],
+    };
+    index += 1;
+    let pendingBlank = false;
+
+    while (index < blocks.length) {
+      const next = blocks[index];
+      if (next.type === "blank") {
+        const after = blocks[index + 1];
+        if (sameLevel(after)) {
+          loose = true;
+          index += 1;
+          break;
+        }
+        if (isListBlock(after) && listIndentWidth(after) > baseIndent) {
+          loose = true;
+          pendingBlank = true;
+          index += 1;
+          continue;
+        }
+        if (after?.type === "paragraph" && lineIndentWidth(after.line) >= contentIndent) {
+          loose = true;
+          pendingBlank = true;
+          index += 1;
+          continue;
+        }
+        stopList = true;
+        break;
+      }
+      if (sameLevel(next)) break;
+      if (isListBlock(next)) {
+        if (listIndentWidth(next) <= baseIndent) {
+          stopList = true;
+          break;
+        }
+        const child = renderListFromBlocks(blocks, index, options);
+        item.children.push(child.html);
+        index = child.nextIndex;
+        pendingBlank = false;
+        continue;
+      }
+      if (next.type === "paragraph") {
+        if (pendingBlank) {
+          if (lineIndentWidth(next.line) < contentIndent) {
+            stopList = true;
+            break;
+          }
+          item.paragraphs.push([stripContinuationIndent(next.line.text, contentIndent)]);
+          pendingBlank = false;
+        } else {
+          item.paragraphs.at(-1).push(stripContinuationIndent(next.line.text, contentIndent));
+        }
+        index += 1;
+        continue;
+      }
+      stopList = true;
+      break;
+    }
+    items.push(item);
+    if (stopList || !sameLevel(blocks[index])) break;
+  }
+
+  const tag = listType === "ol" ? "ol" : "ul";
+  const startNumber = first.list.number;
+  const startAttribute = tag === "ol" && Number.isFinite(startNumber) && startNumber !== 1
+    ? ` start="${startNumber}"`
+    : "";
+  const html = items.map(item => {
+    const checkbox = item.block.list.kind === "task-list-item"
+      ? `<input type="checkbox" disabled${item.block.list.checked ? " checked" : ""}> `
+      : "";
+    const paragraphs = item.paragraphs.map((lines, paragraphIndex) => {
+      const prefix = paragraphIndex === 0 ? checkbox : "";
+      const content = `${prefix}${renderInlineMarkdown(lines.join("\n"), options)}`;
+      return loose || paragraphIndex > 0 ? `<p>${content}</p>` : content;
+    }).join("");
+    const children = item.children.length ? `\n${item.children.join("\n")}\n` : "";
+    return `<li>${paragraphs}${children}</li>`;
+  }).join("");
+  return { html: `<${tag}${startAttribute}>${html}</${tag}>`, nextIndex: index };
+}
+
 function renderMarkdown(markdown, opts = {}) {
-  const options = { ...DEFAULTS, ...opts };
-  const blocks = parseBlocks(markdown, options);
+  const extracted = extractReferenceDefinitions(markdown, opts.references);
+  const options = { ...DEFAULTS, ...opts, references: extracted.references };
+  const blocks = parseBlocks(extracted.markdown, options);
   const out = [];
   for (let i = 0; i < blocks.length; i += 1) {
     const block = blocks[i];
@@ -853,39 +1177,14 @@ function renderMarkdown(markdown, opts = {}) {
       let j = i + 1;
       while (j < blocks.length && blocks[j].type === "blockquote") { quotes.push(blocks[j]); j += 1; }
       const body = quotes.map(q => q.quote.content).join("\n");
-      out.push(`<blockquote><p>${renderInlineMarkdown(body, options)}</p></blockquote>`);
+      out.push(`<blockquote>${renderMarkdown(body, options)}</blockquote>`);
       i = j - 1;
       continue;
     }
-    if (block.type === "bullet-list-item" || block.type === "ordered-list-item" || block.type === "task-list-item") {
-      const items = [block];
-      const sameList = candidate =>
-        ["bullet-list-item", "ordered-list-item", "task-list-item"].includes(candidate?.type)
-        && candidate.list.listType === block.list.listType
-        && candidate.list.indent === block.list.indent;
-      let loose = false;
-      let j = i + 1;
-      while (j < blocks.length) {
-        const next = blocks[j];
-        if (next.type === "blank" && sameList(blocks[j + 1])) {
-          loose = true;
-          j += 1;
-          continue;
-        }
-        if (!sameList(next)) break;
-        items.push(next);
-        j += 1;
-      }
-      const tag = block.list.listType === "ol" ? "ol" : "ul";
-      const start = tag === "ol" && Number.isFinite(block.list.number) && block.list.number !== 1 ? ` start="${block.list.number}"` : "";
-      const listHtml = items.map(item => {
-        const list = item.list;
-        const checkbox = list.kind === "task-list-item" ? `<input type="checkbox" disabled${list.checked ? " checked" : ""}> ` : "";
-        const content = `${checkbox}${renderInlineMarkdown(list.content, options)}`;
-        return `<li>${loose ? `<p>${content}</p>` : content}</li>`;
-      }).join("");
-      out.push(`<${tag}${start}>${listHtml}</${tag}>`);
-      i = j - 1;
+    if (isListBlock(block)) {
+      const rendered = renderListFromBlocks(blocks, i, options);
+      out.push(rendered.html);
+      i = rendered.nextIndex - 1;
       continue;
     }
     if (block.type === "code-fence") {
@@ -911,10 +1210,11 @@ function renderMarkdown(markdown, opts = {}) {
   return out.join("\n");
 }
 function textFromMarkdown(markdown, opts = {}) {
-  const options = { ...DEFAULTS, ...opts };
+  const extracted = extractReferenceDefinitions(markdown, opts.references);
+  const options = { ...DEFAULTS, ...opts, references: extracted.references };
   const inlineText = text => stripHtml(renderInlineMarkdown(text, options));
   const lines = [];
-  for (const block of parseBlocks(markdown, options)) {
+  for (const block of parseBlocks(extracted.markdown, options)) {
     if (block.type === "blank") { lines.push(""); continue; }
     if (block.type === "heading") { lines.push(inlineText(block.heading.content)); continue; }
     if (block.type === "horizontal-rule") continue;
@@ -1395,7 +1695,21 @@ class WritemarkEditorElement extends HTMLElement {
   }
 
   _parseOptions() { return { markdownFlavor: this.markdownFlavor }; }
-  _rendererOptions() { return { ...this._parseOptions(), allowRawHtml: false, sanitize: true, linkTarget: DEFAULTS.linkTarget }; }
+  _referenceDefinitions() {
+    if (this._referenceCacheValue === this._value && this._referenceCache) return this._referenceCache;
+    this._referenceCacheValue = this._value;
+    this._referenceCache = extractReferenceDefinitions(this._value).references;
+    return this._referenceCache;
+  }
+  _rendererOptions() {
+    return {
+      ...this._parseOptions(),
+      allowRawHtml: false,
+      sanitize: true,
+      linkTarget: DEFAULTS.linkTarget,
+      references: this._referenceDefinitions(),
+    };
+  }
   _setValueInternal(next, opts = {}) {
     const previousValue = this._value;
     const value = normalizeLineEndings(next ?? ""); const before = this._snapshot(); const changed = value !== previousValue;
@@ -1794,7 +2108,10 @@ class WritemarkEditorElement extends HTMLElement {
     }
     if (block.type === "code-fence") return this._renderCodeFence(block);
     if (block.type === "table") return this._renderTable(block);
-    return `<div ${lineAttrs(block.line, "paragraph")}>${decorateInline(block.line.text, options)}</div>`;
+    const content = parseReferenceDefinition(block.line.text)
+      ? escapeHtml(block.line.text)
+      : decorateInline(block.line.text, options);
+    return `<div ${lineAttrs(block.line, "paragraph")}>${content}</div>`;
   }
   _lineEditable() { return (!this.disabled && !this.readonly && this.mode !== "preview") ? "true" : "false"; }
   _renderHeadingLine(text, heading) {

@@ -8,6 +8,9 @@ The default experience is **inline/live editing**: headings, inline formatting, 
 
 ![Writemark live inline Markdown editor demo](https://raw.githubusercontent.com/Brostoffed/writemark/main/assets/writemark-demo.gif)
 
+[Try the live demo](https://brostoffed.github.io/writemark/demo/) ·
+[Read the documentation](docs/README.md)
+
 ## Install
 
 ```sh
@@ -28,6 +31,10 @@ import 'writemark-editor';
 
 Writemark explores a specific tradeoff: make Markdown feel rendered while it is being edited without replacing the Markdown with an opaque document model. Raw Markdown remains the value that forms submit and application code reads. The component owns the editing mechanics; the host application keeps control of its toolbar, persistence, uploads, and product UI.
 
+Its dependency-free renderer supports a practical CommonMark-inspired subset
+with optional GFM-style features. The `commonmark` and `gfm` flavor values are
+feature profiles, not claims of complete specification conformance.
+
 ## Documentation
 
 Choose the level that matches what you are building:
@@ -41,9 +48,13 @@ Choose the level that matches what you are building:
 
 See the [documentation index](docs/README.md) for suggested learning paths and the core concepts used throughout the guides.
 
-## Run locally
+## Try the demo
 
-Open `demo/index.html` directly in a browser, or serve it locally:
+The [public demo](https://brostoffed.github.io/writemark/demo/) runs entirely in
+the browser and does not require an account or installation.
+
+To run the same demo locally, open `demo/index.html` directly in a browser or
+serve it from the repository:
 
 ```sh
 cd writemark-editor-v1
@@ -57,6 +68,9 @@ http://127.0.0.1:5173/demo/index.html
 ```
 
 No npm install is required. The dev server uses Node's built-in HTTP module and is only needed for module-based test and performance pages.
+
+Maintainers can find the one-time GitHub Pages setup and publication checks in
+[Releasing Writemark](RELEASING.md#published-demo).
 
 ## Repo layout
 
@@ -399,7 +413,8 @@ Still validate and sanitize server-side when storing or rendering user-generated
 The browser suite exercises this boundary with a reviewed hostile-input corpus,
 seeded and shrinkable property tests over arbitrary Markdown, source-range and
 determinism invariants, and differential tests against a pinned CommonMark
-reference renderer. Run the focused security suite with:
+reference renderer over the supported subset. Run the focused security suite
+with:
 
 ```sh
 npm run test:fuzz
@@ -418,7 +433,7 @@ Linux CI gate always runs Chromium, Firefox, and WebKit. Playwright no longer
 provides a current WebKit build for macOS 14 and older, so the local config
 omits only that unavailable project on those hosts.
 
-The current suite registers 317 independent cases per browser project,
+The current suite registers 342 independent cases per browser project,
 including every one of the 230 checks migrated from the retired page-hosted
 suite. It also includes a hostile Markdown corpus, property-based parser and
 sanitizer checks, and CommonMark differential coverage. Playwright owns

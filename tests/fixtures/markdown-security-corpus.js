@@ -40,6 +40,10 @@ export const hostileMarkdownCases = [
     markdown: "[unsafe](JaVaScRiPt:alert(1))"
   },
   {
+    name: "javascript reference-style link",
+    markdown: "[unsafe][target]\n\n[target]: javascript:alert(1)"
+  },
+  {
     name: "control-character-obfuscated JavaScript link",
     markdown: "[unsafe](java\u0000script:alert(1))"
   },
@@ -184,6 +188,26 @@ export const commonMarkCases = [
     markdown: "**strong** and *emphasis* and `code`"
   },
   {
+    name: "nested emphasis inside strong emphasis",
+    markdown: "**outer *inner* outer**"
+  },
+  {
+    name: "nested strong emphasis inside emphasis",
+    markdown: "*outer **inner** outer*"
+  },
+  {
+    name: "same-marker emphasis nested inside strong emphasis",
+    markdown: "**outer **inner** outer**"
+  },
+  {
+    name: "same-marker emphasis nested inside emphasis",
+    markdown: "*outer *inner* outer*"
+  },
+  {
+    name: "adjacent triple-delimiter emphasis",
+    markdown: "**a** ***b*** **c**"
+  },
+  {
     name: "multi-backtick code span",
     markdown: "``alpha ` beta``"
   },
@@ -204,8 +228,28 @@ export const commonMarkCases = [
     markdown: "> alpha\n> beta"
   },
   {
+    name: "nested blockquote",
+    markdown: "> outer\n> > inner"
+  },
+  {
     name: "bullet list",
     markdown: "- alpha\n- beta"
+  },
+  {
+    name: "nested bullet list",
+    markdown: "- parent\n  - child"
+  },
+  {
+    name: "nested mixed list",
+    markdown: "1. parent\n   - child\n   - sibling"
+  },
+  {
+    name: "lazy list continuation",
+    markdown: "- first line\ncontinuation"
+  },
+  {
+    name: "indented list continuation",
+    markdown: "- first line\n  continuation"
   },
   {
     name: "ordered list",
@@ -218,6 +262,26 @@ export const commonMarkCases = [
   {
     name: "loose list separated by one blank line",
     markdown: "- alpha\n- beta\n\n- gamma\n- delta"
+  },
+  {
+    name: "full reference link with title",
+    markdown: "[guide][docs]\n\n[docs]: https://example.com/guide \"Guide\""
+  },
+  {
+    name: "collapsed reference link",
+    markdown: "[guide][]\n\n[guide]: /guide"
+  },
+  {
+    name: "shortcut reference link",
+    markdown: "[guide]\n\n[guide]: /guide"
+  },
+  {
+    name: "two-space hard line break",
+    markdown: "alpha  \nbeta"
+  },
+  {
+    name: "backslash hard line break",
+    markdown: "alpha\\\nbeta"
   },
   {
     name: "thematic break",

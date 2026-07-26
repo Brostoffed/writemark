@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Fixed nested emphasis in both live decoration and preview/export rendering,
+  including adjacent and triple delimiter runs.
+- Added nested lists, list continuation lines, nested blockquotes,
+  reference-style links, and both CommonMark hard-break forms to preview and
+  exported HTML.
+- Expanded fixed CommonMark differential and cross-surface browser coverage for
+  the corrected structures.
+- Clarified that `commonmark` and `gfm` select dependency-free subset feature
+  profiles rather than claiming complete specification conformance.
+
 ## 1.3.1 - 2026-07-24
 
 - Expanded the suite to 317 directly reported cases per browser project,

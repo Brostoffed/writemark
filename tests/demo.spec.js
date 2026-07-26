@@ -9,6 +9,14 @@ test.describe("published demo", () => {
     const editor = page.locator("#editor");
     await expect(page.getByRole("textbox", { name: "Body" })).toBeVisible();
     await expect(editor.locator(".md-heading").first()).toHaveText("# Live inline markdown editor");
+    await expect(editor).toHaveJSProperty("markdownFlavor", "gfm");
+    expect(await editor.evaluate(element => element.value)).toContain("**a** ***b*** **c**");
+    expect(await editor.evaluate(element => element.value)).toContain("[Feature guide][features]");
+
+    await page.locator("#markdown-flavor").selectOption("commonmark");
+    await expect(editor).toHaveJSProperty("markdownFlavor", "commonmark");
+    await page.locator("#markdown-flavor").selectOption("gfm");
+    await expect(editor).toHaveJSProperty("markdownFlavor", "gfm");
 
     await page.locator("#mode").selectOption("source");
     await expect(editor.locator("textarea")).toBeVisible();

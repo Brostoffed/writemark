@@ -94,12 +94,33 @@ security run between releases. Its logged seed and any reported shrink path can
 be supplied through `WRITEMARK_FUZZ_SEED` and `WRITEMARK_FUZZ_PATH` to reproduce
 a failure locally.
 
+## Published demo
+
+The public demo is hosted by GitHub Pages at
+`https://brostoffed.github.io/writemark/demo/`. It uses the committed
+`demo/index.html` and `dist/writemark-editor.global.js` files, so it does not
+need a separate application server or production build.
+
+Configure the repository once:
+
+1. Open **Settings**, then **Pages**.
+2. Under **Build and deployment**, choose **Deploy from a branch**.
+3. Select the `main` branch and the `/(root)` folder, then save.
+4. Wait for the `pages-build-deployment` workflow to finish.
+
+After setup, every push to `main` republishes the selected source. Before
+sharing a new demo version, confirm that the Test workflow passed and open the
+public URL in a private browser window. Check that the editor loads, changing
+modes works, and the browser console has no errors.
+
 ## Verification
 
-After the workflow finishes, verify both public pages:
+After the workflow finishes, verify the public package, release, and demo
+pages:
 
 - `https://www.npmjs.com/package/writemark-editor`
 - `https://github.com/Brostoffed/writemark/releases`
+- `https://brostoffed.github.io/writemark/demo/`
 
 Installing without a version should then resolve to the newly published
 `latest` version:

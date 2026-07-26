@@ -15,10 +15,12 @@ integrations.
 | Advanced | Connect host UI, define custom actions and completions, handle files, validate input, and prepare a production integration. | [Advanced integration](advanced.md) |
 | Reference | Look up the exact public surface without working through a tutorial. | [API reference](api-reference.md) |
 
-The main [README](../README.md) remains the compact project overview. The live
-[demo](../demo/index.html) exposes the editor's modes, sizing, typography, and
-state controls. The [Playwright suite](../tests/README.md) verifies the
-component across its public workflows and isolated browser behavior cases.
+The main [README](../README.md) remains the compact project overview. The
+[public live demo](https://brostoffed.github.io/writemark/demo/) exposes the
+editor's modes, sizing, typography, and state controls; its
+[source](../demo/index.html) can also be opened directly from a local checkout.
+The [Playwright suite](../tests/README.md) verifies the component across its
+public workflows and isolated browser behavior cases.
 
 ## Core concepts
 

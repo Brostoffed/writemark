@@ -246,6 +246,70 @@ test.describe("preview rendering semantics", () => {
     });
     await expect(editor.preview.locator("table, input[type=checkbox], del")).toHaveCount(0);
   });
+
+  test("preview renderer preserves nested emphasis structure", async ({ editor }) => {
+    await editor.reset({
+      attributes: { "markdown-flavor": "commonmark", mode: "preview" },
+      value: "**outer *inner* outer** and *outer **inner** outer*"
+    });
+    await expect(editor.preview.locator("strong > em")).toHaveText("inner");
+    await expect(editor.preview.locator("em > strong")).toHaveText("inner");
+  });
+
+  test("preview renderer nests indented child lists under their parent item", async ({ editor }) => {
+    await editor.reset({
+      attributes: { "markdown-flavor": "commonmark", mode: "preview" },
+      value: "- parent\n  - child"
+    });
+    await expect(editor.preview.locator("ul")).toHaveCount(2);
+    await expect(editor.preview.locator("ul > li > ul > li")).toHaveText("child");
+  });
+
+  test("preview renderer keeps lazy and indented continuation lines inside list items", async ({ editor }) => {
+    await editor.reset({
+      attributes: { "markdown-flavor": "commonmark", mode: "preview" },
+      value: "- lazy\ncontinuation\n- indented\n  continuation"
+    });
+    await expect(editor.preview.locator("ul")).toHaveCount(1);
+    await expect(editor.preview.locator("ul > li")).toHaveCount(2);
+    await expect(editor.preview.locator("ul + p")).toHaveCount(0);
+    await expect(editor.preview.locator("ul > li").nth(0)).toContainText("continuation");
+    await expect(editor.preview.locator("ul > li").nth(1)).toContainText("continuation");
+  });
+
+  test("preview renderer creates recursive nested blockquotes", async ({ editor }) => {
+    await editor.reset({
+      attributes: { "markdown-flavor": "commonmark", mode: "preview" },
+      value: "> outer\n> > inner"
+    });
+    await expect(editor.preview.locator("blockquote")).toHaveCount(2);
+    await expect(editor.preview.locator("blockquote > blockquote p")).toHaveText("inner");
+  });
+
+  test("preview renderer resolves full collapsed and shortcut reference links", async ({ editor }) => {
+    await editor.reset({
+      attributes: { "markdown-flavor": "commonmark", mode: "preview" },
+      value: [
+        "[full][docs] [collapsed][] [shortcut]",
+        "",
+        "[docs]: https://example.com/guide \"Guide\"",
+        "[collapsed]: /collapsed",
+        "[shortcut]: /shortcut"
+      ].join("\n")
+    });
+    await expect(editor.preview.locator('a[href="https://example.com/guide"][title="Guide"]')).toHaveText("full");
+    await expect(editor.preview.locator('a[href="/collapsed"]')).toHaveText("collapsed");
+    await expect(editor.preview.locator('a[href="/shortcut"]')).toHaveText("shortcut");
+    await expect(editor.preview).not.toContainText("[docs]:");
+  });
+
+  test("preview renderer emits hard breaks for spaces and backslashes", async ({ editor }) => {
+    await editor.reset({
+      attributes: { "markdown-flavor": "commonmark", mode: "preview" },
+      value: "alpha  \nbeta\n\ngamma\\\ndelta"
+    });
+    await expect(editor.preview.locator("br")).toHaveCount(2);
+  });
 });
 
 test.describe("live Markdown rendering semantics", () => {
@@ -288,4 +352,23 @@ test.describe("live Markdown rendering semantics", () => {
       await expect(editor.host.locator(scenario.selector)).toHaveCount(scenario.count);
     });
   }
+
+  test("live renderer preserves nested emphasis across adjacent delimiter runs", async ({ editor }) => {
+    await editor.reset({
+      attributes: { "markdown-flavor": "commonmark" },
+      value: "**a** ***b*** **c**"
+    });
+    await expect(editor.live.locator("strong")).toHaveCount(3);
+    await expect(editor.live.locator("em")).toHaveCount(1);
+    await expect(editor.live.locator("em > strong")).toHaveText("b");
+  });
+
+  test("live renderer resolves reference links using document definitions", async ({ editor }) => {
+    await editor.reset({
+      attributes: { "markdown-flavor": "commonmark", preview: "below" },
+      value: "[guide][docs]\n\n[docs]: /guide"
+    });
+    await expect(editor.live.locator('a[href="/guide"]')).toHaveText("guide");
+    await expect(editor.preview.locator('a[href="/guide"]')).toHaveText("guide");
+  });
 });

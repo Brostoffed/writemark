@@ -201,3 +201,29 @@ test.describe("large-document virtualization", () => {
     expect(state).toEqual({ start: 0, end: selectionEnd, error: null });
   });
 });
+
+test.describe("delimiter-heavy rendering", () => {
+  test("Large matched and unmatched delimiter runs render deterministically", async ({ editor }) => {
+    const result = await editor.host.evaluate(async () => {
+      const { renderMarkdown } = await import("/dist/writemark-editor.js");
+      const matched = "*a* ".repeat(25_000);
+      const unmatched = "a* ".repeat(33_333);
+      const matchedOne = renderMarkdown(matched, { markdownFlavor: "commonmark" });
+      const matchedTwo = renderMarkdown(matched, { markdownFlavor: "commonmark" });
+      const unmatchedOne = renderMarkdown(unmatched, { markdownFlavor: "commonmark" });
+      const unmatchedTwo = renderMarkdown(unmatched, { markdownFlavor: "commonmark" });
+      return {
+        matchedDeterministic: matchedOne === matchedTwo,
+        matchedEmphasis: (matchedOne.match(/<em>/g) || []).length,
+        unmatchedDeterministic: unmatchedOne === unmatchedTwo,
+        unmatchedLiteralMarkers: (unmatchedOne.match(/\*/g) || []).length
+      };
+    });
+    expect(result).toEqual({
+      matchedDeterministic: true,
+      matchedEmphasis: 25_000,
+      unmatchedDeterministic: true,
+      unmatchedLiteralMarkers: 33_333
+    });
+  });
+});

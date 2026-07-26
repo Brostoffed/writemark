@@ -25,25 +25,56 @@ DOM.
 
 ## Markdown support
 
-The default `markdown-flavor="gfm"` supports the editing and rendering features
-below.
+Writemark provides a practical CommonMark-inspired Markdown subset with
+optional GFM-style features. The `commonmark` and `gfm` flavor names select
+feature profiles; they do not claim complete conformance with either
+specification. The default `markdown-flavor="gfm"` supports the editing and
+rendering features below.
 
 | Structure | Examples and notes |
 |---|---|
 | Paragraphs and soft wraps | Consecutive nonblank source lines render as a paragraph in preview output. |
 | ATX headings | `#` through `######`, including optional space-delimited closing hashes. |
 | Setext headings | Text followed by `===` or `---`. |
-| Emphasis | Asterisk and underscore emphasis and strong emphasis. |
+| Emphasis | Asterisk and underscore emphasis and strong emphasis, including nested combinations. |
 | Strikethrough | `~~text~~` in GFM mode. |
 | Inline code | Backtick code spans, including matching multi-backtick delimiters. |
-| Links and images | Inline destinations, optional titles, nested parentheses, angle-bracket destinations, balanced link labels, and same-document heading fragments. |
+| Links and images | Inline and reference-style destinations, optional titles, nested parentheses, angle-bracket destinations, balanced link labels, and same-document heading fragments. |
 | Escapes | Backslash-escaped Markdown punctuation remains literal. |
-| Blockquotes | Lines beginning with `>`. |
-| Lists | Unordered, ordered, and GFM task list items. |
+| Blockquotes | Lines beginning with `>`, including nested blockquotes. |
+| Lists | Unordered, ordered, nested, continued, and GFM task list items. |
 | Fenced code | Backtick or tilde fences with optional language info. |
 | Tables | GFM tables, escaped pipes, and column alignment delimiters. |
 | Horizontal rules | Valid asterisk, hyphen, and underscore thematic breaks. |
-| Hard breaks | Two trailing spaces followed by a newline. |
+| Hard breaks | Two trailing spaces or a trailing backslash followed by a newline. |
+
+Representative supported source includes:
+
+~~~~markdown
+**a** ***b*** **c**
+
+- Parent item
+  continuation line
+  - Nested child
+    child continuation
+
+> Parent quote
+>
+> > Nested quote
+
+[Read the guide][guide]
+
+Hard break with a backslash\
+next line
+
+[guide]: getting-started.md "Getting started"
+~~~~
+
+The two-space hard-break form behaves the same way; its first line ends with
+two U+0020 space characters instead of a backslash. These examples are also
+available in the
+[public live demo](https://brostoffed.github.io/writemark/demo/), where changing
+the Markdown flavor control re-renders the same canonical source.
 
 Set `markdown-flavor="commonmark"` when GFM extensions should stay plain:
 
@@ -52,7 +83,8 @@ Set `markdown-flavor="commonmark"` when GFM extensions should stay plain:
 ```
 
 In CommonMark mode, GFM tables, task checkboxes, and strikethrough are not
-rendered as those structures. Their source text is still preserved.
+rendered as those structures. Their source text is still preserved. Both modes
+use Writemark's dependency-free subset parser.
 
 Raw HTML is intentionally not executed. See
 [Security and rendered output](advanced.md#security-and-rendered-output).

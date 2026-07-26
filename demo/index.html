@@ -46,6 +46,13 @@
         </select>
       </label>
       <label>
+        Markdown flavor
+        <select id="markdown-flavor">
+          <option value="gfm" selected>GFM-style subset</option>
+          <option value="commonmark">CommonMark-inspired subset</option>
+        </select>
+      </label>
+      <label>
         Tab behavior
         <select id="tab-behavior">
           <option value="accessibility-first" selected>accessibility-first</option>
@@ -86,6 +93,7 @@
         label="Body"
         mode="live"
         preview="none"
+        markdown-flavor="gfm"
         placeholder="Type / for commands. Try #, -, 1., >, or [ ] then Space. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
         required
         maxlength="50000"
@@ -106,6 +114,7 @@
     const log = document.querySelector('#log');
     const previewMode = document.querySelector('#preview-mode');
     const mode = document.querySelector('#mode');
+    const markdownFlavor = document.querySelector('#markdown-flavor');
     const tabBehavior = document.querySelector('#tab-behavior');
     const fontFamily = document.querySelector('#font-family');
     const fontSize = document.querySelector('#font-size');
@@ -203,9 +212,42 @@
       return { applyTypography, applyHeight };
     }
 
+    const hardBreakSpaces = '  ';
     const demoMarkdown = `# Live inline markdown editor
 
 Type \`/\` at the start of a line for slash commands. Headings are sized inside the editor. Inline **bold**, *italic*, \`code\`, and ~~strikethrough~~ are styled in place while the markdown delimiters remain editable.
+
+## Markdown compatibility examples
+
+Adjacent and nested emphasis:
+
+**a** ***b*** **c**
+
+Nested list with continuation lines:
+
+- Parent item
+  continues on the next source line
+  - Nested child
+    continues inside the child
+
+Nested blockquote:
+
+> Parent quote
+>
+> > Nested quote
+
+Reference-style links:
+
+- [Feature guide][features]
+- [README][]
+
+Hard breaks:
+
+This line uses two trailing spaces.${hardBreakSpaces}
+This starts after the two-space hard break.
+
+This line uses a trailing backslash.\\
+This starts after the backslash hard break.
 
 ## Smart shortcuts
 
@@ -251,6 +293,9 @@ Code fences render as clean blocks in live mode; the backtick fences stay in sou
 \`\`\`python
 print("hello")
 \`\`\`
+
+[features]: ../docs/features.md "Features and editing"
+[README]: ../README.md
 `;
 
     function writeLog(message, data = null) {
@@ -262,6 +307,7 @@ print("hello")
 
     mode.addEventListener('change', () => editor.mode = mode.value);
     previewMode.addEventListener('change', () => editor.preview = previewMode.value);
+    markdownFlavor.addEventListener('change', () => editor.markdownFlavor = markdownFlavor.value);
     tabBehavior.addEventListener('change', () => editor.tabBehavior = tabBehavior.value);
     bindDemoControls({ editor, fontFamily, fontSize, maxHeight });
     document.querySelector('#insert-demo').addEventListener('click', () => { editor.value = demoMarkdown; editor.focus(); });

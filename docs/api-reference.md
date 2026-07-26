@@ -28,7 +28,7 @@ alias backed by `MdLiveEditorElement`.
 | `placeholder` | String / `Write markdown...` | Empty editor prompt. It is not inserted into Markdown. |
 | `mode` | `live`, `source`, `split`, `preview` / `live` | Active editing or viewing surface. Invalid values fall back to `live`. |
 | `preview` | `none`, `below`, `side`, `inline-split` / `none` | Optional rendered preview placement. Invalid values fall back to `none`. |
-| `markdown-flavor` | `gfm`, `commonmark` / `gfm` | Parsing and rendering flavor. |
+| `markdown-flavor` | `gfm`, `commonmark` / `gfm` | Subset feature profile. `commonmark` disables supported GFM-only structures; neither value claims full specification conformance. |
 | `tab-behavior` | `accessibility-first`, `editor-first` / `accessibility-first` | Whether ordinary Tab moves focus or inserts indentation outside structural contexts. |
 | `indent-string` | `tab`, `2`, `2-spaces`, `4`, `4-spaces` / two spaces | Indentation used by list and editor actions. |
 | `required` | Boolean | Requires non-whitespace Markdown. |

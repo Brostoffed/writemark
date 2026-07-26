@@ -68,6 +68,7 @@ async function auditMarkdown(page, markdown, options = {}) {
     const allowedRenderedAttributes = {
       a: new Set(["href", "rel", "target", "title"]),
       blockquote: new Set(),
+      br: new Set(),
       code: new Set(["class"]),
       del: new Set(),
       div: new Set(["class"]),
@@ -350,6 +351,8 @@ const inlineAtom = fc.oneof(
   word,
   word.map(value => `*${value}*`),
   word.map(value => `**${value}**`),
+  word.map(value => `**outer *${value}* outer**`),
+  word.map(value => `*outer **${value}** outer*`),
   word.map(value => `\`${value}\``),
   word.map(value => `[${value}](https://example.com/${value})`)
 );
