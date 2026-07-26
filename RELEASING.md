@@ -78,6 +78,12 @@ GitHub repository secret is required. npm generates provenance automatically.
 
    Substitute `minor`, `major`, or an exact version when appropriate.
 
+   `npm test` includes a release-policy gate. It fails when release notes remain
+   under `Unreleased`, when the newest dated changelog release differs from
+   `package.json`, or when `package-lock.json`, the API reference, or the demo
+   still identifies another version. This repository treats changes merged to
+   `main` as release-ready, so finalize these files in the same change.
+
 3. Commit and push the release changes to `main`.
 4. In GitHub, create a new Release whose tag is exactly `v` plus the package
    version, such as `v1.3.2`, and publish it from `main`.

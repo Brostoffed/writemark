@@ -5,10 +5,15 @@ browser lifecycle, fixture isolation, assertions, retries, reporting, traces,
 screenshots, and video. There is no page-hosted runner, wrapper spec, shared
 serial iterator, or browser-side pass/fail protocol.
 
-The current suite registers 317 independent cases per browser project,
+The current suite registers 343 independent cases per browser project,
 including every one of the 230 checks migrated from the previous suite and a
 dedicated security suite for hostile inputs, generated invariants, and
 CommonMark differential behavior.
+
+Before the browser projects, `npm test` also runs the Node-based
+`version-policy.test.mjs` checks. They prevent a release from retaining notes
+under `Unreleased` or drifting across package metadata, the lockfile,
+changelog, API reference, and demo.
 
 ## Run the suite
 
@@ -98,6 +103,8 @@ npx playwright show-report output/playwright/report
 - `tables.spec.js` verifies source-backed cell editing, navigation, structural
   actions, escaping, alignment, generated rows, and undo.
 - `demo.spec.js` verifies the published demo controls, output, and form loop.
+- `version-policy.test.mjs` verifies that release metadata stays synchronized
+  and that completed notes do not remain under `Unreleased`.
 - `fixtures/markdown-security-corpus.js` owns reviewed hostile inputs, safe
   protocol controls, and fixed CommonMark differential cases.
 - `fixtures/editor.html` is the minimal integration page used by the direct

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.4.0 - 2026-07-25
+
 - Fixed nested emphasis in both live decoration and preview/export rendering,
   including adjacent and triple delimiter runs.
 - Added nested lists, list continuation lines, nested blockquotes,

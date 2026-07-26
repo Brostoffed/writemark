@@ -96,22 +96,11 @@ for (const [file, document] of parsed) {
   }
 }
 
-const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const apiReference = readFileSync(join(root, 'docs/api-reference.md'), 'utf8');
-const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
-const demo = readFileSync(join(root, 'demo/index.html'), 'utf8');
 const source = readFileSync(join(root, 'src/writemark-editor.js'), 'utf8');
 const testGuide = readFileSync(join(root, 'tests/README.md'), 'utf8');
 
-if (!apiReference.includes(`Writemark ${packageJson.version}`)) {
-  failures.push(`docs/api-reference.md does not identify package version ${packageJson.version}`);
-}
-if (!changelog.includes(`## ${packageJson.version}`)) {
-  failures.push(`CHANGELOG.md does not contain a ${packageJson.version} release heading`);
-}
-if (!demo.includes(`v${packageJson.version} Live Inline Demo`)) {
-  failures.push(`demo/index.html does not identify package version ${packageJson.version}`);
-}
+const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 if (packageJson.scripts?.['test:browser'] !== 'playwright test') {
   failures.push('package.json test:browser must invoke Playwright directly');
 }
