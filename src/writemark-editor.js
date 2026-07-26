@@ -667,7 +667,23 @@ function parseHeading(line) {
 function parseBlockquote(line) {
   const m = /^(\s*>\s?)(.*)$/.exec(line);
   if (!m) return null;
-  return { markerText: m[1], content: m[2], contentStart: m[1].length };
+  let depth = 1;
+  let fullContentStart = m[1].length;
+  let nestedContent = m[2];
+  while (true) {
+    const nested = /^(\s*>\s?)(.*)$/.exec(nestedContent);
+    if (!nested) break;
+    depth += 1;
+    fullContentStart += nested[1].length;
+    nestedContent = nested[2];
+  }
+  return {
+    markerText: m[1],
+    content: m[2],
+    contentStart: m[1].length,
+    depth,
+    fullContentStart,
+  };
 }
 function isHorizontalRule(line) { const t = line.trim(); return /^([-*_])(?:\s*\1){2,}\s*$/.test(t); }
 function getFenceInfo(line) {
@@ -1500,7 +1516,36 @@ class WritemarkEditorElement extends HTMLElement {
         .md-task-line { display: flex; align-items: baseline; gap: 0.35em; }
         .md-task-line input { transform: translateY(0.12em); }
         .md-task-source { flex: 1; min-width: 0; white-space: pre-wrap; outline: none; border-radius: 6px; }
-        .md-quote { border-inline-start: 4px solid var(--md-editor-border); padding-inline-start: 0.75em; color: color-mix(in srgb, CanvasText 80%, Canvas 20%); }
+        .md-quote {
+          --md-quote-depth: 1;
+          border-radius: 0;
+          padding-inline-start: calc(var(--md-quote-depth) * 1em + 0.35em);
+          color: color-mix(in srgb, CanvasText 80%, Canvas 20%);
+          background-image: repeating-linear-gradient(to right, var(--md-editor-border) 0 4px, transparent 4px 1em);
+          background-position: left top;
+          background-repeat: no-repeat;
+          background-size: calc(var(--md-quote-depth) * 1em) 100%;
+        }
+        .md-quote:dir(rtl) {
+          background-image: repeating-linear-gradient(to left, var(--md-editor-border) 0 4px, transparent 4px 1em);
+          background-position: right top;
+        }
+        .md-quote-depth-2 { --md-quote-depth: 2; }
+        .md-quote-depth-3 { --md-quote-depth: 3; }
+        .md-quote-depth-4 { --md-quote-depth: 4; }
+        .md-quote-depth-5 { --md-quote-depth: 5; }
+        .md-quote-depth-6 { --md-quote-depth: 6; }
+        .md-quote-depth-7 { --md-quote-depth: 7; }
+        .md-quote-depth-8 { --md-quote-depth: 8; }
+        .md-quote-depth-9 { --md-quote-depth: 9; }
+        .md-quote-depth-10 { --md-quote-depth: 10; }
+        .md-quote-depth-11 { --md-quote-depth: 11; }
+        .md-quote-depth-12 { --md-quote-depth: 12; }
+        .md-quote-depth-13 { --md-quote-depth: 13; }
+        .md-quote-depth-14 { --md-quote-depth: 14; }
+        .md-quote-depth-15 { --md-quote-depth: 15; }
+        .md-quote-depth-16 { --md-quote-depth: 16; }
+        .md-quote + .md-quote { margin-block-start: 0; }
         .md-hr-line { display: block; min-block-size: 1.35em; padding-block: 0.55em; color: var(--md-editor-token); cursor: text; }
         .md-hr-line::after { content: ""; display: block; border-block-start: 1px solid var(--md-editor-border); }
         .md-hr-line .md-token { display: none; }
@@ -2083,7 +2128,14 @@ class WritemarkEditorElement extends HTMLElement {
       const content = block.setext ? decorateInline(block.line.text, options) : this._renderHeadingLine(block.line.text, block.heading);
       return `<div ${lineAttrs(block.line, "heading", `md-heading md-h${block.heading.level}`, `id="${escapeAttribute(block.heading.id)}"`)}>${content}</div>${afterAnchor}`;
     }
-    if (block.type === "blockquote") return `<div ${lineAttrs(block.line, "blockquote", "md-quote")}>${decorateInline(block.line.text, options)}</div>`;
+    if (block.type === "blockquote") {
+      const depth = Math.max(1, Number(block.quote.depth) || 1);
+      const visualDepth = Math.min(depth, 16);
+      const markerEnd = block.quote.fullContentStart ?? block.quote.contentStart;
+      const marker = `<span class="md-token">${escapeHtml(block.line.text.slice(0, markerEnd))}</span>`;
+      const content = decorateInline(block.line.text.slice(markerEnd), options);
+      return `<div ${lineAttrs(block.line, "blockquote", `md-quote md-quote-depth-${visualDepth}`, `data-quote-depth="${depth}"`)}>${marker}${content}</div>`;
+    }
     if (block.type === "horizontal-rule") {
       const afterAnchor = block.line.newlineEnd === block.line.end
         ? `<div class="md-line md-hr-after" part="line" data-editable="virtual-hr-after" data-kind="blank" data-from="${block.line.end}" data-to="${block.line.end}" contenteditable="${this._lineEditable()}" spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}" aria-label="After horizontal rule"><br></div>`
@@ -3810,7 +3862,7 @@ class WritemarkEditorElement extends HTMLElement {
     }
     const quote = ctx.block.blockquote;
     if (quote) { if (quote.content.trim() === "") return removePrefixFromLine(ctx, "editor.smartEnter", quote.contentStart, "Exited blockquote."); const insert = `\n${quote.markerText}`; return insertionTransaction(ctx, "editor.smartEnter", insert, insert.length, "smartEnter"); }
-    if (ctx.block.kind === "heading") return insertionTransaction(ctx, "editor.smartEnter", "\n\n", 2, "smartEnter");
+    if (ctx.block.kind === "heading") return insertionTransaction(ctx, "editor.smartEnter", "\n", 1, "smartEnter");
     if (ctx.block.kind === "table") {
       const table = this._findBlockAtOffset(ctx.selectionStart, "table");
       if (table) {

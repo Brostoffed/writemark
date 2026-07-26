@@ -10,8 +10,12 @@ test.describe("published demo", () => {
     await expect(page.getByRole("textbox", { name: "Body" })).toBeVisible();
     await expect(editor.locator(".md-heading").first()).toHaveText("# Live inline markdown editor");
     await expect(editor).toHaveJSProperty("markdownFlavor", "gfm");
-    expect(await editor.evaluate(element => element.value)).toContain("**a** ***b*** **c**");
-    expect(await editor.evaluate(element => element.value)).toContain("[Feature guide][features]");
+    const demoValue = await editor.evaluate(element => element.value);
+    expect(demoValue).toContain("Use **bold**, *italic*, ***bold italic***");
+    expect(demoValue).toContain("> Standard blockquote\n> > Nested blockquote");
+    expect(demoValue).toContain("- Press Tab to indent\n  - Press Shift+Tab to outdent");
+    expect(demoValue).not.toContain("[features]:");
+    expect(demoValue).not.toContain("Hard breaks:");
 
     await page.locator("#markdown-flavor").selectOption("commonmark");
     await expect(editor).toHaveJSProperty("markdownFlavor", "commonmark");

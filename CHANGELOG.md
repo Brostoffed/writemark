@@ -7,6 +7,10 @@
 - Added nested lists, list continuation lines, nested blockquotes,
   reference-style links, and both CommonMark hard-break forms to preview and
   exported HTML.
+- Rendered nested blockquote depth with matching rails and indentation in the
+  live editing surface.
+- Changed Return at the end of a heading to create the immediately following
+  line instead of skipping an extra blank line.
 - Expanded fixed CommonMark differential and cross-surface browser coverage for
   the corrected structures.
 - Clarified that `commonmark` and `gfm` select dependency-free subset feature

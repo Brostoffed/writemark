@@ -212,48 +212,24 @@
       return { applyTypography, applyHeight };
     }
 
-    const hardBreakSpaces = '  ';
     const demoMarkdown = `# Live inline markdown editor
 
 Type \`/\` at the start of a line for slash commands. Headings are sized inside the editor. Inline **bold**, *italic*, \`code\`, and ~~strikethrough~~ are styled in place while the markdown delimiters remain editable.
 
-## Markdown compatibility examples
+## Formatting
 
-Adjacent and nested emphasis:
+Use **bold**, *italic*, ***bold italic***, \`inline code\`, and ~~strikethrough~~ in ordinary text.
 
-**a** ***b*** **c**
+## Blockquotes
 
-Nested list with continuation lines:
+> Standard blockquote
+> > Nested blockquote
 
-- Parent item
-  continues on the next source line
-  - Nested child
-    continues inside the child
-
-Nested blockquote:
-
-> Parent quote
->
-> > Nested quote
-
-Reference-style links:
-
-- [Feature guide][features]
-- [README][]
-
-Hard breaks:
-
-This line uses two trailing spaces.${hardBreakSpaces}
-This starts after the two-space hard break.
-
-This line uses a trailing backslash.\\
-This starts after the backslash hard break.
-
-## Smart shortcuts
+## Markdown shortcuts
 
 Type these at the start of a line and press Space: \`#\`, \`##\`, \`-\`, \`1.\`, \`>\`, or \`[ ]\`.
 
-## Smart lists
+## Lists
 
 - Press Enter to continue
 - Press Tab to indent
@@ -293,9 +269,6 @@ Code fences render as clean blocks in live mode; the backtick fences stay in sou
 \`\`\`python
 print("hello")
 \`\`\`
-
-[features]: ../docs/features.md "Features and editing"
-[README]: ../README.md
 `;
 
     function writeLog(message, data = null) {

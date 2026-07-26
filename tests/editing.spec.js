@@ -15,6 +15,18 @@ test.describe("real editing workflows", () => {
     expect(await editor.selection()).toEqual({ start: 9, end: 9 });
   });
 
+  test("Enter at the end of a heading creates one following line", async ({ editor, page }) => {
+    await editor.reset({ value: "## Roadmap" });
+    await editor.setSelection((await editor.value()).length);
+
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => editor.value()).toBe("## Roadmap\n");
+    expect(await editor.selection()).toEqual({ start: 11, end: 11 });
+    await expect(editor.host.locator(".md-heading")).toHaveCount(1);
+    await expect(editor.host.locator('[data-kind="blank"]')).toHaveCount(1);
+  });
+
   test("continues and exits a bullet list with real Enter presses", async ({ editor, page }) => {
     await editor.reset();
     await editor.host.evaluate(element => element.focus());
@@ -210,7 +222,7 @@ test.describe("real editing workflows", () => {
     await editor.live.press("Backspace");
     await page.keyboard.type("# title");
     await page.keyboard.press("Enter");
-    expect(await editor.value()).toBe("# title\n\n");
+    expect(await editor.value()).toBe("# title\n");
     await expect(editor.host.locator(".md-heading")).toBeVisible();
   });
 

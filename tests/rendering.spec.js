@@ -277,11 +277,20 @@ test.describe("preview rendering semantics", () => {
     await expect(editor.preview.locator("ul > li").nth(1)).toContainText("continuation");
   });
 
-  test("preview renderer creates recursive nested blockquotes", async ({ editor }) => {
+  test("live and preview renderers preserve nested blockquote depth", async ({ editor }) => {
     await editor.reset({
-      attributes: { "markdown-flavor": "commonmark", mode: "preview" },
+      attributes: { "markdown-flavor": "commonmark", preview: "below" },
       value: "> outer\n> > inner"
     });
+    const liveQuotes = editor.live.locator(".md-quote");
+    await expect(liveQuotes).toHaveCount(2);
+    await expect(liveQuotes.nth(0)).toHaveAttribute("data-quote-depth", "1");
+    await expect(liveQuotes.nth(1)).toHaveAttribute("data-quote-depth", "2");
+    await expect(liveQuotes.nth(1).locator(".md-token")).toHaveText("> > ");
+    const liveQuotePadding = await liveQuotes.evaluateAll(lines =>
+      lines.map(line => Number.parseFloat(getComputedStyle(line).paddingInlineStart))
+    );
+    expect(liveQuotePadding[1]).toBeGreaterThan(liveQuotePadding[0]);
     await expect(editor.preview.locator("blockquote")).toHaveCount(2);
     await expect(editor.preview.locator("blockquote > blockquote p")).toHaveText("inner");
   });

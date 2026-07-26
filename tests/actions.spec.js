@@ -63,7 +63,7 @@ const actionCases = [
   { name: "exits empty task list", before: "- [ ] |", action: "editor.smartEnter", after: "|" },
   { name: "continues blockquote", before: "> quoted|", action: "editor.smartEnter", after: "> quoted\n> |" },
   { name: "exits empty blockquote", before: "> |", action: "editor.smartEnter", after: "|" },
-  { name: "heading enter creates paragraph break", before: "## title|", action: "editor.smartEnter", after: "## title\n\n|" },
+  { name: "heading enter creates the next line", before: "## title|", action: "editor.smartEnter", after: "## title\n|" },
   { name: "enter inside code fence is raw newline", before: "```\nconst x = 1;|\n```", action: "editor.smartEnter", after: "```\nconst x = 1;\n|\n```" },
   { name: "opening code fence auto-closes", before: "```python|", action: "editor.smartEnter", after: "```python\n|\n```" },
   { name: "tab indents list item", before: "- a\n- b|", action: "editor.smartTab", after: "- a\n  - b|" },
