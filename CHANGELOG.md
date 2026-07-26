@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.4.1 - 2026-07-26
+
+- Classified live mode as experimental and unsupported on mobile browsers
+  pending native-selection, software-keyboard, autocorrect, and IME validation.
+- Recommended `mode="source"` for production use on iOS, iPadOS, Android, and
+  other mobile or software-keyboard environments.
+- Added the canonical source banner to the release-version policy check so
+  generated package banners cannot silently retain an older version.
+
 ## 1.4.0 - 2026-07-25
 
 - Fixed nested emphasis in both live decoration and preview/export rendering,

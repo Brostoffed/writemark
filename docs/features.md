@@ -23,6 +23,18 @@ back to a range in that string:
 This model is why a host should read `editor.value`, not text from the shadow
 DOM.
 
+## Mobile editing support
+
+Live mode is experimental and unsupported on mobile browsers. Native selection,
+selection handles, software-keyboard boundary edits, autocorrect, and IME
+composition have not completed production validation on iOS, iPadOS, Android,
+or other mobile environments.
+
+Use `mode="source"` for production mobile editing. Source mode uses the native
+textarea editing surface while preserving the same canonical Markdown value.
+The host application owns this choice; Writemark does not automatically switch
+modes from touch capability or user-agent detection.
+
 ## Markdown support
 
 Writemark provides a practical CommonMark-inspired Markdown subset with
@@ -397,12 +409,12 @@ const replacedAll = editor.replaceAll('TODO', 'Done', {
   navigation except inside structures where Tab has an explicit table or list
   function.
 
-The Linux Playwright gate runs Chromium, Firefox, and WebKit and covers
+The Linux Playwright gate runs desktop Chromium, Firefox, and WebKit and covers
 keyboard, focus, labels, read-only and disabled state, selection mapping, and
 completion ARIA state. Local runs execute every project supported on the host;
-macOS 14 and older omit the unavailable WebKit project. Production
-certification should still include manual screen-reader, IME, mobile keyboard,
-high-contrast, and target-device testing.
+macOS 14 and older omit the unavailable WebKit project. These tests do not
+certify mobile live mode. Production certification should still include manual
+screen-reader, IME, high-contrast, and target-device testing.
 
 ## Next step
 

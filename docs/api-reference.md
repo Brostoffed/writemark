@@ -1,10 +1,14 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.4.0. The default `live` mode
+This page is the lookup reference for Writemark 1.4.1. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
 [Advanced integration](advanced.md).
+
+Live mode is experimental and unsupported on mobile browsers. Production
+integrations on iOS, iPadOS, Android, and other mobile or software-keyboard
+environments should explicitly set `mode="source"`.
 
 ## Package entry points
 

@@ -10,7 +10,8 @@ export function validateVersionPolicy({
   changelog,
   demo,
   packageJson,
-  packageLock
+  packageLock,
+  source
 }) {
   const failures = [];
   const version = packageJson.version;
@@ -58,6 +59,9 @@ export function validateVersionPolicy({
   if (!demo.includes(`v${version} Live Inline Demo`)) {
     failures.push(`demo/index.html does not identify package version ${version}`);
   }
+  if (!source.includes(`<writemark-editor> v${version}`)) {
+    failures.push(`src/writemark-editor.js does not identify package version ${version}`);
+  }
 
   return failures;
 }
@@ -68,7 +72,8 @@ function readVersionFiles() {
     changelog: readFileSync(resolve(root, 'CHANGELOG.md'), 'utf8'),
     demo: readFileSync(resolve(root, 'demo/index.html'), 'utf8'),
     packageJson: JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')),
-    packageLock: JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8'))
+    packageLock: JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8')),
+    source: readFileSync(resolve(root, 'src/writemark-editor.js'), 'utf8')
   };
 }
 

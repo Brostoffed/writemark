@@ -132,6 +132,17 @@ changes indicator.
 | `split` | Edit source beside a rendered preview. |
 | `preview` | Display a focusable, read-only rendered view. |
 
+Live mode is experimental and unsupported on mobile browsers. For production
+editing on iOS, iPadOS, Android, and other mobile or software-keyboard
+environments, explicitly use the textarea-backed source mode:
+
+```html
+<writemark-editor mode="source"></writemark-editor>
+```
+
+Do not select the mode by touch capability alone. Hybrid devices and tablets
+with hardware keyboards still need an explicit host application policy.
+
 Modes can change without replacing the element or its value:
 
 ```js

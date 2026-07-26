@@ -1,5 +1,5 @@
 /*
- * <writemark-editor> v1.3.1 live inline Markdown editor.
+ * <writemark-editor> v1.4.1 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 

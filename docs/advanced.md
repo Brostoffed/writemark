@@ -522,10 +522,12 @@ http://127.0.0.1:5173/perf/index.html
 
 Before publishing an integration, also test:
 
-- Supported desktop and mobile browsers.
+- Supported desktop browsers and the exact source-mode mobile targets.
 - Keyboard-only operation through the complete surrounding form.
 - Target screen readers and high-contrast settings.
-- IME composition and mobile virtual keyboards.
+- IME composition and mobile virtual keyboards. Live mode remains experimental
+  and unsupported on mobile; production mobile integrations should use
+  `mode="source"`.
 - Paste from the actual office, browser, and editor products users rely on.
 - Upload failures, latency, stale insertion points, and unsafe filenames/URLs.
 - Server-side Markdown rendering and sanitization.

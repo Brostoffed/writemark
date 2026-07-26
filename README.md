@@ -134,6 +134,21 @@ Compatibility: `md-live-editor.js` and `<md-live-editor>` are still registered a
 | `split` | Source textarea plus rendered preview. |
 | `preview` | Read-only rendered preview. |
 
+### Mobile support
+
+Live mode is experimental and unsupported on mobile browsers. It has not been
+certified for native selection, software-keyboard boundary editing, autocorrect,
+or IME composition on iOS, iPadOS, Android, or other mobile environments. Use
+`mode="source"` for production mobile editing:
+
+```html
+<writemark-editor mode="source"></writemark-editor>
+```
+
+The host application should choose this mode explicitly; Writemark does not
+switch modes by touch detection. A tablet hardware keyboard does not change the
+mobile support status.
+
 Inline/live editing is the primary workflow. Use `mode="source"` when every
 Markdown marker must be directly visible, `mode="split"` for source beside a
 rendered preview, or the `preview` setting to add an optional preview to an
@@ -467,6 +482,7 @@ See [RELEASING.md](RELEASING.md) for the one-time first npm publish and the auto
 
 This version implements source-backed live inline editing without third-party
 runtime dependencies. Development tooling includes Playwright coverage in
-Chromium, Firefox, and WebKit. Production certification still requires
-screen-reader verification, IME testing, mobile virtual-keyboard testing,
-high-contrast review, and an independent security review.
+desktop Chromium, Firefox, and WebKit. Live mode is experimental and unsupported
+on mobile; use source mode for production mobile editing. Production
+certification also requires screen-reader verification, IME testing,
+high-contrast review, target-device testing, and an independent security review.

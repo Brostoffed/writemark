@@ -37,6 +37,13 @@ offsets, actions, clipboard handling, and events all operate on that source.
 inline formatting are editable rendered views over source ranges. Use `source`
 mode when direct access to every Markdown marker is preferable.
 
+### Mobile uses source mode
+
+Live mode is experimental and unsupported on mobile browsers. Production
+integrations on iOS, iPadOS, Android, and other mobile or software-keyboard
+environments should explicitly use `mode="source"`. Writemark does not infer or
+change the mode from touch capability.
+
 ### The host owns application policy
 
 Writemark has no built-in toolbar, uploader, storage client, or network calls.

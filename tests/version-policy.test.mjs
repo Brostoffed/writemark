@@ -13,6 +13,7 @@ function alignedRelease(overrides = {}) {
       version: '1.4.0',
       packages: { '': { version: '1.4.0' } }
     },
+    source: '/* <writemark-editor> v1.4.0 live inline Markdown editor. */',
     ...overrides
   };
 }
@@ -56,4 +57,12 @@ test('rejects stale documentation and demo versions', () => {
 
   assert.match(failures.join('\n'), /api-reference\.md/);
   assert.match(failures.join('\n'), /demo\/index\.html/);
+});
+
+test('rejects a stale canonical source banner', () => {
+  const failures = validateVersionPolicy(alignedRelease({
+    source: '/* <writemark-editor> v1.3.1 live inline Markdown editor. */'
+  }));
+
+  assert.match(failures.join('\n'), /src\/writemark-editor\.js/);
 });
