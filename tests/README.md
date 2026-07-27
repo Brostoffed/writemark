@@ -5,7 +5,7 @@ browser lifecycle, fixture isolation, assertions, retries, reporting, traces,
 screenshots, and video. There is no page-hosted runner, wrapper spec, shared
 serial iterator, or browser-side pass/fail protocol.
 
-The current suite registers 396 independent cases per browser project,
+The current desktop suite registers 411 independent cases per browser project,
 including every one of the 230 checks migrated from the previous suite and a
 dedicated input/composition contract plus security coverage for hostile inputs,
 generated invariants, and CommonMark differential behavior.
@@ -23,8 +23,9 @@ npm test
 
 This verifies generated files and documentation, starts the repository server,
 and runs every direct Playwright spec in every project supported on the current
-host. The Linux CI gate always runs Chromium, Firefox, and WebKit. Local macOS
-14 and older runs omit only WebKit because Playwright no longer provides a
+host. The Linux CI gate always runs Chromium, Firefox, and WebKit, plus
+`input-contract.spec.js` in an iPhone 13 Mobile Safari context. Local macOS 14
+and older runs omit the WebKit projects because Playwright no longer provides a
 current build for those hosts.
 
 List the discovered cases without running them:
@@ -89,9 +90,11 @@ npx playwright show-report output/playwright/report
   selection input.
 - `input-contract.spec.js` verifies browser `beforeinput`/`input` reconciliation,
   target ranges, replacement and deletion variants, grapheme-safe fallback
-  editing, software-keyboard paragraph events, cancellation and no-op behavior,
-  history/event integrity, readonly and disabled rollback, and synthetic IME
-  lifecycle, state-transition, completion, and action-gating contracts.
+  editing, iOS-style Backspace and cross-block target ranges,
+  software-keyboard paragraph events, debug diagnostics, cancellation and no-op
+  behavior, history/event integrity, readonly and disabled rollback, and
+  synthetic IME lifecycle, state-transition, completion, and action-gating
+  contracts.
 - `completion.spec.js` verifies slash, code-language, and host-provided
   completion flows and ARIA state.
 - `markdown.spec.js` verifies parser behavior, code fences, headings, links,

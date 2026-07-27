@@ -323,6 +323,31 @@ editor.addEventListener('md-error', event => {
 The events bubble and cross the shadow boundary, so an application can listen
 on the editor or on an ancestor that manages several editors.
 
+## Device diagnostics
+
+Diagnostics are disabled by default (`debug = 0`) and use a single internal
+emitter. The primary output is the composed `md-debug` event so a mobile host
+can retain or transmit the information without a remote Safari console:
+
+```js
+const diagnosticBuffer = [];
+
+editor.debug = 2;
+editor.addEventListener('md-debug', event => {
+  diagnosticBuffer.push(event.detail);
+});
+```
+
+Level `1` traces input events and whether a deletion was browser-owned or
+source-backed. Level `2` adds selection changes, editing-host focus decisions,
+and requested/applied source ranges. Diagnostic payloads do not include the
+Markdown value. Set `editor.debugLog = true` (or add the `debug-log` boolean
+attribute) to mirror the same payload to `console.debug`. Storage and transport
+remain host responsibilities. The published demo shows one host implementation:
+it buffers `md-debug` details, copies a versioned JSON diagnostic package on
+request, and clears the buffer with the visible event log. Its copy control
+includes a fallback for iOS Safari when the LAN page is not a secure context.
+
 ## Host-controlled file handling
 
 Writemark never uploads files. Paste and drop events provide the files, the
@@ -487,9 +512,10 @@ npm test
 ```
 
 Playwright starts and stops the local server automatically. The Linux CI gate
-always runs Chromium, Firefox, and WebKit. Because Playwright no longer supplies
-a current WebKit build for macOS 14 and older, local runs on those hosts omit
-only that unavailable project. The independent specs use real keyboard,
+always runs Chromium, Firefox, and WebKit, plus the complete input contract in
+an iPhone 13 Mobile Safari context. Because Playwright no longer supplies a
+current WebKit build for macOS 14 and older, local runs on those hosts omit
+those unavailable WebKit projects. The independent specs use real keyboard,
 pointer, form, completion, and host-API workflows. A failed expectation,
 uncaught page error, or browser console error makes the command exit nonzero.
 
@@ -505,7 +531,7 @@ Run the Chromium suite in a visible browser with:
 npm run test:browser:headed
 ```
 
-The current suite registers 317 independent cases per browser project. It
+The current desktop suite registers 411 independent cases per browser project. It
 covers the public component contract, live and source editing, keyboard
 shortcuts, undo/redo, tasks, completion providers, tables, forms, validation,
 multiple instances, hostile rendering, property-based parser and sanitizer

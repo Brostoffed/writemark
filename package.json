@@ -43,17 +43,20 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "start": "node scripts/dev-server.mjs --open=demo/index.html",
+    "start:lan": "node scripts/dev-server.mjs --host=0.0.0.0 --open=demo/index.html",
     "serve": "node scripts/dev-server.mjs",
+    "serve:lan": "node scripts/dev-server.mjs --host=0.0.0.0",
     "test": "npm run check && npm run test:browser",
     "test:browser": "playwright test",
     "test:browser:chromium": "playwright test --project=chromium",
     "test:browser:headed": "playwright test --project=chromium --headed",
+    "test:server": "node --test tests/dev-server.test.mjs",
     "test:version": "node --test tests/version-policy.test.mjs",
     "test:fuzz": "npm run check && playwright test tests/security.spec.js --project=chromium",
     "check:version": "node scripts/check-version.mjs",
     "perf": "node scripts/dev-server.mjs --open=perf/index.html",
     "prepack": "npm run build && npm run check",
-    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/check-docs.mjs && node --check scripts/check-version.mjs && npm run check:version && npm run test:version && node scripts/check-docs.mjs"
+    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/check-docs.mjs && node --check scripts/check-version.mjs && npm run check:version && npm run test:version && npm run test:server && node scripts/check-docs.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",

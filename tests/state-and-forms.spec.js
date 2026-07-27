@@ -134,8 +134,12 @@ test.describe("readonly and disabled state", () => {
     await editor.host.evaluate(element => {
       element.disabled = false;
     });
-    await expect(editor.host.locator("[data-editable]"))
-      .toHaveAttribute("contenteditable", "true");
+    await expect(editor.live).toHaveAttribute("contenteditable", "true");
+    expect(await editor.host.locator("[data-editable]").evaluateAll(editables =>
+      editables.every(editable =>
+        editable.isContentEditable
+        && !editable.hasAttribute("contenteditable"))
+    )).toBe(true);
     await expect(editor.host.locator("[data-task-checkbox]")).toBeEnabled();
   });
 

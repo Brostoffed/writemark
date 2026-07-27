@@ -26,6 +26,14 @@ if (!frozenLocalWebKit) {
     name: "webkit",
     use: { ...devices["Desktop Safari"] }
   });
+  projects.push({
+    name: "mobile-safari",
+    testMatch: "**/input-contract.spec.js",
+    use: {
+      ...devices["iPhone 13"],
+      browserName: "webkit"
+    }
+  });
 }
 
 export default defineConfig({

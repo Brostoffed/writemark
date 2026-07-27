@@ -3,6 +3,8 @@ import { expect, test as base } from "@playwright/test";
 const configurableAttributes = [
   "aria-label",
   "aria-labelledby",
+  "debug",
+  "debug-log",
   "disabled",
   "label",
   "maxlength",

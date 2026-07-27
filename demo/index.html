@@ -13,6 +13,7 @@
     .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     button, select, input { font: inherit; border-radius: 8px; border: 1px solid color-mix(in srgb, CanvasText 22%, Canvas 78%); background: Canvas; color: CanvasText; padding: 8px 10px; }
     input[type="number"] { width: 5.5em; }
+    .copy-status { flex-basis: 100%; min-height: 1.45em; margin: 0; }
     pre.log { white-space: pre-wrap; border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas 82%); border-radius: 8px; padding: 12px; min-height: 80px; max-height: 220px; overflow: auto; }
     writemark-editor { --md-editor-min-height: 420px; }
     /* Active-line/cell focus outline is off by default. Re-enable with:
@@ -81,10 +82,25 @@
         <input id="max-height" type="number" min="100" max="1200" step="20" placeholder="none">
         px
       </label>
+      <label>
+        Debug
+        <select id="debug-level">
+          <option value="0" selected>off</option>
+          <option value="1">input</option>
+          <option value="2">input + selection</option>
+        </select>
+      </label>
+      <label>
+        <input id="debug-log" type="checkbox">
+        Console mirror
+      </label>
       <button type="button" id="insert-demo">Insert demo content</button>
       <button type="button" id="select-expand">Expand selection</button>
       <button type="button" id="get-html">Log HTML</button>
       <button type="button" id="get-text">Log text</button>
+      <button type="button" id="copy-debug" aria-describedby="debug-copy-status" disabled>Copy debug info</button>
+      <button type="button" id="clear-log">Clear log</button>
+      <p id="debug-copy-status" class="copy-status" role="status" aria-live="polite"></p>
     </div>
 
     <form id="demo-form">
@@ -120,6 +136,11 @@
     const fontFamily = document.querySelector('#font-family');
     const fontSize = document.querySelector('#font-size');
     const maxHeight = document.querySelector('#max-height');
+    const debugLevel = document.querySelector('#debug-level');
+    const debugLog = document.querySelector('#debug-log');
+    const copyDebug = document.querySelector('#copy-debug');
+    const debugCopyStatus = document.querySelector('#debug-copy-status');
+    const debugEvents = [];
 
     function readNumberInputValue(input) {
       if (input.value.trim() === '') {
@@ -277,17 +298,76 @@ print("hello")
       log.textContent = line + log.textContent;
     }
 
+    function fallbackCopyText(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.readOnly = true;
+      textarea.setAttribute('aria-hidden', 'true');
+      textarea.style.position = 'fixed';
+      textarea.style.inset = '0 auto auto -9999px';
+      textarea.style.opacity = '0';
+      document.body.append(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      let copied = false;
+      try {
+        copied = document.execCommand('copy');
+      } catch {}
+      textarea.remove();
+      return copied;
+    }
+
+    async function copyText(text) {
+      if (globalThis.isSecureContext && navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch {}
+      }
+      return fallbackCopyText(text);
+    }
+
+    function debugExport() {
+      return {
+        format: 'writemark-debug-v1',
+        capturedAt: new Date().toISOString(),
+        url: location.href,
+        userAgent: navigator.userAgent,
+        debugLevel: editor.debug,
+        events: debugEvents
+      };
+    }
+
     editor.value = demoMarkdown;
 
     mode.addEventListener('change', () => editor.mode = mode.value);
     previewMode.addEventListener('change', () => editor.preview = previewMode.value);
     markdownFlavor.addEventListener('change', () => editor.markdownFlavor = markdownFlavor.value);
     tabBehavior.addEventListener('change', () => editor.tabBehavior = tabBehavior.value);
+    debugLevel.addEventListener('change', () => editor.debug = Number(debugLevel.value));
+    debugLog.addEventListener('change', () => editor.debugLog = debugLog.checked);
     bindDemoControls({ editor, fontFamily, fontSize, maxHeight });
     document.querySelector('#insert-demo').addEventListener('click', () => { editor.value = demoMarkdown; editor.focus(); });
     document.querySelector('#select-expand').addEventListener('click', () => { editor.exec('editor.selectAllExpand'); editor.focus(); });
     document.querySelector('#get-html').addEventListener('click', () => writeLog('HTML', { html: editor.getHTML() }));
     document.querySelector('#get-text').addEventListener('click', () => writeLog('Text', { text: editor.getText() }));
+    copyDebug.addEventListener('click', async () => {
+      if (!debugEvents.length) return;
+      copyDebug.disabled = true;
+      debugCopyStatus.textContent = 'Copying debug information…';
+      const copied = await copyText(JSON.stringify(debugExport(), null, 2));
+      debugCopyStatus.textContent = copied
+        ? `Copied ${debugEvents.length} debug event${debugEvents.length === 1 ? '' : 's'}.`
+        : 'Could not copy automatically. Try enabling clipboard access or use the event log.';
+      copyDebug.disabled = debugEvents.length === 0;
+    });
+    document.querySelector('#clear-log').addEventListener('click', () => {
+      log.textContent = '';
+      debugEvents.length = 0;
+      copyDebug.disabled = true;
+      debugCopyStatus.textContent = 'Debug log cleared.';
+    });
 
     editor.addEventListener('md-before-change', event => writeLog('md-before-change', { actionId: event.detail.transaction?.actionId, nextLength: event.detail.nextValue.length }));
     editor.addEventListener('md-copy', event => writeLog('md-copy', { length: event.detail.markdown.length }));
@@ -296,6 +376,11 @@ print("hello")
     editor.addEventListener('md-input', event => writeLog('md-input', { length: event.detail.value.length, source: event.detail.source }));
     editor.addEventListener('md-action', event => writeLog('md-action', { actionId: event.detail.actionId, source: event.detail.source }));
     editor.addEventListener('md-completion-accept', event => writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label }));
+    editor.addEventListener('md-debug', event => {
+      debugEvents.push(event.detail);
+      copyDebug.disabled = false;
+      writeLog(`md-debug ${event.detail.phase}`, event.detail);
+    });
     editor.addEventListener('md-error', event => writeLog('md-error', { phase: event.detail.phase, recoverable: event.detail.recoverable, message: String(event.detail.error?.message || event.detail.error) }));
     document.querySelector('#demo-form').addEventListener('submit', event => { event.preventDefault(); writeLog('form submit', Object.fromEntries(new FormData(event.currentTarget))); });
   </script>

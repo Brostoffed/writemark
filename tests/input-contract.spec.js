@@ -20,7 +20,7 @@ async function dispatchLiveBeforeInput(editor, {
     if (options.targetRange) {
       const start = element._domPositionFromSource(options.targetRange[0]);
       const end = element._domPositionFromSource(options.targetRange[1]);
-      if (start?.editable === target && end?.editable === target) {
+      if (start && end) {
         ranges.push({
           endContainer: end.node,
           endOffset: end.offset,
@@ -45,6 +45,8 @@ async function dispatchLiveBeforeInput(editor, {
     Object.defineProperty(event, "getTargetRanges", {
       value: () => ranges
     });
+    const sourceTargetSelection =
+      element._sourceSelectionFromBeforeInput(event)?.selection || null;
     const targetSelection = element._inputTargetFromBeforeInput(event)?.selection
       || null;
     target.dispatchEvent(event);
@@ -52,6 +54,7 @@ async function dispatchLiveBeforeInput(editor, {
       defaultPrevented: event.defaultPrevented,
       selectionEnd: element.selectionEnd,
       selectionStart: element.selectionStart,
+      sourceTargetSelection,
       targetSelection,
       value: element.value
     };
@@ -119,6 +122,31 @@ async function applyLiveDomInput(editor, {
   }, { data, inputType });
 }
 
+async function runNativeSelectAll(editor, offset) {
+  return editor.host.evaluate((element, sourceOffset) => {
+    element.setSelectionRange(sourceOffset, sourceOffset);
+    if (typeof element.shadowRoot.getSelection === "function") {
+      document.execCommand("selectAll");
+      const nativeSelection = element._readLiveSelection();
+      if (nativeSelection) return nativeSelection;
+    }
+
+    // Firefox does not expose execCommand's shadow-tree selection. Exercise
+    // the same browser-owned Selection range without using the component API.
+    const selection = element._exposedLiveSelection();
+    const start = element._domPositionFromSource(0);
+    const end = element._domPositionFromSource(element.value.length);
+    selection.removeAllRanges();
+    selection.setBaseAndExtent(
+      start.node,
+      start.offset,
+      end.node,
+      end.offset
+    );
+    return element._readLiveSelection();
+  }, offset);
+}
+
 async function applySourceDomInput(editor, {
   data,
   inputType = "insertText"
@@ -164,6 +192,152 @@ async function dispatchSourceBeforeInput(editor, inputType) {
     textarea.dispatchEvent(event);
     return { defaultPrevented: event.defaultPrevented };
   }, inputType);
+}
+
+async function installStaleIOSShadowSelection(editor, {
+  deferDocumentSelection = false,
+  opaqueDocumentSelection = false,
+  unavailableDocumentSelection = false
+} = {}) {
+  await editor.host.evaluate((element, options) => {
+    const initialStart = element._domPositionFromSource(
+      element.selectionStart
+    );
+    const initialEnd = element._domPositionFromSource(
+      element.selectionEnd
+    );
+    let anchorNode = initialStart.node;
+    let anchorOffset = initialStart.offset;
+    let focusNode = initialEnd.node;
+    let focusOffset = initialEnd.offset;
+    let rangeCount = 1;
+    let selectionWriteCount = 0;
+    let documentSelectionReady = !options.deferDocumentSelection;
+    let unlockScheduled = false;
+    const applyWhenReady = callback => {
+      if (documentSelectionReady) {
+        callback();
+        return;
+      }
+      if (unlockScheduled) return;
+      unlockScheduled = true;
+      requestAnimationFrame(() => {
+        documentSelectionReady = true;
+      });
+    };
+    const documentSelectionProxy = {
+      addRange() {},
+      get anchorNode() {
+        return options.opaqueDocumentSelection ? element : anchorNode;
+      },
+      get anchorOffset() {
+        return options.opaqueDocumentSelection ? 0 : anchorOffset;
+      },
+      collapse: (node, offset) => applyWhenReady(() => {
+        anchorNode = node;
+        anchorOffset = offset;
+        focusNode = node;
+        focusOffset = offset;
+        rangeCount = 1;
+      }),
+      get focusNode() {
+        return options.opaqueDocumentSelection ? element : focusNode;
+      },
+      get focusOffset() {
+        return options.opaqueDocumentSelection ? 0 : focusOffset;
+      },
+      get rangeCount() { return rangeCount; },
+      removeAllRanges: () => applyWhenReady(() => {
+        anchorNode = null;
+        anchorOffset = 0;
+        focusNode = null;
+        focusOffset = 0;
+        rangeCount = 0;
+      }),
+      setBaseAndExtent: (
+        nextAnchorNode,
+        nextAnchorOffset,
+        nextFocusNode,
+        nextFocusOffset
+      ) => {
+        selectionWriteCount += 1;
+        applyWhenReady(() => {
+          if (options.opaqueDocumentSelection) return;
+          anchorNode = nextAnchorNode;
+          anchorOffset = nextAnchorOffset;
+          focusNode = nextFocusNode;
+          focusOffset = nextFocusOffset;
+          rangeCount = 1;
+        });
+      },
+      setPosition: (node, offset) => applyWhenReady(() => {
+        anchorNode = node;
+        anchorOffset = offset;
+        focusNode = node;
+        focusOffset = offset;
+        rangeCount = 1;
+      })
+    };
+    element._iosSelectionSimulation = {
+      getSelectionDescriptor: Object.getOwnPropertyDescriptor(
+        globalThis,
+        "getSelection"
+      ),
+      isIOSWebKitRuntime: element._isIOSWebKitRuntime,
+      selectionWriteCount: () => selectionWriteCount
+    };
+    element._isIOSWebKitRuntime = () => true;
+    Object.defineProperty(element.shadowRoot, "activeElement", {
+      configurable: true,
+      get: () => null
+    });
+    Object.defineProperty(element.shadowRoot, "getSelection", {
+      configurable: true,
+      value: () => null
+    });
+    Object.defineProperty(globalThis, "getSelection", {
+      configurable: true,
+      value: () => options.unavailableDocumentSelection
+        ? null
+        : documentSelectionProxy
+    });
+  }, {
+    deferDocumentSelection,
+    opaqueDocumentSelection,
+    unavailableDocumentSelection
+  });
+}
+
+async function removeStaleIOSShadowSelection(editor) {
+  return editor.host.evaluate(element => {
+    const descriptor = element._iosSelectionSimulation
+      ?.getSelectionDescriptor;
+    const liveSelection = element._readLiveSelection();
+    const modelSelection = { ...element._selection };
+    const selectionWriteCount = element._iosSelectionSimulation
+      ?.selectionWriteCount?.() || 0;
+    const liveSelectionAPI = element._liveSelectionAPI;
+    const liveContentEditable = element._liveEditor.contentEditable;
+    delete element.shadowRoot.activeElement;
+    delete element.shadowRoot.getSelection;
+    element._isIOSWebKitRuntime = element._iosSelectionSimulation
+      .isIOSWebKitRuntime;
+    if (descriptor) {
+      Object.defineProperty(globalThis, "getSelection", descriptor);
+    } else {
+      delete globalThis.getSelection;
+    }
+    const nativeLiveSelection = element._readLiveSelection();
+    delete element._iosSelectionSimulation;
+    return {
+      liveContentEditable,
+      liveSelection,
+      liveSelectionAPI,
+      modelSelection,
+      nativeLiveSelection,
+      selectionWriteCount
+    };
+  });
 }
 
 async function composeLive(editor, updates) {
@@ -381,6 +555,485 @@ test.describe("live input contract", () => {
     });
   }
 
+  test("software-keyboard Backspace keeps a mid-line caret after the deleted character", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "alpha\nbeta"
+    });
+    await editor.setSelection(8);
+    await installStaleIOSShadowSelection(editor);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      inputType: "deleteContentBackward",
+      targetRange: [7, 8]
+    });
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+    expect(result.defaultPrevented).toBe(true);
+    expect(await editor.value()).toBe("alpha\nbta");
+    expect(restored.liveSelection).toEqual({
+      direction: "forward",
+      end: 7,
+      start: 7
+    });
+    expect(restored.modelSelection).toMatchObject({ end: 7, start: 7 });
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+    )).toBe(false);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.selection.restored",
+      selectionChannel: "document",
+      selectionStrategy: "setBaseAndExtent"
+    }));
+    expect(await editor.events("md-input")).toEqual([
+      expect.objectContaining({
+        inputType: "deleteContentBackward",
+        source: "user",
+        value: "alpha\nbta"
+      })
+    ]);
+  });
+
+  test("iOS selection restoration retries on the next frame before enabling fallback", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "alpha\nbeta"
+    });
+    await editor.setSelection(8);
+    await installStaleIOSShadowSelection(editor, {
+      deferDocumentSelection: true
+    });
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      inputType: "deleteContentBackward",
+      targetRange: [7, 8]
+    });
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+    expect(result.defaultPrevented).toBe(true);
+    expect(await editor.value()).toBe("alpha\nbta");
+    expect(restored.liveSelection).toEqual({
+      direction: "forward",
+      end: 7,
+      start: 7
+    });
+    expect(restored.modelSelection).toMatchObject({ end: 7, start: 7 });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      deferredAttempt: 1,
+      phase: "live.selection.restore-deferred"
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      deferredAttempt: 1,
+      phase: "live.selection.restored",
+      selectionChannel: "document",
+      selectionStrategy: "setBaseAndExtent"
+    }));
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+    )).toBe(false);
+  });
+
+  test("iOS keeps the requested caret when document selection read-back is opaque", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "alpha\nbeta"
+    });
+    await editor.setSelection(8);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    await editor.live.press("Backspace");
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(await editor.value()).toBe("alpha\nbta");
+    expect(restored).toMatchObject({
+      liveContentEditable: "true",
+      liveSelection: null,
+      liveSelectionAPI: true,
+      modelSelection: { end: 7, start: 7 },
+      nativeLiveSelection: { end: 7, start: 7 }
+    });
+    expect(restored.selectionWriteCount).toBe(0);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      inputType: "deleteContentBackward",
+      phase: "live.delete.browser-owned"
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      inputType: "deleteContentBackward",
+      phase: "live.input.browser-owned"
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.dom.native-preserved"
+    }));
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+    )).toBe(false);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.fallback-enabled"
+    )).toBe(false);
+  });
+
+  test("physical Backspace on a blank line keeps the native caret when iOS read-back is opaque", async ({ editor }) => {
+    const value = "## Formatting\n\nUse **bold** and *italic*.";
+    const blankStart = value.indexOf("\n") + 1;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(blankStart);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    await editor.host.evaluate(element => {
+      element._testOriginalOnKeyDown = element._onKeyDown;
+      element._onKeyDown = () => {};
+    });
+    await editor.live.press("Backspace");
+    await editor.host.evaluate(element => {
+      element._onKeyDown = element._testOriginalOnKeyDown;
+      delete element._testOriginalOnKeyDown;
+    });
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(await editor.value()).toBe(
+      "## Formatting\nUse **bold** and *italic*."
+    );
+    expect(restored).toMatchObject({
+      liveContentEditable: "true",
+      liveSelection: null,
+      liveSelectionAPI: true,
+      modelSelection: {
+        end: blankStart - 1,
+        start: blankStart - 1
+      },
+      nativeLiveSelection: {
+        end: blankStart - 1,
+        start: blankStart - 1
+      }
+    });
+    expect(restored.selectionWriteCount).toBe(0);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      inputType: "deleteContentBackward",
+      phase: "live.delete.browser-owned"
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      inputType: "deleteContentBackward",
+      phase: "live.input.browser-owned"
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.dom.native-preserved"
+    }));
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+    )).toBe(false);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.fallback-enabled"
+    )).toBe(false);
+  });
+
+  test("physical text input keeps the native caret when iOS selection read-back is opaque", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "alpha\nbeta"
+    });
+    await editor.setSelection(8);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    await editor.live.press("X");
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(await editor.value()).toBe("alpha\nbeXta");
+    expect(restored).toMatchObject({
+      liveContentEditable: "true",
+      liveSelection: null,
+      liveSelectionAPI: true,
+      modelSelection: { end: 9, start: 9 },
+      nativeLiveSelection: { end: 9, start: 9 }
+    });
+    expect(restored.selectionWriteCount).toBe(0);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      inputType: "insertText",
+      phase: "live.input"
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.dom.native-preserved"
+    }));
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-requested"
+    )).toBe(false);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+    )).toBe(false);
+  });
+
+  test("physical iOS pointer placement stays browser-owned when selection read-back is opaque", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "alpha\nbeta\ngamma"
+    });
+    await editor.setSelection(0);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    await editor.live.click();
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(restored.liveSelectionAPI).toBe(true);
+    expect(restored.selectionWriteCount).toBe(0);
+    expect(restored.nativeLiveSelection).not.toBeNull();
+    expect(restored.nativeLiveSelection.start).toBeGreaterThanOrEqual(0);
+    expect(restored.nativeLiveSelection.end).toBeLessThanOrEqual(16);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-requested"
+    )).toBe(false);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+    )).toBe(false);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.fallback-enabled"
+    )).toBe(false);
+  });
+
+  test("iOS selection-channel failure preserves one document editing host", async ({ editor }) => {
+    const value = "# Heading\n\nParagraph\n\nTail";
+    const blankStart = value.indexOf("\n\n") + 1;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(blankStart);
+    await installStaleIOSShadowSelection(editor, {
+      unavailableDocumentSelection: true
+    });
+    await editor.host.evaluate((element, offset) => {
+      window.testEvents.length = 0;
+      element.setSelectionRange(offset, offset);
+      element.focus();
+    }, blankStart);
+    await editor.settle();
+
+    const state = await editor.host.evaluate(element => {
+      const live = element.shadowRoot.querySelector(".live-editor");
+      return {
+        liveSelectionAPI: element._liveSelectionAPI,
+        nestedEditingHosts: live.querySelectorAll(
+          '[data-editable][contenteditable="true"]'
+        ).length,
+        rootEditingHost: live.getAttribute("contenteditable")
+      };
+    });
+    const diagnostics = await editor.events("md-debug");
+    await removeStaleIOSShadowSelection(editor);
+
+    expect(state).toEqual({
+      liveSelectionAPI: true,
+      nestedEditingHosts: 0,
+      rootEditingHost: "true"
+    });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.selection.native-preserved",
+      reason: "selection-api-unavailable"
+    }));
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+      || event.phase === "live.selection.fallback-enabled"
+    )).toBe(false);
+    expect(await runNativeSelectAll(editor, blankStart)).toEqual({
+      direction: "forward",
+      end: value.length,
+      start: 0
+    });
+  });
+
+  test("non-iOS selection-channel failure retains the scoped fallback host", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "alpha\nbeta"
+    });
+
+    const state = await editor.host.evaluate(element => {
+      const originalCandidates = element._liveSelectionCandidates;
+      const originalRuntime = element._isIOSWebKitRuntime;
+      element._liveSelectionCandidates = () => [];
+      element._isIOSWebKitRuntime = () => false;
+      element.setSelectionRange(2, 2);
+      const live = element.shadowRoot.querySelector(".live-editor");
+      const result = {
+        liveSelectionAPI: element._liveSelectionAPI,
+        nestedEditingHosts: live.querySelectorAll(
+          '[data-editable][contenteditable="true"]'
+        ).length,
+        rootEditingHost: live.getAttribute("contenteditable")
+      };
+      element._liveSelectionCandidates = originalCandidates;
+      element._isIOSWebKitRuntime = originalRuntime;
+      element._liveSelectionAPI = true;
+      element._fallbackEditable = null;
+      element._fallbackSelectionPending = false;
+      live.contentEditable = element._lineEditable();
+      element._syncLiveEditingHosts();
+      return result;
+    });
+
+    expect(state.liveSelectionAPI).toBe(false);
+    expect(state.rootEditingHost).toBe("false");
+    expect(state.nestedEditingHosts).toBeGreaterThan(0);
+    expect(await editor.events("md-debug")).toContainEqual(
+      expect.objectContaining({
+        phase: "live.selection.fallback-enabled"
+      })
+    );
+  });
+
+  test("text input continues from the native caret after iOS blank-line Backspace", async ({ editor }) => {
+    const value = "## Formatting\n\nUse **bold** and *italic*.";
+    const blankStart = value.indexOf("\n") + 1;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(blankStart);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(element => {
+      window.testEvents.length = 0;
+      element._testOriginalOnKeyDown = element._onKeyDown;
+      element._onKeyDown = () => {};
+    });
+
+    await editor.live.press("Backspace");
+    await editor.host.evaluate(element => {
+      element._onKeyDown = element._testOriginalOnKeyDown;
+      delete element._testOriginalOnKeyDown;
+    });
+    await editor.live.press("X");
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(await editor.value()).toBe(
+      "## FormattingX\nUse **bold** and *italic*."
+    );
+    expect(restored).toMatchObject({
+      liveContentEditable: "true",
+      liveSelection: null,
+      liveSelectionAPI: true,
+      modelSelection: {
+        end: blankStart,
+        start: blankStart
+      },
+      nativeLiveSelection: {
+        end: blankStart,
+        start: blankStart
+      }
+    });
+    expect(restored.selectionWriteCount).toBe(0);
+    expect(diagnostics.filter(event =>
+      event.phase === "live.dom.native-preserved"
+    )).toHaveLength(2);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-requested"
+    )).toBe(false);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+    )).toBe(false);
+  });
+
+  test("iOS native DOM redecoration waits until focus leaves the live surface", async ({ editor, page }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "alpha\n- [ ] task"
+    });
+    await editor.setSelection(5);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+
+    await editor.live.press("X");
+    await editor.host.locator("[data-task-checkbox]").focus();
+    await page.evaluate(() => Promise.resolve());
+    expect(await editor.host.evaluate(element =>
+      element._nativeLiveDomDirty
+    )).toBe(true);
+
+    await page.locator("#reset-form").focus();
+    await editor.settle();
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(await editor.value()).toBe("alphaX\n- [ ] task");
+    expect(restored.liveSelectionAPI).toBe(true);
+    expect(await editor.host.evaluate(element =>
+      element._nativeLiveDomDirty
+    )).toBe(false);
+  });
+
+  test("software-keyboard Backspace joins lines from a cross-block target range", async ({ editor }) => {
+    await editor.reset({ value: "alpha\nbeta" });
+    await editor.setSelection(6);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      inputType: "deleteContentBackward",
+      targetRange: [5, 6]
+    });
+
+    expect(result.defaultPrevented).toBe(true);
+    expect(result.targetSelection).toBeNull();
+    expect(result.sourceTargetSelection).toEqual({
+      direction: "forward",
+      end: 6,
+      start: 5
+    });
+    expect(await editor.value()).toBe("alphabeta");
+    expect(await editor.selection()).toEqual({ start: 5, end: 5 });
+    expect(await editor.events("md-action")).toContainEqual(
+      expect.objectContaining({
+        actionId: "editor.smartBackspace",
+        source: "user"
+      })
+    );
+  });
+
+  test("software-keyboard Backspace joins lines without a target range", async ({ editor }) => {
+    await editor.reset({ value: "alpha\nbeta" });
+    await editor.setSelection(6);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      inputType: "deleteContentBackward"
+    });
+
+    expect(result.defaultPrevented).toBe(true);
+    expect(await editor.value()).toBe("alphabeta");
+    expect(await editor.selection()).toEqual({ start: 5, end: 5 });
+  });
+
   const grapheme = "e\u0301";
   const emoji = "👩‍💻";
   for (const scenario of [
@@ -537,6 +1190,209 @@ test.describe("live input contract", () => {
     expect(await editor.value()).toBe("");
     expect(await editor.events("md-input")).toEqual([]);
     expect(await editor.host.evaluate(element => element._undoStack.length)).toBe(0);
+  });
+
+  test("live mode uses one document editing host instead of nested block hosts", async ({ editor }) => {
+    await editor.reset({
+      value: [
+        "# Heading",
+        "",
+        "Paragraph",
+        "",
+        "| A | B |",
+        "| - | - |",
+        "| C | D |",
+        "",
+        "```",
+        "code",
+        "```"
+      ].join("\n")
+    });
+
+    const state = await editor.host.evaluate(element => {
+      const live = element.shadowRoot.querySelector(".live-editor");
+      const editables = [...live.querySelectorAll("[data-editable]")];
+      return {
+        allDescendantsInheritEditing: editables.every(editable =>
+          editable.isContentEditable
+          && !editable.hasAttribute("contenteditable")),
+        nestedEditingHosts: live.querySelectorAll(
+          '[data-editable][contenteditable="true"]'
+        ).length,
+        rootEditingHost: live.getAttribute("contenteditable")
+      };
+    });
+
+    expect(state).toEqual({
+      allDescendantsInheritEditing: true,
+      nestedEditingHosts: 0,
+      rootEditingHost: "true"
+    });
+  });
+
+  test("native Select All from a text block selects the whole document", async ({ editor }) => {
+    const value = "# Heading\n\nParagraph\n\nTail";
+    await editor.reset({ value });
+
+    expect(await runNativeSelectAll(editor, value.indexOf("Paragraph") + 3))
+      .toEqual({ direction: "forward", end: value.length, start: 0 });
+  });
+
+  test("native Select All from an empty line selects the whole document", async ({ editor }) => {
+    const value = "# Heading\n\nParagraph";
+    await editor.reset({ value });
+
+    expect(await runNativeSelectAll(editor, value.indexOf("\n\n") + 1))
+      .toEqual({ direction: "forward", end: value.length, start: 0 });
+  });
+
+  test("native Select All from a table cell selects the whole document", async ({ editor }) => {
+    const value = [
+      "Before",
+      "",
+      "| Alpha | Beta |",
+      "| --- | --- |",
+      "| One | Two |",
+      "",
+      "After"
+    ].join("\n");
+    await editor.reset({ value });
+
+    expect(await runNativeSelectAll(editor, value.indexOf("Alpha") + 2))
+      .toEqual({ direction: "forward", end: value.length, start: 0 });
+  });
+
+  test("browser-owned selection can span separate rendered blocks", async ({ editor }) => {
+    const value = "alpha\nbeta\ngamma";
+    const end = value.indexOf("gamma") + 3;
+    await editor.reset({ value });
+
+    const state = await editor.host.evaluate((element, offsets) => {
+      const live = element.shadowRoot.querySelector(".live-editor");
+      const start = element._domPositionFromSource(offsets.start);
+      const endPosition = element._domPositionFromSource(offsets.end);
+      const selection = element._exposedLiveSelection();
+      live.focus({ preventScroll: true });
+      selection.removeAllRanges();
+      selection.setBaseAndExtent(
+        start.node,
+        start.offset,
+        endPosition.node,
+        endPosition.offset
+      );
+      element._onSelectionChanged();
+      return {
+        differentBlocks: start.editable !== endPosition.editable,
+        selection: element._readLiveSelection()
+      };
+    }, { end, start: 1 });
+
+    expect(state).toEqual({
+      differentBlocks: true,
+      selection: { direction: "forward", end, start: 1 }
+    });
+  });
+
+  test("blank-line Backspace restores through the iOS document selection after refocusing", async ({ editor }) => {
+    const value = "## Formatting\n\nUse **bold** and *italic*.";
+    const blankStart = value.indexOf("\n") + 1;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(blankStart);
+    await installStaleIOSShadowSelection(editor);
+
+    await editor.host.evaluate(element => {
+      const originalFocus = HTMLElement.prototype.focus;
+      const originalHasComponentFocus = element._hasComponentFocus;
+      globalThis.iosFocusRegression = {
+        calls: 0,
+        originalFocus,
+        originalHasComponentFocus,
+        simulatedLostFocus: false
+      };
+      element._hasComponentFocus = function hasComponentFocus() {
+        if (!globalThis.iosFocusRegression.simulatedLostFocus) {
+          globalThis.iosFocusRegression.simulatedLostFocus = true;
+          return false;
+        }
+        return originalHasComponentFocus.call(this);
+      };
+      HTMLElement.prototype.focus = function focus(options) {
+        originalFocus.call(this, options);
+        if (!this.matches?.(".live-editor")) return;
+        globalThis.iosFocusRegression.calls += 1;
+        globalThis.iosFocusRegression.options = options ?? null;
+        const heading = this.querySelector(".md-heading");
+        const position = element._textPositionInElement(heading, 0);
+        const range = document.createRange();
+        range.setStart(position.node, position.offset);
+        range.collapse(true);
+        const selection = globalThis.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      };
+    });
+
+    await dispatchLiveBeforeInput(editor, {
+      inputType: "deleteContentBackward",
+      targetRange: [blankStart - 1, blankStart]
+    });
+
+    const state = await editor.host.evaluate(element => {
+      const regression = globalThis.iosFocusRegression;
+      HTMLElement.prototype.focus = regression.originalFocus;
+      element._hasComponentFocus = regression.originalHasComponentFocus;
+      delete globalThis.iosFocusRegression;
+      const liveSelectionAPI = element._liveSelectionAPI;
+      const selection = element._readLiveSelection();
+      const getSelectionDescriptor = element._iosSelectionSimulation
+        ?.getSelectionDescriptor;
+      const isIOSWebKitRuntime = element._iosSelectionSimulation
+        ?.isIOSWebKitRuntime;
+      delete element.shadowRoot.activeElement;
+      delete element.shadowRoot.getSelection;
+      if (isIOSWebKitRuntime) {
+        element._isIOSWebKitRuntime = isIOSWebKitRuntime;
+      }
+      if (getSelectionDescriptor) {
+        Object.defineProperty(
+          globalThis,
+          "getSelection",
+          getSelectionDescriptor
+        );
+      } else {
+        delete globalThis.getSelection;
+      }
+      delete element._iosSelectionSimulation;
+      return {
+        focusCalls: regression.calls,
+        liveSelectionAPI,
+        selection,
+        value: element.value
+      };
+    });
+    const diagnostics = await editor.events("md-debug");
+
+    expect(state).toMatchObject({
+      liveSelectionAPI: true,
+      selection: {
+        direction: "forward",
+        end: blankStart - 1,
+        start: blankStart - 1
+      },
+      value: "## Formatting\nUse **bold** and *italic*."
+    });
+    expect(state.focusCalls).toBeGreaterThanOrEqual(1);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+    )).toBe(false);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.selection.restored",
+      selectionChannel: "document",
+      selectionStrategy: "setBaseAndExtent"
+    }));
   });
 
   test("data-less replacement remains browser-owned and does not mutate eagerly", async ({ editor }) => {
@@ -747,6 +1603,115 @@ test.describe("live input contract", () => {
     await page.keyboard.press("ControlOrMeta+z");
     expect(await editor.value()).toBe("ab");
     expect(await editor.selection()).toEqual({ start: 1, end: 1 });
+  });
+});
+
+test.describe("debug diagnostics", () => {
+  test("debugging defaults to level zero and emits nothing", async ({ editor }) => {
+    const state = await editor.host.evaluate(element => ({
+      debug: element.debug,
+      debugLog: element.debugLog,
+      emitted: Boolean(element._debug(1, "test.disabled"))
+    }));
+
+    expect(state).toEqual({
+      debug: 0,
+      debugLog: false,
+      emitted: false
+    });
+    expect(await editor.events("md-debug")).toEqual([]);
+  });
+
+  test("debug events expose the source-backed deletion and selection path", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "alpha\nbeta"
+    });
+    await editor.setSelection(8);
+
+    await dispatchLiveBeforeInput(editor, {
+      inputType: "deleteContentBackward",
+      targetRange: [7, 8]
+    });
+
+    const events = await editor.events("md-debug");
+    expect(events.map(event => event.phase)).toEqual(
+      expect.arrayContaining([
+        "live.beforeinput",
+        "live.delete.source-backed",
+        "live.input.source-backed",
+        "live.selection.restore-requested",
+        "live.selection.restored"
+      ])
+    );
+    expect(events.every(event =>
+      Number.isInteger(event.sequence)
+      && event.level >= 1
+      && typeof event.phase === "string"
+      && Number.isInteger(event.selection?.start)
+      && Number.isInteger(event.selection?.end)
+    )).toBe(true);
+    expect(await editor.value()).toBe("alpha\nbta");
+    expect(await editor.selection()).toEqual({ start: 7, end: 7 });
+  });
+
+  test("debug change summaries never expose inserted Markdown", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 1 },
+      value: "alpha"
+    });
+
+    await editor.host.evaluate(element => {
+      element._applySourceBackedInput(
+        "insertText",
+        [{ from: 5, to: 5, insert: " private" }],
+        { start: 13, end: 13, direction: "none" }
+      );
+    });
+
+    const event = (await editor.events("md-debug"))
+      .find(entry => entry.phase === "live.input.source-backed");
+    expect(event?.changes).toEqual([{
+      from: 5,
+      insertedLength: 8,
+      removedLength: 0,
+      to: 5
+    }]);
+    expect(JSON.stringify(event)).not.toContain("private");
+    expect(await editor.value()).toBe("alpha private");
+  });
+
+  test("debug-log optionally mirrors the same event payload to console.debug", async ({ editor }) => {
+    const state = await editor.host.evaluate(element => {
+      const calls = [];
+      const originalDebug = console.debug;
+      let eventDetail = null;
+      console.debug = (...args) => calls.push(args);
+      element.addEventListener("md-debug", event => {
+        eventDetail = event.detail;
+      }, { once: true });
+      element.debug = 1;
+      element.debugLog = true;
+      element._debug(1, "test.console", { sample: true });
+      console.debug = originalDebug;
+      return {
+        callLabel: calls[0]?.[0],
+        callPayload: calls[0]?.[1],
+        eventDetail,
+        reflectedDebug: element.getAttribute("debug"),
+        reflectedDebugLog: element.hasAttribute("debug-log")
+      };
+    });
+
+    expect(state.callLabel).toBe("[writemark-editor]");
+    expect(state.callPayload).toEqual(state.eventDetail);
+    expect(state.eventDetail).toMatchObject({
+      level: 1,
+      phase: "test.console",
+      sample: true
+    });
+    expect(state.reflectedDebug).toBe("1");
+    expect(state.reflectedDebugLog).toBe(true);
   });
 });
 

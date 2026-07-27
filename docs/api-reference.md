@@ -35,6 +35,8 @@ alias backed by `MdLiveEditorElement`.
 | `markdown-flavor` | `gfm`, `commonmark` / `gfm` | Subset feature profile. `commonmark` disables supported GFM-only structures; neither value claims full specification conformance. |
 | `tab-behavior` | `accessibility-first`, `editor-first` / `accessibility-first` | Whether ordinary Tab moves focus or inserts indentation outside structural contexts. |
 | `indent-string` | `tab`, `2`, `2-spaces`, `4`, `4-spaces` / two spaces | Indentation used by list and editor actions. |
+| `debug` | Nonnegative integer / `0` | Diagnostic level. `0` emits nothing, `1` emits input decisions, and `2` also emits selection/focus details through `md-debug`. |
+| `debug-log` | Boolean | Mirror enabled `md-debug` payloads to `console.debug`. Events remain the primary diagnostic channel. |
 | `required` | Boolean | Requires non-whitespace Markdown. |
 | `disabled` | Boolean | Disables interaction and omits the field from form submission. |
 | `readonly` | Boolean | Keeps content focusable/readable but prevents mutation. |
@@ -63,6 +65,8 @@ their text value.
 | `markdownFlavor` | String enum | `gfm` or `commonmark`; reflects `markdown-flavor`. |
 | `tabBehavior` | String enum | `accessibility-first` or `editor-first`; reflects `tab-behavior`. |
 | `indentString` | String | A tab, two spaces, or four spaces. Setting a tab reflects `indent-string="tab"`. |
+| `debug` | `number` | Nonnegative diagnostic level reflected to `debug`; defaults to `0`. |
+| `debugLog` | `boolean` | Reflects the optional `debug-log` console mirror. |
 | `disabled` | `boolean` | True for an explicit attribute or disabled form/fieldset state. |
 | `readonly` | `boolean` | Reflects `readonly`. |
 | `required` | `boolean` | Reflects `required`. |
@@ -304,6 +308,7 @@ cancelable.
 | `md-cut` | `{ markdown, start, end }`. |
 | `md-paste` | `{ markdown, kind }`. |
 | `md-dirty-change` | `{ dirty }`. |
+| `md-debug` | Serializable diagnostic payload containing `sequence`, `timestamp`, `level`, `phase`, `mode`, `valueLength`, `selection`, and phase-specific metadata. Emitted only when `debug` is high enough. |
 | `md-error` | `{ phase, error, recoverable, ...context }`. |
 
 Snapshots in event payloads have the shape:
@@ -317,6 +322,27 @@ Snapshots in event payloads have the shape:
 
 Common input/action `source` values include `api`, `user`, `keyboard`, `paste`,
 `pointer`, `undo`, `redo`, `attribute`, and `init` depending on the path.
+
+### Debug diagnostics
+
+Debugging is event-first so a host can display, store, upload, or otherwise
+retrieve diagnostics from a device without relying on a connected browser
+console:
+
+```js
+editor.debug = 2;
+
+editor.addEventListener('md-debug', event => {
+  diagnosticBuffer.push(event.detail);
+});
+```
+
+Level `1` reports live `beforeinput`/`input` decisions and source-backed
+deletions. Level `2` adds selection changes, focus requirements, and requested
+versus restored source ranges. Payloads include offsets and lengths but not the
+Markdown body. Set `editor.debugLog = true` or add `debug-log` only when the
+same payload should also be sent to `console.debug`. The component does not
+retain a diagnostic history; the host owns storage and transport.
 
 ## Form behavior
 

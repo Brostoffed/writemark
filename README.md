@@ -67,6 +67,26 @@ Then open:
 http://127.0.0.1:5173/demo/index.html
 ```
 
+To test from an iPhone on the same Wi-Fi network, expose the development
+server on the computer's network interfaces:
+
+```sh
+npm run start:lan
+```
+
+Startup prints the complete local and phone-ready paths, using each external
+IPv4 address detected on the computer:
+
+```text
+Local:         http://127.0.0.1:5173/demo/index.html
+Network (en0): http://192.168.1.25:5173/demo/index.html
+```
+
+Open the `Network` URL on the iPhone. The equivalent explicit option is
+`npm start -- --host=0.0.0.0`; `npm run serve -- --lan` also enables LAN
+access without opening a desktop browser. Keep LAN mode to trusted networks,
+because it serves files from this checkout to other devices on the network.
+
 No npm install is required. The dev server uses Node's built-in HTTP module and is only needed for module-based test and performance pages.
 
 Maintainers can find the one-time GitHub Pages setup and publication checks in
@@ -244,6 +264,8 @@ console.log(editor.getPlainText());
 | `preview` | `"none" | "below" | "side" | "inline-split"` |
 | `tabBehavior` | `"accessibility-first" | "editor-first"` |
 | `indentString` | `"\t" | "  " | "    "` |
+| `debug` | nonnegative diagnostic level; default `0` |
+| `debugLog` | optional `console.debug` mirror |
 | `selectionStart` / `selectionEnd` | source offsets |
 | `dirty` | boolean |
 
@@ -334,7 +356,28 @@ Important action IDs:
 | `md-cut` | Live-mode cut wrote Markdown clipboard data and removed the canonical range. |
 | `md-paste` | Clipboard content was inserted through the canonical Markdown path. |
 | `md-dirty-change` | Dirty state changed. |
+| `md-debug` | Opt-in, serializable input/selection diagnostic event controlled by `debug`. |
 | `md-error` | Recoverable editor error. |
+
+Debug output is event-first and disabled by default:
+
+```js
+editor.debug = 2;
+editor.addEventListener('md-debug', event => {
+  diagnostics.push(event.detail);
+});
+
+// Optional; events are still emitted.
+editor.debugLog = true;
+```
+
+Level `1` reports input decisions and source-backed deletion. Level `2` adds
+selection and focus restoration details. Payloads contain source offsets and
+lengths, not the Markdown body. Writemark does not store diagnostics; the host
+decides whether to display, retain, or transmit each `md-debug` event. The
+published demo buffers enabled debug events until **Clear log** and provides a
+**Copy debug info** button, including a fallback for iOS Safari on the HTTP LAN
+test URL.
 
 ## Form usage
 
@@ -444,11 +487,12 @@ npm test
 
 `npm test` verifies generated files and documentation, starts the local test
 server, and runs every Playwright project supported on the current host. The
-Linux CI gate always runs Chromium, Firefox, and WebKit. Playwright no longer
-provides a current WebKit build for macOS 14 and older, so the local config
-omits only that unavailable project on those hosts.
+Linux CI gate always runs Chromium, Firefox, and WebKit. It also runs the
+complete input contract in an iPhone 13 Mobile Safari context. Playwright no
+longer provides a current WebKit build for macOS 14 and older, so the local
+config omits those unavailable WebKit projects on those hosts.
 
-The current suite registers 396 independent cases per browser project,
+The current desktop suite registers 411 independent cases per browser project,
 including every one of the 230 checks migrated from the retired page-hosted
 suite. It also includes a browser input and synthetic IME-composition contract,
 a hostile Markdown corpus, property-based parser and sanitizer checks, and

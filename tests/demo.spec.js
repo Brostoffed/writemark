@@ -37,6 +37,61 @@ test.describe("published demo", () => {
     await expect(page.locator("#log")).toContainText('"body"');
     expect(pageErrors).toEqual([]);
   });
+
+  test("copies event-first diagnostics with the iOS-compatible fallback and clears them", async ({ page }) => {
+    await page.goto("/demo/index.html");
+    const editor = page.locator("#editor");
+    const copyDebug = page.getByRole("button", { name: "Copy debug info" });
+    await expect(copyDebug).toBeDisabled();
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: undefined
+      });
+      document.execCommand = command => {
+        if (command !== "copy") return false;
+        globalThis.copiedDebugInfo = document.activeElement?.value || "";
+        return true;
+      };
+    });
+    await page.locator("#debug-level").selectOption("2");
+    await page.locator("#debug-log").check();
+    await editor.evaluate(element => {
+      element.value = "alpha\nbeta";
+      element.setSelectionRange(8, 8);
+      element.focus();
+    });
+
+    await page.keyboard.press("Backspace");
+
+    await expect(editor).toHaveJSProperty("debug", 2);
+    await expect(editor).toHaveJSProperty("debugLog", true);
+    await expect(page.locator("#log")).toContainText("md-debug live.beforeinput");
+    await expect(page.locator("#log")).toContainText("live.delete.source-backed");
+    await expect(copyDebug).toBeEnabled();
+    await copyDebug.click();
+    await expect(page.locator("#debug-copy-status")).toContainText(/^Copied \d+ debug events?\.$/);
+    const copied = await page.evaluate(() =>
+      JSON.parse(globalThis.copiedDebugInfo)
+    );
+    expect(copied).toMatchObject({
+      debugLevel: 2,
+      format: "writemark-debug-v1",
+      url: expect.stringContaining("/demo/index.html"),
+      userAgent: expect.any(String)
+    });
+    expect(copied.events.map(event => event.phase)).toEqual(
+      expect.arrayContaining([
+        "live.beforeinput",
+        "live.delete.source-backed"
+      ])
+    );
+    expect(JSON.stringify(copied.events)).not.toContain("alpha");
+    await page.locator("#clear-log").click();
+    await expect(page.locator("#log")).toBeEmpty();
+    await expect(copyDebug).toBeDisabled();
+    await expect(page.locator("#debug-copy-status")).toHaveText("Debug log cleared.");
+  });
 });
 
 test.describe("published demo sizing controls", () => {
