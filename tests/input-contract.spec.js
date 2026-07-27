@@ -894,9 +894,7 @@ test.describe("live input contract", () => {
     )).toBe(false);
   });
 
-  test("desktop Safari Backspace and typing keep the caret at the edit point", async ({ editor }, testInfo) => {
-    test.skip(testInfo.project.name === "mobile-safari",
-      "Desktop Safari contracts run in the desktop browser projects.");
+  test("desktop Safari Backspace and typing keep the caret at the edit point @desktop-safari", async ({ editor }) => {
     const value = "## Formatting\n\nUse **bold** and *italic*.";
     const paragraphStart = value.indexOf("Use ");
     const caret = paragraphStart + "Use ".length;
@@ -957,9 +955,7 @@ test.describe("live input contract", () => {
     )).toBe(false);
   });
 
-  test("desktop Safari blank-line Backspace keeps focus for the next keystroke", async ({ editor }, testInfo) => {
-    test.skip(testInfo.project.name === "mobile-safari",
-      "Desktop Safari contracts run in the desktop browser projects.");
+  test("desktop Safari blank-line Backspace keeps focus for the next keystroke @desktop-safari", async ({ editor }) => {
     const value = "## Formatting\n\nUse **bold** and *italic*.";
     const blankStart = value.indexOf("\n") + 1;
     await editor.reset({
@@ -1000,9 +996,7 @@ test.describe("live input contract", () => {
     )).toBe(false);
   });
 
-  test("desktop Safari reads an opaque shadow caret through a composed range", async ({ editor }, testInfo) => {
-    test.skip(testInfo.project.name === "mobile-safari",
-      "Desktop Safari contracts run in the desktop browser projects.");
+  test("desktop Safari reads an opaque shadow caret through a composed range @desktop-safari", async ({ editor }) => {
     const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
     const blankStart = value.indexOf("\n") + 1;
     await editor.reset({
@@ -1040,9 +1034,7 @@ test.describe("live input contract", () => {
     });
   });
 
-  test("desktop Safari physical arrow and line-boundary matrix follows the actual row", async ({ editor, page }, testInfo) => {
-    test.skip(testInfo.project.name === "mobile-safari",
-      "Desktop Safari contracts run in the desktop browser projects.");
+  test("desktop Safari physical arrow and line-boundary matrix follows the actual row @desktop-safari", async ({ editor, page }) => {
     const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
     const firstLineEnd = value.indexOf("\n");
     const blankStart = value.indexOf("\n") + 1;
@@ -1183,9 +1175,7 @@ test.describe("live input contract", () => {
     }));
   });
 
-  test("desktop Safari Enter at Formatting inserts there instead of at document start", async ({ editor, page }, testInfo) => {
-    test.skip(testInfo.project.name === "mobile-safari",
-      "Desktop Safari contracts run in the desktop browser projects.");
+  test("desktop Safari Enter at Formatting inserts there instead of at document start @desktop-safari", async ({ editor, page }) => {
     const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
     const formattingStart = value.indexOf("## Formatting");
     await editor.reset({
@@ -1237,7 +1227,7 @@ test.describe("live input contract", () => {
     }));
   });
 
-  test("desktop Safari defers Enter to beforeinput when no caret range is readable", async ({ editor, page }) => {
+  test("desktop Safari defers Enter to beforeinput when no caret range is readable @desktop-safari", async ({ editor, page }) => {
     const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
     const formattingStart = value.indexOf("## Formatting");
     await editor.reset({
@@ -1279,7 +1269,7 @@ test.describe("live input contract", () => {
     }));
   });
 
-  test("desktop Safari real keyboard creates thematic breaks and fenced code blocks", async ({ editor, page }) => {
+  test("desktop Safari real keyboard creates thematic breaks and fenced code blocks @desktop-safari", async ({ editor, page }) => {
     await editor.reset();
     await editor.host.evaluate(element => {
       element._testOriginalAppleWebKitRuntime = element._isAppleWebKitRuntime;
@@ -1406,11 +1396,7 @@ test.describe("live input contract", () => {
     { desktopSafari: false, label: "iOS" },
     { desktopSafari: true, label: "desktop Safari" }
   ]) {
-    test(`browser Copy after opaque ${runtime.label} Select All writes canonical Markdown`, async ({ editor }, testInfo) => {
-      test.skip(
-        runtime.desktopSafari && testInfo.project.name === "mobile-safari",
-        "Desktop Safari contracts run in the desktop browser projects."
-      );
+    test(`browser Copy after opaque ${runtime.label} Select All writes canonical Markdown${runtime.desktopSafari ? " @desktop-safari" : ""}`, async ({ editor }) => {
       const source = [
       "# Heading",
       "",
@@ -2357,11 +2343,7 @@ test.describe("live input contract", () => {
       .toEqual({ direction: "forward", end: value.length, start: 0 });
   });
 
-  test("browser-owned selection can span separate rendered blocks", async ({ editor }, testInfo) => {
-    test.skip(
-      testInfo.project.name === "mobile-safari",
-      "Mobile WebKit keeps cross-block selection endpoints opaque."
-    );
+  test("browser-owned selection can span separate rendered blocks", async ({ editor }) => {
     const value = "alpha\nbeta\ngamma";
     const end = value.indexOf("gamma") + 3;
     await editor.reset({ value });
@@ -2371,22 +2353,55 @@ test.describe("live input contract", () => {
       const start = element._domPositionFromSource(offsets.start);
       const endPosition = element._domPositionFromSource(offsets.end);
       const selection = globalThis.testLiveSelection(element);
+      globalThis.testEvents.length = 0;
       live.focus({ preventScroll: true });
       const range = document.createRange();
       range.setStart(start.node, start.offset);
       range.setEnd(endPosition.node, endPosition.offset);
-      globalThis.testSetLiveRange(element, range);
-      element._onSelectionChanged();
+      const selectionSet = globalThis.testSetLiveRange(element, range);
+      const selectedText = selection?.toString?.() || "";
+      const clipboard = new DataTransfer();
+      const copyEvent = new ClipboardEvent("copy", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: clipboard
+      });
+      live.dispatchEvent(copyEvent);
+      const copyMarkdown = globalThis.testEvents
+        .filter(event => event.type === "md-copy")
+        .at(-1)?.markdown || "";
       return {
+        canonicalClipboard: clipboard.getData("text/plain"),
+        copyMarkdown,
+        copyPrevented: copyEvent.defaultPrevented,
         differentBlocks: start.editable !== endPosition.editable,
-        selection: element._readLiveSelection()
+        readableSelection: element._readLiveSelection(),
+        selectedText,
+        selectionSet
       };
     }, { end, start: 1 });
 
-    expect(state).toEqual({
+    expect(state).toMatchObject({
       differentBlocks: true,
-      selection: { direction: "forward", end, start: 1 }
+      selectionSet: true
     });
+    expect(state.selectedText.replace(/\s+/g, "")).toBe("lphabetagam");
+    if (state.readableSelection) {
+      expect(state.readableSelection).toEqual({
+        direction: "forward",
+        end,
+        start: 1
+      });
+      expect(state.copyPrevented).toBe(true);
+      expect(state.copyMarkdown).toBe(value.slice(1, end));
+      if (state.canonicalClipboard) {
+        expect(state.canonicalClipboard).toBe(value.slice(1, end));
+      }
+    } else {
+      expect(state.copyPrevented).toBe(false);
+      expect(state.canonicalClipboard).toBe("");
+      expect(state.copyMarkdown).toBe("");
+    }
   });
 
   test("blank-line Backspace restores through the iOS document selection after refocusing", async ({ editor }) => {

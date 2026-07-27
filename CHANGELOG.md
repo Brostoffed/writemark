@@ -13,6 +13,8 @@
   escaped table-cell content.
 - Hardened the Playwright mobile-WebKit contract for opaque native selection
   endpoints while keeping desktop Safari and iOS behavior independently tested.
+- Added a macOS WebKit CI gate and capability-based cross-block selection
+  coverage instead of reporting desktop-only contracts as mobile skips.
 
 ## 1.5.0 - 2026-07-27
 

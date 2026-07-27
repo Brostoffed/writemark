@@ -38,3 +38,32 @@ jobs:
           name: playwright-report
           path: output/playwright/report
           retention-days: 14
+
+  webkit-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright WebKit
+        run: npx playwright install webkit
+
+      - name: Run desktop and mobile WebKit contracts
+        run: npx playwright test --project=webkit --project=mobile-safari
+
+      - name: Upload WebKit Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-webkit-macos
+          path: output/playwright/report
+          retention-days: 14

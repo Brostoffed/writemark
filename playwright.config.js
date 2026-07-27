@@ -28,6 +28,7 @@ if (!frozenLocalWebKit) {
   });
   projects.push({
     name: "mobile-safari",
+    grepInvert: /@desktop-safari/,
     testMatch: "**/input-contract.spec.js",
     use: {
       ...devices["iPhone 13"],
