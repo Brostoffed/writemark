@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 1.5.0 - 2026-07-27
+
+- Added opt-in, event-first device diagnostics through the `debug` property and
+  attribute, the composed `md-debug` event, and the optional `debug-log` console
+  mirror. The demo can buffer, copy, and clear a versioned diagnostic package,
+  including from an iOS Safari page served over the local network.
+- Added LAN development commands that bind to `0.0.0.0` and print the computer's
+  reachable IP address and requested demo path for testing from phones and other
+  devices on the same network.
+- Reworked experimental live mode around one document editing host so native
+  Select All and drag selection can span empty lines, rendered blocks, tables,
+  and code instead of stopping at the current editable fragment.
+- Hardened iOS and software-keyboard editing across Backspace, selection and
+  caret preservation, canonical Markdown clipboard handling, formatting, and
+  structural input transitions.
+- Fixed live Markdown transitions for headings, lists, tasks, blockquotes,
+  Setext headings, GFM tables, thematic breaks after smart-dash replacement,
+  and fenced code blocks entered through real browser input events.
+- Fixed code-language completion so accepting a language creates a closing
+  fence on a new line without swallowing the Markdown that follows it.
+- Fixed desktop Safari caret and keyboard navigation by reading composed shadow
+  selections when available and deferring to native `beforeinput` target ranges
+  when Safari does not expose a readable selection.
+- Expanded the Playwright input, composition, selection, clipboard, structural
+  editing, and physical-key coverage to 465 independently reported cases per
+  desktop browser project.
+
 ## 1.4.1 - 2026-07-26
 
 - Classified live mode as experimental and unsupported on mobile browsers

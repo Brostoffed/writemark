@@ -4,7 +4,7 @@
  */
 (() => {
 /*
- * <writemark-editor> v1.4.1 live inline Markdown editor.
+ * <writemark-editor> v1.5.0 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -3611,9 +3611,12 @@ class WritemarkEditorElement extends HTMLElement {
     }
     this._structuredSelection = null;
     this._selection = this._getCurrentSelection();
+    const exposedSelection = this._exposedLiveSelection();
+    const selectionEndpoints = this._liveSelectionEndpoints(exposedSelection);
     this._debug(2, "live.selection.changed", {
       selection: { ...this._selection },
-      active: this._debugEditableInfo(this._activeEditableFromSelection())
+      active: this._debugEditableInfo(this._activeEditableFromSelection()),
+      selectionReadStrategy: selectionEndpoints?.strategy || null
     });
     this._emitSelectionChange();
     if (!this._isComposing) this._scheduleCompletionUpdate();
@@ -3648,14 +3651,16 @@ class WritemarkEditorElement extends HTMLElement {
   _readLiveSelection(preferredEditable = null) {
     const sel = this._exposedLiveSelection();
     if (!sel) return null;
-    const anchorEditable = preferredEditable || this._closestEditable(sel.anchorNode?.nodeType === Node.ELEMENT_NODE ? sel.anchorNode : sel.anchorNode?.parentElement);
-    const focusEditable = preferredEditable || this._closestEditable(sel.focusNode?.nodeType === Node.ELEMENT_NODE ? sel.focusNode : sel.focusNode?.parentElement);
+    const endpoints = this._liveSelectionEndpoints(sel);
+    if (!endpoints) return null;
+    const anchorEditable = preferredEditable || this._closestEditable(endpoints.anchorNode?.nodeType === Node.ELEMENT_NODE ? endpoints.anchorNode : endpoints.anchorNode?.parentElement);
+    const focusEditable = preferredEditable || this._closestEditable(endpoints.focusNode?.nodeType === Node.ELEMENT_NODE ? endpoints.focusNode : endpoints.focusNode?.parentElement);
     if (!anchorEditable || !focusEditable) return null;
     if (preferredEditable
-      && ((!preferredEditable.contains(sel.anchorNode) && preferredEditable !== sel.anchorNode)
-        || (!preferredEditable.contains(sel.focusNode) && preferredEditable !== sel.focusNode))) return null;
-    const start = this._sourceOffsetFromDom(anchorEditable, sel.anchorNode, sel.anchorOffset);
-    const end = this._sourceOffsetFromDom(focusEditable, sel.focusNode, sel.focusOffset);
+      && ((!preferredEditable.contains(endpoints.anchorNode) && preferredEditable !== endpoints.anchorNode)
+        || (!preferredEditable.contains(endpoints.focusNode) && preferredEditable !== endpoints.focusNode))) return null;
+    const start = this._sourceOffsetFromDom(anchorEditable, endpoints.anchorNode, endpoints.anchorOffset);
+    const end = this._sourceOffsetFromDom(focusEditable, endpoints.focusNode, endpoints.focusOffset);
     if (start == null || end == null) return null;
     return { start: Math.min(start, end), end: Math.max(start, end), direction: start <= end ? "forward" : "backward" };
   }
@@ -3675,18 +3680,99 @@ class WritemarkEditorElement extends HTMLElement {
     } catch {}
     return candidates;
   }
+  _isLiveSelectionNode(node) {
+    return Boolean(node && (
+      node === this._liveEditor
+      || this._liveEditor?.contains(node)
+    ));
+  }
+  _liveComposedSelectionRange(selection) {
+    if (!selection
+      || typeof selection.getComposedRanges !== "function"
+      || !this._isAppleWebKitRuntime()
+      || this._isIOSWebKitRuntime()) return null;
+    const attempts = [
+      () => selection.getComposedRanges(this._shadow),
+      () => selection.getComposedRanges({ shadowRoots: [this._shadow] })
+    ];
+    for (const read of attempts) {
+      let range = null;
+      try {
+        range = read()?.[0] || null;
+      } catch {
+        continue;
+      }
+      if (this._isLiveSelectionNode(range?.startContainer)
+        && this._isLiveSelectionNode(range?.endContainer)) return range;
+    }
+    return null;
+  }
+  _liveSelectionEndpoints(selection) {
+    if (!selection || selection.rangeCount === 0) return null;
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    if (this._isLiveSelectionNode(anchorNode)
+      && this._isLiveSelectionNode(focusNode)) {
+      return {
+        anchorNode,
+        anchorOffset: selection.anchorOffset,
+        focusNode,
+        focusOffset: selection.focusOffset,
+        strategy: "direct"
+      };
+    }
+    const composed = this._liveComposedSelectionRange(selection);
+    if (!composed) return null;
+    const startEditable = this._closestEditable(
+      composed.startContainer?.nodeType === Node.ELEMENT_NODE
+        ? composed.startContainer
+        : composed.startContainer?.parentElement
+    );
+    const endEditable = this._closestEditable(
+      composed.endContainer?.nodeType === Node.ELEMENT_NODE
+        ? composed.endContainer
+        : composed.endContainer?.parentElement
+    );
+    const composedStart = startEditable
+      ? this._sourceOffsetFromDom(
+        startEditable,
+        composed.startContainer,
+        composed.startOffset
+      )
+      : null;
+    const composedEnd = endEditable
+      ? this._sourceOffsetFromDom(
+        endEditable,
+        composed.endContainer,
+        composed.endOffset
+      )
+      : null;
+    const explicitDirection = selection.direction;
+    const previous = this._selection;
+    const inferredBackward = composedStart != null
+      && composedEnd != null
+      && composedStart !== composedEnd
+      && (
+        (previous?.start === previous?.end
+          && composedEnd === previous.end)
+        || (previous?.direction === "backward"
+          && composedEnd === previous.end)
+      );
+    const backward = explicitDirection === "backward"
+      || (!["forward", "backward"].includes(explicitDirection)
+        && inferredBackward);
+    return {
+      anchorNode: backward ? composed.endContainer : composed.startContainer,
+      anchorOffset: backward ? composed.endOffset : composed.startOffset,
+      focusNode: backward ? composed.startContainer : composed.endContainer,
+      focusOffset: backward ? composed.startOffset : composed.endOffset,
+      strategy: "composed-range"
+    };
+  }
   _exposedLiveSelection() {
     if (!this._liveEditor) return null;
     const candidate = this._liveSelectionCandidates().find(({ selection }) => {
-      if (!selection || selection.rangeCount === 0) return false;
-      const anchor = selection.anchorNode;
-      const focus = selection.focusNode;
-      return Boolean(
-        anchor
-        && focus
-        && (anchor === this._liveEditor || this._liveEditor.contains(anchor))
-        && (focus === this._liveEditor || this._liveEditor.contains(focus))
-      );
+      return Boolean(this._liveSelectionEndpoints(selection));
     });
     return candidate?.selection || null;
   }
@@ -3710,11 +3796,12 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _displayOffsetFromSelection(editable) {
     const sel = this._exposedLiveSelection();
-    const node = sel?.focusNode;
-    if (!sel || sel.rangeCount === 0 || !node || (node !== editable && !editable.contains(node))) return null;
+    const endpoints = this._liveSelectionEndpoints(sel);
+    const node = endpoints?.focusNode;
+    if (!endpoints || !node || (node !== editable && !editable.contains(node))) return null;
     const range = document.createRange();
     range.selectNodeContents(editable);
-    try { range.setEnd(node, sel.focusOffset); } catch { return null; }
+    try { range.setEnd(node, endpoints.focusOffset); } catch { return null; }
     return range.toString().replace(/\u00a0/g, " ").replace(/\n/g, "").length;
   }
   _sourceOffsetFromDom(editable, node, offset) {
@@ -3775,6 +3862,7 @@ class WritemarkEditorElement extends HTMLElement {
     let actual = null;
     let observed = null;
     let selectionChannel = null;
+    let selectionReadStrategy = null;
     let selectionStrategy = null;
     let selectionVerification = null;
     let opaqueDocumentWrite = null;
@@ -3831,6 +3919,11 @@ class WritemarkEditorElement extends HTMLElement {
           continue;
         }
         observed = this._readLiveSelection();
+        if (observed) {
+          selectionReadStrategy = this._liveSelectionEndpoints(
+            this._exposedLiveSelection()
+          )?.strategy || null;
+        }
         if (!observed) {
           if (strictDocumentRestore
             && candidate.channel === "document"
@@ -3919,6 +4012,7 @@ class WritemarkEditorElement extends HTMLElement {
       deferredAttempt,
       focusRequired,
       selectionChannel,
+      selectionReadStrategy,
       selectionStrategy,
       selectionVerification
     });
@@ -4030,6 +4124,10 @@ class WritemarkEditorElement extends HTMLElement {
     }
     const activeEditable = this._activeEditableFromEvent(event);
     const activeCell = activeEditable?.dataset.editable === "cell" ? activeEditable : null;
+    const opaqueDesktopSafari = !this._isSourceActive()
+      && this._isAppleWebKitRuntime()
+      && !this._isIOSWebKitRuntime()
+      && !this._readLiveSelection();
     if (!this._isSourceActive() && NAVIGATION_KEYS.has(event.key)) this._ignoreSelectionChangeCount = 0;
     if (!this._isSourceActive() && this._value.length === 0 && (event.key === "Backspace" || event.key === "Delete")) {
       event.preventDefault();
@@ -4039,12 +4137,26 @@ class WritemarkEditorElement extends HTMLElement {
 
     if (mod && !event.altKey && event.key.toLowerCase() === "z") {
       if (this.readonly || this.disabled) return;
+      if (opaqueDesktopSafari) {
+        this._debug(1, "live.key.browser-owned", {
+          key: event.key,
+          reason: "opaque-desktop-safari-selection"
+        });
+        return;
+      }
       event.preventDefault();
       event.shiftKey ? this._redo() : this._undo();
       return;
     }
 
     if (mod && !event.altKey && event.key.toLowerCase() === "a" && !this._isSourceActive()) {
+      if (opaqueDesktopSafari) {
+        this._debug(1, "live.key.browser-owned", {
+          key: event.key,
+          reason: "opaque-desktop-safari-selection"
+        });
+        return;
+      }
       event.preventDefault();
       this._expandSelection();
       return;
@@ -4056,6 +4168,20 @@ class WritemarkEditorElement extends HTMLElement {
       if (event.key === "PageDown") { event.preventDefault(); this._moveCompletion(5); return; }
       if (event.key === "PageUp") { event.preventDefault(); this._moveCompletion(-5); return; }
       if (event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) { event.preventDefault(); this._runAction("completion.accept", undefined, { source: "keyboard", apply: true }); return; }
+    }
+
+    if (opaqueDesktopSafari && (
+      NAVIGATION_KEYS.has(event.key)
+      || ["Enter", "Backspace", "Delete", " ", "Spacebar", "Tab"].includes(event.key)
+      || (mod && !event.altKey && ["b", "e", "i", "k"].includes(event.key.toLowerCase()))
+      || (mod && event.shiftKey && !event.altKey && event.key.toLowerCase() === "x")
+      || (mod && event.altKey && /^[1-6]$/.test(event.key))
+    )) {
+      this._debug(1, "live.key.browser-owned", {
+        key: event.key,
+        reason: "opaque-desktop-safari-selection"
+      });
+      return;
     }
 
     if (this._maybeHandleTableLineBoundaryKey(event, activeCell)) return;
@@ -4163,7 +4289,8 @@ class WritemarkEditorElement extends HTMLElement {
   _activeEditableFromSelection() {
     const sel = this._exposedLiveSelection();
     if (sel) {
-      const node = sel.focusNode || sel.anchorNode;
+      const endpoints = this._liveSelectionEndpoints(sel);
+      const node = endpoints?.focusNode || endpoints?.anchorNode;
       const editable = this._closestEditable(node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement);
       if (editable) return editable;
     }

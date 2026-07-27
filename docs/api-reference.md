@@ -1,6 +1,6 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.4.1. The default `live` mode
+This page is the lookup reference for Writemark 1.5.0. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
@@ -339,10 +339,14 @@ editor.addEventListener('md-debug', event => {
 
 Level `1` reports live `beforeinput`/`input` decisions and source-backed
 deletions. Level `2` adds selection changes, focus requirements, and requested
-versus restored source ranges. Payloads include offsets and lengths but not the
-Markdown body. Set `editor.debugLog = true` or add `debug-log` only when the
-same payload should also be sent to `console.debug`. The component does not
-retain a diagnostic history; the host owns storage and transport.
+versus restored source ranges. Selection diagnostics can also include
+`selectionReadStrategy` (`direct` or `composed-range`) and
+`selectionVerification` (`read-back` or `write-only`) so Safari selection
+behavior can be distinguished from ordinary document selection. Payloads
+include offsets and lengths but not the Markdown body. Set
+`editor.debugLog = true` or add `debug-log` only when the same payload should
+also be sent to `console.debug`. The component does not retain a diagnostic
+history; the host owns storage and transport.
 
 ## Form behavior
 

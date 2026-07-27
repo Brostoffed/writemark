@@ -373,11 +373,13 @@ editor.debugLog = true;
 
 Level `1` reports input decisions and source-backed deletion. Level `2` adds
 selection and focus restoration details. Payloads contain source offsets and
-lengths, not the Markdown body. Writemark does not store diagnostics; the host
-decides whether to display, retain, or transmit each `md-debug` event. The
-published demo buffers enabled debug events until **Clear log** and provides a
-**Copy debug info** button, including a fallback for iOS Safari on the HTTP LAN
-test URL.
+lengths, not the Markdown body. Selection events can identify whether offsets
+came from a direct selection or a composed shadow-DOM range, which is useful
+when diagnosing Safari. Writemark does not store diagnostics; the host decides
+whether to display, retain, or transmit each `md-debug` event. The published
+demo buffers enabled debug events until **Clear log** and provides a **Copy
+debug info** button, including a fallback for iOS Safari on the HTTP LAN test
+URL.
 
 ## Form usage
 
@@ -492,7 +494,7 @@ complete input contract in an iPhone 13 Mobile Safari context. Playwright no
 longer provides a current WebKit build for macOS 14 and older, so the local
 config omits those unavailable WebKit projects on those hosts.
 
-The current desktop suite registers 462 independent cases per browser project,
+The current desktop suite registers 465 independent cases per browser project,
 including every one of the 230 checks migrated from the retired page-hosted
 suite. It also includes a browser input and synthetic IME-composition contract,
 a hostile Markdown corpus, property-based parser and sanitizer checks, and

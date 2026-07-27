@@ -5,7 +5,7 @@ browser lifecycle, fixture isolation, assertions, retries, reporting, traces,
 screenshots, and video. There is no page-hosted runner, wrapper spec, shared
 serial iterator, or browser-side pass/fail protocol.
 
-The current desktop suite registers 462 independent cases per browser project,
+The current desktop suite registers 465 independent cases per browser project,
 including every one of the 230 checks migrated from the previous suite and a
 dedicated input/composition contract plus security coverage for hostile inputs,
 generated invariants, and CommonMark differential behavior.

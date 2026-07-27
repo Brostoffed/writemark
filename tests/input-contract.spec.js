@@ -208,7 +208,9 @@ async function installStaleIOSShadowSelection(editor, {
   deferDocumentSelection = false,
   desktopSafari = false,
   opaqueDocumentSelection = false,
-  unavailableDocumentSelection = false
+  unavailableComposedSelection = false,
+  unavailableDocumentSelection = false,
+  unavailableSelectionDirection = false
 } = {}) {
   await editor.host.evaluate((element, options) => {
     const nativeGetSelection = globalThis.getSelection?.bind(globalThis);
@@ -259,6 +261,34 @@ async function installStaleIOSShadowSelection(editor, {
       get focusOffset() {
         return options.opaqueDocumentSelection ? 0 : focusOffset;
       },
+      get direction() {
+        if (options.unavailableSelectionDirection) return undefined;
+        return nativeLiveSelection?.direction || "forward";
+      },
+      getComposedRanges: (...args) => {
+        if (!options.desktopSafari
+          || options.unavailableComposedSelection) return [];
+        const shadowRootProvided = args.includes(element.shadowRoot)
+          || args.some(argument =>
+            argument?.shadowRoots?.includes?.(element.shadowRoot)
+          );
+        if (!shadowRootProvided || rangeCount === 0) return [];
+        let range = null;
+        try {
+          range = nativeLiveSelection?.rangeCount
+            ? nativeLiveSelection.getRangeAt(0)
+            : null;
+        } catch {}
+        const nativeRangeIsLive = range
+          && element._liveEditor.contains(range.startContainer)
+          && element._liveEditor.contains(range.endContainer);
+        return [{
+          endContainer: nativeRangeIsLive ? range.endContainer : focusNode,
+          endOffset: nativeRangeIsLive ? range.endOffset : focusOffset,
+          startContainer: nativeRangeIsLive ? range.startContainer : anchorNode,
+          startOffset: nativeRangeIsLive ? range.startOffset : anchorOffset
+        }];
+      },
       get rangeCount() { return rangeCount; },
       removeAllRanges: () => applyWhenReady(() => {
         anchorNode = null;
@@ -275,6 +305,11 @@ async function installStaleIOSShadowSelection(editor, {
       ) => {
         selectionWriteCount += 1;
         applyWhenReady(() => {
+          anchorNode = nextAnchorNode;
+          anchorOffset = nextAnchorOffset;
+          focusNode = nextFocusNode;
+          focusOffset = nextFocusOffset;
+          rangeCount = 1;
           if (options.opaqueDocumentSelection) {
             nativeLiveSelection?.setBaseAndExtent?.(
               nextAnchorNode,
@@ -284,11 +319,6 @@ async function installStaleIOSShadowSelection(editor, {
             );
             return;
           }
-          anchorNode = nextAnchorNode;
-          anchorOffset = nextAnchorOffset;
-          focusNode = nextFocusNode;
-          focusOffset = nextFocusOffset;
-          rangeCount = 1;
         });
       },
       setPosition: (node, offset) => applyWhenReady(() => {
@@ -329,7 +359,9 @@ async function installStaleIOSShadowSelection(editor, {
     deferDocumentSelection,
     desktopSafari,
     opaqueDocumentSelection,
-    unavailableDocumentSelection
+    unavailableComposedSelection,
+    unavailableDocumentSelection,
+    unavailableSelectionDirection
   });
 }
 
@@ -877,7 +909,10 @@ test.describe("live input contract", () => {
     );
     expect(restored).toMatchObject({
       liveContentEditable: "true",
-      liveSelection: null,
+      liveSelection: {
+        end: caret,
+        start: caret
+      },
       liveSelectionAPI: true,
       modelSelection: {
         end: caret,
@@ -942,6 +977,279 @@ test.describe("live input contract", () => {
       event.phase === "live.selection.restore-fallback"
       || event.phase === "live.selection.fallback-enabled"
     )).toBe(false);
+  });
+
+  test("desktop Safari reads an opaque shadow caret through a composed range", async ({ editor }) => {
+    const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
+    const blankStart = value.indexOf("\n") + 1;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(blankStart);
+    await installStaleIOSShadowSelection(editor, {
+      desktopSafari: true,
+      opaqueDocumentSelection: true
+    });
+
+    const state = await editor.host.evaluate(element => ({
+      active: element._debugEditableInfo(
+        element._activeEditableFromSelection()
+      ),
+      exposed: Boolean(element._exposedLiveSelection()),
+      selection: element._readLiveSelection()
+    }));
+    await removeStaleIOSShadowSelection(editor);
+
+    expect(state).toEqual({
+      active: {
+        editable: "line",
+        from: blankStart,
+        kind: "blank",
+        to: blankStart
+      },
+      exposed: true,
+      selection: {
+        direction: "forward",
+        end: blankStart,
+        start: blankStart
+      }
+    });
+  });
+
+  test("desktop Safari physical arrow and line-boundary matrix follows the actual row", async ({ editor, page }) => {
+    const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
+    const firstLineEnd = value.indexOf("\n");
+    const blankStart = value.indexOf("\n") + 1;
+    const formattingStart = value.indexOf("## Formatting");
+    const formattingEnd = value.indexOf("\n", formattingStart);
+    const paragraphStart = formattingEnd + 1;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(blankStart);
+    await installStaleIOSShadowSelection(editor, {
+      desktopSafari: true,
+      opaqueDocumentSelection: true,
+      unavailableSelectionDirection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    const scenarios = [
+      {
+        expected: blankStart,
+        key: "Meta+ArrowRight",
+        selection: blankStart
+      },
+      {
+        expected: blankStart,
+        key: "Meta+ArrowLeft",
+        selection: blankStart
+      },
+      {
+        expected: formattingStart,
+        key: "ArrowRight",
+        selection: blankStart
+      },
+      {
+        expected: firstLineEnd,
+        key: "ArrowLeft",
+        selection: blankStart
+      },
+      {
+        expected: formattingStart,
+        key: "ArrowDown",
+        selection: blankStart
+      },
+      {
+        expected: 0,
+        key: "ArrowUp",
+        selection: blankStart
+      },
+      {
+        expected: formattingStart,
+        key: "Home",
+        selection: formattingStart + 4
+      },
+      {
+        expected: formattingEnd,
+        key: "End",
+        selection: formattingStart + 4
+      },
+      {
+        expected: formattingStart,
+        key: "Meta+ArrowLeft",
+        selection: formattingStart + 4
+      },
+      {
+        expected: formattingEnd,
+        key: "Meta+ArrowRight",
+        selection: formattingStart + 4
+      },
+      {
+        expected: blankStart,
+        key: "ArrowLeft",
+        selection: formattingStart
+      },
+      {
+        expected: paragraphStart,
+        key: "ArrowDown",
+        selection: formattingStart
+      }
+    ];
+    for (const scenario of scenarios) {
+      await test.step(
+        `${scenario.key} from ${scenario.selection} moves to ${scenario.expected}`,
+        async () => {
+          await editor.setSelection(scenario.selection);
+          await page.keyboard.press(scenario.key);
+          expect(await editor.selection()).toEqual({
+            end: scenario.expected,
+            start: scenario.expected
+          });
+        }
+      );
+    }
+
+    await editor.setSelection(blankStart);
+    await page.keyboard.press("Shift+ArrowDown");
+    expect(await editor.selection()).toEqual({
+      end: formattingStart,
+      start: blankStart
+    });
+
+    const inlineCaret = formattingStart + 6;
+    await editor.setSelection(inlineCaret);
+    await page.keyboard.press("Shift+ArrowLeft");
+    await page.keyboard.press("Shift+ArrowLeft");
+    expect(await editor.selection()).toEqual({
+      end: inlineCaret,
+      start: inlineCaret - 2
+    });
+    expect(await editor.host.evaluate(element =>
+      element._selection.direction
+    )).toBe("backward");
+
+    await page.keyboard.press("Shift+ArrowRight");
+    expect(await editor.selection()).toEqual({
+      end: inlineCaret,
+      start: inlineCaret - 1
+    });
+    expect(await editor.host.evaluate(element =>
+      element._selection.direction
+    )).toBe("backward");
+
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+    expect(restored.liveSelection).toMatchObject({
+      end: inlineCaret,
+      start: inlineCaret - 1
+    });
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      phase: "live.key.browser-owned"
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.selection.restored",
+      selectionReadStrategy: "composed-range",
+      selectionVerification: "read-back"
+    }));
+  });
+
+  test("desktop Safari Enter at Formatting inserts there instead of at document start", async ({ editor, page }) => {
+    const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
+    const formattingStart = value.indexOf("## Formatting");
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(formattingStart);
+    await installStaleIOSShadowSelection(editor, {
+      desktopSafari: true,
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("XY");
+    await editor.settle();
+
+    expect(await editor.value()).toBe(
+      "# Live inline Markdown editor\n\n\nXY## Formatting\nParagraph"
+    );
+    expect(await editor.selection()).toEqual({
+      end: formattingStart + 3,
+      start: formattingStart + 3
+    });
+    expect(await editor.value()).not.toMatch(/^\n/);
+
+    await page.keyboard.press("ArrowLeft");
+    expect(await editor.selection()).toEqual({
+      end: formattingStart + 2,
+      start: formattingStart + 2
+    });
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("Z");
+    await editor.settle();
+    expect(await editor.value()).toBe(
+      "# Live inline Markdown editor\n\n\nZY## Formatting\nParagraph"
+    );
+    expect(await editor.selection()).toEqual({
+      end: formattingStart + 2,
+      start: formattingStart + 2
+    });
+
+    const diagnostics = await editor.events("md-debug");
+    await removeStaleIOSShadowSelection(editor);
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      phase: "live.key.browser-owned"
+    }));
+  });
+
+  test("desktop Safari defers Enter to beforeinput when no caret range is readable", async ({ editor, page }) => {
+    const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
+    const formattingStart = value.indexOf("## Formatting");
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(formattingStart);
+    await installStaleIOSShadowSelection(editor, {
+      desktopSafari: true,
+      opaqueDocumentSelection: true,
+      unavailableComposedSelection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    await page.keyboard.press("Enter");
+    await editor.settle();
+
+    expect(await editor.value()).toBe(
+      "# Live inline Markdown editor\n\n\n## Formatting\nParagraph"
+    );
+    expect(await editor.value()).not.toMatch(/^\n/);
+    const diagnostics = await editor.events("md-debug");
+    await removeStaleIOSShadowSelection(editor);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      key: "Enter",
+      phase: "live.key.browser-owned",
+      reason: "opaque-desktop-safari-selection"
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      inputType: "insertParagraph",
+      phase: "live.beforeinput",
+      targetSelection: {
+        direction: "forward",
+        end: formattingStart,
+        start: formattingStart
+      }
+    }));
   });
 
   test("desktop Safari real keyboard creates thematic breaks and fenced code blocks", async ({ editor, page }) => {
@@ -1117,18 +1425,29 @@ test.describe("live input contract", () => {
     await removeStaleIOSShadowSelection(editor);
 
     expect(commandState, JSON.stringify(commandState, null, 2)).toMatchObject({
-      inferredRange: { end: source.length, start: 0 },
       selectionTextLength: expect.any(Number)
     });
+    if (runtime.desktopSafari) {
+      expect([
+        null,
+        { end: source.length, start: 0 }
+      ]).toContainEqual(commandState.inferredRange);
+    } else {
+      expect(commandState.inferredRange).toEqual({
+        end: source.length,
+        start: 0
+      });
+    }
     expect(commandState.selectionTextLength).toBeGreaterThan(0);
     expect(copyEvents).toEqual([
       expect.objectContaining({
         markdown: source
       })
     ]);
-    expect(diagnostics).toContainEqual(expect.objectContaining({
-      phase: "live.clipboard.full-selection-inferred"
-    }));
+    const inferredSelectionLogged = diagnostics.some(event =>
+      event.phase === "live.clipboard.full-selection-inferred"
+    );
+    expect(inferredSelectionLogged).toBe(Boolean(commandState.inferredRange));
     });
   }
 

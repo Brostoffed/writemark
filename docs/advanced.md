@@ -340,7 +340,8 @@ editor.addEventListener('md-debug', event => {
 
 Level `1` traces input events and whether a deletion was browser-owned or
 source-backed. Level `2` adds selection changes, editing-host focus decisions,
-and requested/applied source ranges. Diagnostic payloads do not include the
+requested/applied source ranges, and whether a selection was read directly or
+through a composed shadow-DOM range. Diagnostic payloads do not include the
 Markdown value. Set `editor.debugLog = true` (or add the `debug-log` boolean
 attribute) to mirror the same payload to `console.debug`. Storage and transport
 remain host responsibilities. The published demo shows one host implementation:
@@ -531,7 +532,7 @@ Run the Chromium suite in a visible browser with:
 npm run test:browser:headed
 ```
 
-The current desktop suite registers 462 independent cases per browser project. It
+The current desktop suite registers 465 independent cases per browser project. It
 covers the public component contract, live and source editing, keyboard
 shortcuts, undo/redo, tasks, completion providers, tables, forms, validation,
 multiple instances, hostile rendering, property-based parser and sanitizer
