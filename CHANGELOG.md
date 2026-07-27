@@ -9,12 +9,18 @@
   characters or inserting into the wrong rendered row, table cell, or fence.
 - Fixed macOS Command+Arrow line-boundary handling when Safari contracts run on
   a non-macOS CI host.
+- Kept unfinished backtick and tilde fences source-editable while language
+  completion is open, so later headings, tables, paragraphs, and code blocks
+  cannot be swallowed before the closing fence is inserted.
+- Removed disabled editor hosts from Safari's sequential tab order and restored
+  any prior host tabindex when the editor is enabled again.
 - Preserved canonical IME caret offsets across decorated inline Markdown and
   escaped table-cell content.
 - Hardened the Playwright mobile-WebKit contract for opaque native selection
   endpoints while keeping desktop Safari and iOS behavior independently tested.
 - Added a macOS WebKit CI gate and capability-based cross-block selection
-  coverage instead of reporting desktop-only contracts as mobile skips.
+  coverage, scoped desktop-Safari contracts to real WebKit selection and
+  physical keyboard behavior, and removed mobile skip reporting.
 
 ## 1.5.0 - 2026-07-27
 

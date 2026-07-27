@@ -216,6 +216,9 @@ async function installStaleIOSShadowSelection(editor, {
   unavailableDocumentSelection = false,
   unavailableSelectionDirection = false
 } = {}) {
+  // Drain any selection restore requested by setup before counting writes
+  // caused by the action under test.
+  await editor.settle();
   await editor.host.evaluate((element, options) => {
     const nativeGetSelection = globalThis.getSelection?.bind(globalThis);
     const nativeLiveSelection = element._exposedLiveSelection();
@@ -1046,11 +1049,6 @@ test.describe("live input contract", () => {
       value
     });
     await editor.setSelection(blankStart);
-    await installStaleIOSShadowSelection(editor, {
-      desktopSafari: true,
-      opaqueDocumentSelection: true,
-      unavailableSelectionDirection: true
-    });
     await editor.host.evaluate(() => {
       window.testEvents.length = 0;
     });
@@ -1160,19 +1158,25 @@ test.describe("live input contract", () => {
     )).toBe("backward");
 
     const diagnostics = await editor.events("md-debug");
-    const restored = await removeStaleIOSShadowSelection(editor);
-    expect(restored.liveSelection).toMatchObject({
+    const restored = await editor.host.evaluate(element => ({
+      liveSelection: element._readLiveSelection(),
+      modelSelection: { ...element._selection }
+    }));
+    expect(restored.liveSelection || restored.modelSelection).toMatchObject({
       end: inlineCaret,
       start: inlineCaret - 1
     });
     expect(diagnostics).not.toContainEqual(expect.objectContaining({
       phase: "live.key.browser-owned"
     }));
-    expect(diagnostics).toContainEqual(expect.objectContaining({
-      phase: "live.selection.restored",
-      selectionReadStrategy: "composed-range",
-      selectionVerification: "read-back"
-    }));
+    const readBackRestore = diagnostics.find(event =>
+      event.phase === "live.selection.restored"
+      && event.selectionVerification === "read-back"
+    );
+    expect(readBackRestore).toBeTruthy();
+    expect(["composed-range", "direct"]).toContain(
+      readBackRestore.selectionReadStrategy
+    );
   });
 
   test("desktop Safari Enter at Formatting inserts there instead of at document start @desktop-safari", async ({ editor, page }) => {
@@ -1183,10 +1187,6 @@ test.describe("live input contract", () => {
       value
     });
     await editor.setSelection(formattingStart);
-    await installStaleIOSShadowSelection(editor, {
-      desktopSafari: true,
-      opaqueDocumentSelection: true
-    });
     await editor.host.evaluate(() => {
       window.testEvents.length = 0;
     });
@@ -1221,7 +1221,6 @@ test.describe("live input contract", () => {
     });
 
     const diagnostics = await editor.events("md-debug");
-    await removeStaleIOSShadowSelection(editor);
     expect(diagnostics).not.toContainEqual(expect.objectContaining({
       phase: "live.key.browser-owned"
     }));
@@ -1393,10 +1392,10 @@ test.describe("live input contract", () => {
   });
 
   for (const runtime of [
-    { desktopSafari: false, label: "iOS" },
+    { desktopSafari: false, label: "opaque iOS" },
     { desktopSafari: true, label: "desktop Safari" }
   ]) {
-    test(`browser Copy after opaque ${runtime.label} Select All writes canonical Markdown${runtime.desktopSafari ? " @desktop-safari" : ""}`, async ({ editor }) => {
+    test(`browser Copy after ${runtime.label} Select All writes canonical Markdown${runtime.desktopSafari ? " @desktop-safari" : ""}`, async ({ editor }) => {
       const source = [
       "# Heading",
       "",
@@ -1418,10 +1417,11 @@ test.describe("live input contract", () => {
       value: source
     });
     await editor.setSelection(blankStart);
-    await installStaleIOSShadowSelection(editor, {
-      desktopSafari: runtime.desktopSafari,
-      opaqueDocumentSelection: true
-    });
+    if (!runtime.desktopSafari) {
+      await installStaleIOSShadowSelection(editor, {
+        opaqueDocumentSelection: true
+      });
+    }
     const commandState = await editor.host.evaluate((element, desktopSafari) => {
       window.testEvents.length = 0;
       const selectAll = document.execCommand("selectAll");
@@ -1443,7 +1443,9 @@ test.describe("live input contract", () => {
     await editor.settle();
     const copyEvents = await editor.events("md-copy");
     const diagnostics = await editor.events("md-debug");
-    await removeStaleIOSShadowSelection(editor);
+    if (!runtime.desktopSafari) {
+      await removeStaleIOSShadowSelection(editor);
+    }
 
     expect(commandState, JSON.stringify(commandState, null, 2)).toMatchObject({
       selectionTextLength: expect.any(Number)

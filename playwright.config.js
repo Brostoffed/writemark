@@ -13,10 +13,12 @@ const frozenLocalWebKit = darwinMajor != null
 const projects = [
   {
     name: "chromium",
+    grepInvert: /@desktop-safari/,
     use: { ...devices["Desktop Chrome"] }
   },
   {
     name: "firefox",
+    grepInvert: /@desktop-safari/,
     use: { ...devices["Desktop Firefox"] }
   }
 ];

@@ -132,10 +132,16 @@ test.describe("real editing workflows", () => {
       element.readonly = false;
       element.disabled = true;
     });
+    await expect(editor.host).toHaveAttribute("tabindex", "-1");
     await page.locator("#before-editor").focus();
     await page.keyboard.press("Tab");
     await expect(page.locator("#after-editor")).toBeFocused();
     expect(await editor.value()).toBe("locked");
+
+    await editor.host.evaluate(element => {
+      element.disabled = false;
+    });
+    await expect(editor.host).not.toHaveAttribute("tabindex");
   });
 
   const sectionDocument = [

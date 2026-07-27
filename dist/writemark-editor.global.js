@@ -1295,6 +1295,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._selection = { start: 0, end: 0, direction: "none" };
     this._dirty = false;
     this._formDisabled = false;
+    this._hostTabIndexBeforeDisable = undefined;
     this._hasConnected = false;
     this._isComposing = false;
     this._compositionSnapshot = null;
@@ -1719,6 +1720,17 @@ class WritemarkEditorElement extends HTMLElement {
 
   _syncAttributesToControls() {
     if (!this._sourceTextarea) return;
+    if (this.disabled) {
+      if (this._hostTabIndexBeforeDisable === undefined) {
+        this._hostTabIndexBeforeDisable = this.getAttribute("tabindex");
+      }
+      this.tabIndex = -1;
+    } else if (this._hostTabIndexBeforeDisable !== undefined) {
+      const previousTabIndex = this._hostTabIndexBeforeDisable;
+      this._hostTabIndexBeforeDisable = undefined;
+      if (previousTabIndex == null) this.removeAttribute("tabindex");
+      else this.setAttribute("tabindex", previousTabIndex);
+    }
     this._label.textContent = this.label; this._label.hidden = !this.label;
     this._sourceTextarea.placeholder = this.placeholder;
     this._sourceTextarea.disabled = this.disabled;
@@ -2598,6 +2610,8 @@ class WritemarkEditorElement extends HTMLElement {
       const nextBlock = parseBlocks(nextValue, this._parseOptions())
         .find(block => nextCursor >= block.from
           && nextCursor <= Math.max(block.to, block.from));
+      if (nextBlock?.type === "code-fence"
+        && currentBlock?.type !== "code-fence") return false;
       if (!LIVE_STRUCTURAL_BLOCK_TYPES.has(nextBlock?.type)
         || currentBlock?.type === nextBlock.type) return false;
       result = insertionTransaction(
@@ -5099,7 +5113,7 @@ class WritemarkEditorElement extends HTMLElement {
       "completion"
     ), `Language ${item.label}.`);
   }
-  _matchCodeLanguage(ctx) { if (ctx.block.kind === "fenced-code") return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(before); if (!m || LANGUAGES.includes(m[3].toLowerCase())) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: m[2], sequence: m[2], indent: m[1], query: m[3], providerId: "code-language" }; }
+  _matchCodeLanguage(ctx) { if (ctx.block.kind === "fenced-code" && !this._isUnclosedFenceOpeningContext(ctx)) return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(before); if (!m || LANGUAGES.includes(m[3].toLowerCase())) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: m[2], sequence: m[2], indent: m[1], query: m[3], providerId: "code-language" }; }
 
   _scheduleCompletionUpdate({ immediate = false } = {}) {
     if (this.disabled || this.readonly || this._isComposing) return;
