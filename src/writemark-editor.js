@@ -2483,9 +2483,13 @@ class WritemarkEditorElement extends HTMLElement {
       this._beforeInputTarget = null;
       return;
     }
+    const preserveNativeFenceInsert = inputType === "insertText"
+      && event.data != null
+      && this._shouldPreserveNativeFenceInsert(this._getContext(), event.data);
     if (!this._isSourceActive() && !this.disabled && !this.readonly
       && this._isAppleWebKitRuntime() && !this._isIOSWebKitRuntime()
       && event?.isTrusted && event?.cancelable
+      && !preserveNativeFenceInsert
       && (inputType === "insertText" || inputType === "insertReplacementText")
       && event.data != null
       && this._applyFallbackBeforeInput(event, inputTarget)) {
@@ -2593,6 +2597,7 @@ class WritemarkEditorElement extends HTMLElement {
         text
       };
     }
+    if (this._shouldPreserveNativeFenceInsert(ctx, text)) return false;
     let actionId = "editor.replaceSelection";
     let result = text === " " ? this._markdownShortcut(ctx) : null;
     let strategy = "markdown-shortcut";
@@ -2621,6 +2626,25 @@ class WritemarkEditorElement extends HTMLElement {
       actionId = "editor.markdownShortcut";
     }
     return { actionId, result, strategy, text };
+  }
+  _shouldPreserveNativeFenceInsert(ctx, input) {
+    const text = normalizeLineEndings(input);
+    if (!ctx || !text || text.includes("\n")) return false;
+    if (this._isUnclosedFenceOpeningContext(ctx)) return true;
+    const nextValue = applyTextChanges(ctx.value, [{
+      from: ctx.selectionStart,
+      to: ctx.selectionEnd,
+      insert: text
+    }]);
+    const nextCursor = ctx.selectionStart + text.length;
+    const currentBlock = parseBlocks(ctx.value, this._parseOptions())
+      .find(block => ctx.selectionStart >= block.from
+        && ctx.selectionStart <= Math.max(block.to, block.from));
+    const nextBlock = parseBlocks(nextValue, this._parseOptions())
+      .find(block => nextCursor >= block.from
+        && nextCursor <= Math.max(block.to, block.from));
+    return nextBlock?.type === "code-fence"
+      && currentBlock?.type !== "code-fence";
   }
   _applyLiveMarkdownInsertAfterInput(inputType, previousValue, nextValue) {
     if (!["insertText", "insertReplacementText"].includes(inputType)

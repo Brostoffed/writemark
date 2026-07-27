@@ -269,6 +269,35 @@ test.describe("completion UI", () => {
     await expect(editor.host.locator(".md-heading")).toHaveText("## Table");
   });
 
+  test("desktop Safari fallback preserves a pending fence before following content", async ({ editor, page }) => {
+    const following = "Following paragraph.";
+    await editor.reset({ value: `\n${following}` });
+    await editor.setSelection(0);
+    await editor.host.evaluate(element => {
+      element._testOriginalAppleWebKitRuntime = element._isAppleWebKitRuntime;
+      element._testOriginalIOSWebKitRuntime = element._isIOSWebKitRuntime;
+      element._isAppleWebKitRuntime = () => true;
+      element._isIOSWebKitRuntime = () => false;
+    });
+
+    await page.keyboard.type("```py");
+
+    await expect(editor.completion).toBeVisible();
+    expect(await editor.value()).toBe(`\`\`\`py\n${following}`);
+    await expect(editor.host.locator(".md-code-block")).toHaveCount(0);
+    await expect(editor.host.locator(".md-line")).toContainText([
+      "```py",
+      following
+    ]);
+
+    await editor.host.evaluate(element => {
+      element._isAppleWebKitRuntime = element._testOriginalAppleWebKitRuntime;
+      element._isIOSWebKitRuntime = element._testOriginalIOSWebKitRuntime;
+      delete element._testOriginalAppleWebKitRuntime;
+      delete element._testOriginalIOSWebKitRuntime;
+    });
+  });
+
   test("does not offer languages from a closing code fence", async ({ editor }) => {
     const markdown = "```\nconst x = 1;\n```";
     await editor.reset({ value: markdown });
