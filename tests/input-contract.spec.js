@@ -61,18 +61,24 @@ async function dispatchLiveBeforeInput(editor, {
   }, { data, forceFallback, inputType, isComposing, targetRange });
 }
 
-async function applyLiveDomInput(editor, {
-  data,
-  inputType = "insertText"
-}) {
+async function applyLiveDomInput(editor, options) {
+  const {
+    data,
+    inputType = "insertText"
+  } = options;
+  const beforeInputData = Object.hasOwn(options, "beforeInputData")
+    ? options.beforeInputData
+    : data;
   return editor.host.evaluate((element, options) => {
     element.focus();
-    const target = element._activeEditableFromSelection()
-      || element.shadowRoot.querySelector("[data-editable]");
     const start = element.selectionStart;
     const end = element.selectionEnd;
     const startPosition = element._domPositionFromSource(start);
     const endPosition = element._domPositionFromSource(end);
+    const target = startPosition?.editable === endPosition?.editable
+      ? startPosition.editable
+      : element._activeEditableFromSelection()
+        || element.shadowRoot.querySelector("[data-editable]");
     const ranges = startPosition?.editable === target && endPosition?.editable === target
       ? [{
           endContainer: endPosition.node,
@@ -84,7 +90,7 @@ async function applyLiveDomInput(editor, {
     const beforeInput = new InputEvent("beforeinput", {
       bubbles: true,
       cancelable: true,
-      data: options.data,
+      data: options.beforeInputData,
       inputType: options.inputType
     });
     Object.defineProperty(beforeInput, "getTargetRanges", {
@@ -94,11 +100,15 @@ async function applyLiveDomInput(editor, {
 
     let inputDispatched = false;
     if (!beforeInput.defaultPrevented) {
-      const nextValue = element.value.slice(0, start)
+      const targetFrom = Number(target.dataset.from);
+      const targetText = element._plainText(target);
+      const localStart = Math.max(0, start - targetFrom);
+      const localEnd = Math.max(localStart, end - targetFrom);
+      const nextTargetText = targetText.slice(0, localStart)
         + options.data
-        + element.value.slice(end);
-      const cursor = start + options.data.length;
-      target.textContent = nextValue;
+        + targetText.slice(localEnd);
+      const cursor = localStart + options.data.length;
+      target.textContent = nextTargetText;
       const position = element._textPositionInElement(target, cursor);
       const range = document.createRange();
       range.setStart(position.node, position.offset);
@@ -119,7 +129,7 @@ async function applyLiveDomInput(editor, {
       beforePrevented: beforeInput.defaultPrevented,
       inputDispatched
     };
-  }, { data, inputType });
+  }, { beforeInputData, data, inputType });
 }
 
 async function runNativeSelectAll(editor, offset) {
@@ -1180,6 +1190,485 @@ test.describe("live input contract", () => {
     expect(await editor.selection()).toEqual({ start: 8, end: 8 });
   });
 
+  for (const scenario of [
+    {
+      kind: "heading",
+      marker: "##",
+      rendered: ".md-heading",
+      value: "## "
+    },
+    {
+      kind: "bullet list",
+      marker: "-",
+      rendered: '[data-kind="bullet-list-item"]',
+      value: "- "
+    },
+    {
+      kind: "ordered list",
+      marker: "1.",
+      rendered: '[data-kind="ordered-list-item"]',
+      value: "1. "
+    },
+    {
+      kind: "blockquote",
+      marker: ">",
+      rendered: '[data-kind="blockquote"]',
+      value: "> "
+    },
+    {
+      kind: "unchecked task",
+      marker: "[]",
+      rendered: '[data-kind="task-list-item"]',
+      value: "- [ ] "
+    },
+    {
+      kind: "checked task",
+      marker: "[x]",
+      rendered: '[data-kind="task-list-item"]',
+      value: "- [x] "
+    }
+  ]) {
+    test(`software-keyboard Space creates a ${scenario.kind}`, async ({ editor }) => {
+      await editor.reset({ value: scenario.marker });
+      await editor.setSelection(scenario.marker.length);
+
+      const result = await dispatchLiveBeforeInput(editor, {
+        data: " ",
+        inputType: "insertText",
+        targetRange: [scenario.marker.length, scenario.marker.length]
+      });
+
+      expect(result.defaultPrevented).toBe(true);
+      expect(await editor.value()).toBe(scenario.value);
+      expect(await editor.selection()).toEqual({
+        start: scenario.value.length,
+        end: scenario.value.length
+      });
+      await expect(editor.host.locator(scenario.rendered)).toBeVisible();
+      expect(await editor.events("md-action")).toContainEqual(
+        expect.objectContaining({
+          actionId: "editor.markdownShortcut",
+          source: "user"
+        })
+      );
+    });
+  }
+
+  test("software-keyboard input immediately creates a thematic break", async ({ editor }) => {
+    await editor.reset({ value: "--" });
+    await editor.setSelection(2);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      data: "-",
+      inputType: "insertText",
+      targetRange: [2, 2]
+    });
+
+    expect(result.defaultPrevented).toBe(true);
+    expect(await editor.value()).toBe("---");
+    expect(await editor.selection()).toEqual({ start: 3, end: 3 });
+    await expect(editor.host.locator(".md-hr-line")).toBeVisible();
+    await expect(editor.host.locator('[data-editable="virtual-hr-after"]'))
+      .toBeVisible();
+  });
+
+  for (const smartDash of ["—", "–"]) {
+    test(`software-keyboard input recovers a thematic break after ${smartDash} substitution`, async ({ editor }) => {
+      await editor.reset({ value: smartDash });
+      await editor.setSelection(smartDash.length);
+
+      const result = await dispatchLiveBeforeInput(editor, {
+        data: "-",
+        inputType: "insertText",
+        targetRange: [smartDash.length, smartDash.length]
+      });
+
+      expect(result.defaultPrevented).toBe(true);
+      expect(await editor.value()).toBe("---");
+      expect(await editor.selection()).toEqual({ start: 3, end: 3 });
+      await expect(editor.host.locator(".md-hr-line")).toBeVisible();
+    });
+  }
+
+  test("data-less iOS input recovers a thematic break after smart-dash substitution", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "—"
+    });
+    await editor.setSelection(1);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+
+    const result = await applyLiveDomInput(editor, {
+      beforeInputData: null,
+      data: "-"
+    });
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(result).toEqual({
+      beforePrevented: false,
+      inputDispatched: true
+    });
+    expect(await editor.value()).toBe("---");
+    expect(restored.modelSelection).toEqual({
+      start: 3,
+      end: 3,
+      direction: "none"
+    });
+    await expect(editor.host.locator(".md-hr-line")).toBeVisible();
+    const diagnostics = await editor.events("md-debug");
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.insert.source-backed"
+    }));
+    expect(diagnostics.some(event =>
+      event.phase === "live.dom.native-preserved"
+    )).toBe(false);
+  });
+
+  test("iOS replacement input recovers a thematic break when smart punctuation and the final hyphen arrive together", async ({ editor }) => {
+    await editor.reset({ value: "-" });
+    await editor.setSelection(0, 1);
+
+    const result = await applyLiveDomInput(editor, {
+      beforeInputData: null,
+      data: "—-",
+      inputType: "insertReplacementText"
+    });
+
+    expect(result).toEqual({
+      beforePrevented: false,
+      inputDispatched: true
+    });
+    expect(await editor.value()).toBe("---");
+    expect(await editor.selection()).toEqual({ start: 3, end: 3 });
+    await expect(editor.host.locator(".md-hr-line")).toBeVisible();
+  });
+
+  test("smart dash followed by a hyphen in prose remains literal text", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "word —"
+    });
+    await editor.setSelection(6);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+
+    const result = await applyLiveDomInput(editor, {
+      beforeInputData: null,
+      data: "-"
+    });
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(result).toEqual({
+      beforePrevented: false,
+      inputDispatched: true
+    });
+    expect(await editor.value()).toBe("word —-");
+    expect(restored.modelSelection).toEqual({
+      start: 7,
+      end: 7,
+      direction: "none"
+    });
+    await expect(editor.host.locator(".md-hr-line")).toHaveCount(0);
+    const diagnostics = await editor.events("md-debug");
+    expect(diagnostics.some(event =>
+      event.phase === "live.insert.source-backed"
+    )).toBe(false);
+    expect(diagnostics.some(event =>
+      event.phase === "live.dom.native-preserved"
+    )).toBe(true);
+  });
+
+  test("software-keyboard input immediately creates a Setext heading", async ({ editor }) => {
+    const before = "Title\n";
+    await editor.reset({ value: before });
+    await editor.setSelection(before.length);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      data: "-",
+      inputType: "insertText",
+      targetRange: [before.length, before.length]
+    });
+
+    expect(result.defaultPrevented).toBe(true);
+    expect(await editor.value()).toBe("Title\n-");
+    await expect(editor.host.locator(".md-heading")).toHaveText("Title");
+    await expect(editor.host.locator('[data-editable="virtual-setext-after"]'))
+      .toBeVisible();
+  });
+
+  test("software-keyboard input immediately creates a GFM table", async ({ editor }) => {
+    const before = "A | B\n--- | --";
+    await editor.reset({ value: before });
+    await editor.setSelection(before.length);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      data: "-",
+      inputType: "insertText",
+      targetRange: [before.length, before.length]
+    });
+
+    expect(result.defaultPrevented).toBe(true);
+    expect(await editor.value()).toBe("A | B\n--- | ---");
+    await expect(editor.host.locator(".md-table-block")).toBeVisible();
+    await expect(editor.host.locator("th")).toHaveCount(2);
+  });
+
+  for (const scenario of [
+    {
+      data: " ",
+      kind: "heading",
+      marker: "##",
+      rendered: ".md-heading",
+      value: "## "
+    },
+    {
+      data: " ",
+      kind: "task",
+      marker: "[]",
+      rendered: '[data-kind="task-list-item"]',
+      value: "- [ ] "
+    },
+    {
+      data: "-",
+      kind: "thematic break",
+      marker: "--",
+      rendered: ".md-hr-line",
+      value: "---"
+    },
+    {
+      data: "-",
+      kind: "Setext heading",
+      marker: "Title\n",
+      rendered: ".md-heading",
+      value: "Title\n-"
+    },
+    {
+      data: "-",
+      kind: "GFM table",
+      marker: "A | B\n--- | --",
+      rendered: ".md-table-block",
+      value: "A | B\n--- | ---"
+    }
+  ]) {
+    test(`data-less iOS beforeinput creates a ${scenario.kind} after DOM input`, async ({ editor }) => {
+      await editor.reset({
+        attributes: { debug: 2 },
+        value: scenario.marker
+      });
+      await editor.setSelection(scenario.marker.length);
+      await installStaleIOSShadowSelection(editor, {
+        opaqueDocumentSelection: true
+      });
+
+      const result = await applyLiveDomInput(editor, {
+        beforeInputData: null,
+        data: scenario.data
+      });
+      const restored = await removeStaleIOSShadowSelection(editor);
+
+      expect(result).toEqual({
+        beforePrevented: false,
+        inputDispatched: true
+      });
+      expect(await editor.value()).toBe(scenario.value);
+      expect(restored.modelSelection).toEqual({
+        start: scenario.value.length,
+        end: scenario.value.length,
+        direction: "none"
+      });
+      await expect(editor.host.locator(scenario.rendered)).toBeVisible();
+      const diagnostics = await editor.events("md-debug");
+      expect(diagnostics.some(event =>
+        event.phase === "live.insert.source-backed"
+      )).toBe(true);
+      expect(diagnostics.some(event =>
+        event.phase === "live.dom.native-preserved"
+      )).toBe(false);
+    });
+  }
+
+  test("ordinary input remains browser-owned when iOS beforeinput data is absent", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: "plain"
+    });
+    await editor.setSelection(5);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+
+    const result = await applyLiveDomInput(editor, {
+      beforeInputData: null,
+      data: " "
+    });
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(result).toEqual({
+      beforePrevented: false,
+      inputDispatched: true
+    });
+    expect(await editor.value()).toBe("plain ");
+    expect(restored.modelSelection).toEqual({
+      start: 6,
+      end: 6,
+      direction: "none"
+    });
+    const diagnostics = await editor.events("md-debug");
+    expect(diagnostics.some(event =>
+      event.phase === "live.insert.source-backed"
+    )).toBe(false);
+    expect(diagnostics.some(event =>
+      event.phase === "live.dom.native-preserved"
+    )).toBe(true);
+  });
+
+  test("software-keyboard Return auto-closes a fence at its target range", async ({ editor }) => {
+    const opening = "```python";
+    await editor.reset({ value: opening });
+    await editor.setSelection(opening.length);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(element => {
+      element._selection = {
+        start: 0,
+        end: 0,
+        direction: "none"
+      };
+    });
+
+    const keydown = await editor.host.evaluate(element => {
+      const target = element.shadowRoot.querySelector("[data-editable]");
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        shiftKey: true
+      });
+      target.dispatchEvent(event);
+      return { defaultPrevented: event.defaultPrevented };
+    });
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(await editor.value()).toBe(opening);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      inputType: "insertParagraph",
+      targetRange: [opening.length, opening.length]
+    });
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(result.defaultPrevented).toBe(true);
+    expect(await editor.value()).toBe("```python\n\n```");
+    expect(restored.modelSelection).toEqual({
+      start: opening.length + 1,
+      end: opening.length + 1,
+      direction: "none"
+    });
+    await expect(editor.host.locator(".md-code-block")).toBeVisible();
+    await expect(editor.host.locator(".md-code-label")).toHaveText("python");
+  });
+
+  for (const fence of ["```", "~~~"]) {
+    test(`insertLineBreak auto-closes an unfinished ${fence} fence before following content`, async ({ editor, page }) => {
+      const following = "## Table\n\nFollowing paragraph.";
+      await editor.reset({ value: `\n${following}` });
+      await editor.setSelection(0);
+      await page.keyboard.type(fence);
+      await expect(editor.completion).toBeVisible();
+      await installStaleIOSShadowSelection(editor, {
+        opaqueDocumentSelection: true
+      });
+
+      const result = await dispatchLiveBeforeInput(editor, {
+        inputType: "insertLineBreak",
+        targetRange: [fence.length, fence.length]
+      });
+      const restored = await removeStaleIOSShadowSelection(editor);
+
+      expect(result.defaultPrevented).toBe(true);
+      expect(await editor.value()).toBe(
+        `${fence}\n\n${fence}\n${following}`
+      );
+      expect(restored.modelSelection).toEqual({
+        start: fence.length + 1,
+        end: fence.length + 1,
+        direction: "none"
+      });
+      await expect(editor.host.locator(".md-code-block")).toHaveCount(1);
+      await expect(editor.host.locator(".md-code-block"))
+        .not.toContainText("Table");
+      await expect(editor.host.locator(".md-heading")).toHaveText("## Table");
+    });
+  }
+
+  test("software-keyboard Return inserts at its target range when model selection is stale", async ({ editor }) => {
+    await editor.reset({ value: "alpha" });
+    await editor.setSelection(5);
+    await editor.host.evaluate(element => {
+      element._selection = {
+        start: 0,
+        end: 0,
+        direction: "none"
+      };
+    });
+
+    await dispatchLiveBeforeInput(editor, {
+      inputType: "insertParagraph",
+      targetRange: [5, 5]
+    });
+
+    expect(await editor.value()).toBe("alpha\n");
+    expect(await editor.selection()).toEqual({ start: 6, end: 6 });
+  });
+
+  test("ordinary software-keyboard Space stays browser-owned", async ({ editor }) => {
+    await editor.reset({ value: "plain" });
+    await editor.setSelection(5);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      data: " ",
+      inputType: "insertText",
+      targetRange: [5, 5]
+    });
+
+    expect(result.defaultPrevented).toBe(false);
+    expect(await editor.value()).toBe("plain");
+    expect(await editor.events("md-action")).toEqual([]);
+  });
+
+  test("software-keyboard Space inside inline code does not create a heading", async ({ editor }) => {
+    await editor.reset({ value: "`#" });
+    await editor.setSelection(2);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      data: " ",
+      inputType: "insertText",
+      targetRange: [2, 2]
+    });
+
+    expect(result.defaultPrevented).toBe(false);
+    expect(await editor.value()).toBe("`#");
+    await expect(editor.host.locator(".md-heading")).toHaveCount(0);
+  });
+
+  test("an incomplete thematic-break marker stays browser-owned", async ({ editor }) => {
+    await editor.reset({ value: "-" });
+    await editor.setSelection(1);
+
+    const result = await dispatchLiveBeforeInput(editor, {
+      data: "-",
+      inputType: "insertText",
+      targetRange: [1, 1]
+    });
+
+    expect(result.defaultPrevented).toBe(false);
+    expect(await editor.value()).toBe("-");
+    await expect(editor.host.locator(".md-hr-line")).toHaveCount(0);
+  });
+
   test("insertLineBreak applies the Markdown soft-break contract", async ({ editor }) => {
     await editor.reset({ value: "first" });
     await editor.setSelection(5);
@@ -1741,6 +2230,40 @@ test.describe("debug diagnostics", () => {
     }]);
     expect(JSON.stringify(event)).not.toContain("private");
     expect(await editor.value()).toBe("alpha private");
+  });
+
+  test("source-backed Markdown insertion diagnostics expose length, not text", async ({ editor }) => {
+    await editor.reset({
+      attributes: { debug: 1 },
+      value: "--"
+    });
+    await editor.setSelection(2);
+    await editor.host.evaluate(element => {
+      globalThis.__rawInputDebugEvents = [];
+      element.addEventListener("md-debug", event => {
+        globalThis.__rawInputDebugEvents.push(event.detail);
+      });
+    });
+
+    await dispatchLiveBeforeInput(editor, {
+      data: "-",
+      inputType: "insertText",
+      targetRange: [2, 2]
+    });
+
+    const event = await editor.host.evaluate(() => {
+      const match = globalThis.__rawInputDebugEvents.find(entry =>
+        entry.phase === "live.insert.source-backed"
+      );
+      delete globalThis.__rawInputDebugEvents;
+      return match;
+    });
+    expect(event).toMatchObject({
+      inputType: "insertText",
+      strategy: "structural-transition",
+      textLength: 1
+    });
+    expect(event).not.toHaveProperty("text");
   });
 
   test("debug-log optionally mirrors the same event payload to console.debug", async ({ editor }) => {

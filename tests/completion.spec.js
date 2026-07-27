@@ -172,6 +172,103 @@ test.describe("completion UI", () => {
     expect(await editor.value()).toBe("/");
   });
 
+  for (const scenario of [
+    { fence: "```", name: "backtick" },
+    { fence: "~~~", name: "tilde" }
+  ]) {
+    test(`language completion closes an unfinished ${scenario.name} fence before following content`, async ({ editor, page }) => {
+      const following = "Following **paragraph**.";
+      await editor.reset({ value: `\n${following}` });
+      await editor.setSelection(0);
+
+      await page.keyboard.type(`${scenario.fence}py`);
+
+      await expect(editor.completion).toBeVisible();
+      await expect(editor.host.locator(".md-code-block")).toHaveCount(0);
+      await expect(editor.host.locator(".md-line")).toContainText([
+        `${scenario.fence}py`,
+        following
+      ]);
+
+      await editor.host.getByRole("option", { name: /python/ }).click();
+
+      const opening = `${scenario.fence}python`;
+      expect(await editor.value()).toBe(
+        `${opening}\n\n${scenario.fence}\n${following}`
+      );
+      expect(await editor.selection()).toEqual({
+        start: opening.length + 1,
+        end: opening.length + 1
+      });
+      await expect(editor.host.locator(".md-code-block")).toHaveCount(1);
+      await expect(editor.host.locator(".md-code-block")).not.toContainText(
+        "Following paragraph."
+      );
+      await expect(editor.host.locator(".md-line")).toContainText(
+        following
+      );
+      await expect(editor.host.locator(".md-line strong"))
+        .toHaveText("paragraph");
+    });
+  }
+
+  test("unfiltered language completion closes an unfinished fence before following content", async ({ editor, page }) => {
+    const following = "## Table\n\nFollowing paragraph.";
+    await editor.reset({ value: `\n${following}` });
+    await editor.setSelection(0);
+
+    await page.keyboard.type("```");
+
+    await expect(editor.completion).toBeVisible();
+    const selected = editor.host.locator(
+      '[role="option"][aria-selected="true"]'
+    );
+    await expect(selected).toHaveCount(1);
+    const language = await selected.locator(".completion-label").textContent();
+    await selected.click();
+
+    expect(await editor.value()).toBe(
+      `\`\`\`${language}\n\n\`\`\`\n${following}`
+    );
+    await expect(editor.host.locator(".md-code-block")).toHaveCount(1);
+    await expect(editor.host.locator(".md-code-block"))
+      .not.toContainText("Table");
+    await expect(editor.host.locator(".md-heading")).toHaveText("## Table");
+  });
+
+  test("real blank-line typing does not let a later code block swallow intervening content", async ({ editor, page }) => {
+    const following = [
+      "## Table",
+      "",
+      "Following paragraph.",
+      "",
+      "```python",
+      'print("existing")',
+      "```"
+    ].join("\n");
+    await editor.reset({ value: `---\n\n${following}` });
+
+    await editor.host.locator('[data-kind="blank"]').first().click();
+    await page.keyboard.type("```py");
+
+    await expect(editor.completion).toBeVisible();
+    await expect(editor.host.locator(".md-code-block")).toHaveCount(1);
+    await expect(editor.host.locator(".md-heading")).toHaveText("## Table");
+    await expect(editor.host.getByText("Following paragraph.", {
+      exact: true
+    })).toBeVisible();
+
+    await editor.host.getByRole("option", { name: /python/ }).click();
+
+    expect(await editor.value()).toBe(
+      `---\n\`\`\`python\n\n\`\`\`\n${following}`
+    );
+    await expect(editor.host.locator(".md-code-block")).toHaveCount(2);
+    await expect(editor.host.locator(".md-code-block").first())
+      .not.toContainText("Table");
+    await expect(editor.host.locator(".md-heading")).toHaveText("## Table");
+  });
+
   test("does not offer languages from a closing code fence", async ({ editor }) => {
     const markdown = "```\nconst x = 1;\n```";
     await editor.reset({ value: markdown });

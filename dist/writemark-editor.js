@@ -66,6 +66,15 @@ const ALIASES = new Map([
 
 const LIVE_ARROW_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
 const NAVIGATION_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
+const LIVE_STRUCTURAL_BLOCK_TYPES = new Set([
+  "blockquote",
+  "bullet-list-item",
+  "heading",
+  "horizontal-rule",
+  "ordered-list-item",
+  "table",
+  "task-list-item"
+]);
 const ESCAPABLE_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
 function now() { return Date.now(); }
@@ -1286,6 +1295,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._compositionSnapshot = null;
     this._beforeInputSnapshot = null;
     this._beforeInputTarget = null;
+    this._pendingFenceOpening = null;
     this._iosNativeInput = null;
     this._liveSelectionAPI = null;
     this._fallbackEditable = null;
@@ -1815,6 +1825,7 @@ class WritemarkEditorElement extends HTMLElement {
   _setValueInternal(next, opts = {}) {
     const previousValue = this._value;
     const value = normalizeLineEndings(next ?? ""); const before = this._snapshot(); const changed = value !== previousValue;
+    if (changed) this._pendingFenceOpening = null;
     this._value = value; if (this._sourceTextarea && this._sourceTextarea.value !== value) this._sourceTextarea.value = value;
     if (!opts.preserveSelection) this._selection = { start: clamp(this._selection.start, 0, value.length), end: clamp(this._selection.end, 0, value.length), direction: "none" };
     if (opts.recordUndo && changed) this._recordUndo(before, this._snapshot(), opts.undoGroup || opts.source || "api", { coalesce: false });
@@ -2112,7 +2123,10 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _lineHasStructuralNeighbors(value, line) {
     const texts = [this._previousLineText(value, line.start), line.text, this._nextLineText(value, line.end)];
-    return texts.some(text => isFenceLine(text) || isLikelyTableRow(text) || isTableDelimiter(text));
+    return texts.some(text => isFenceLine(text)
+      || parseSetextHeadingLevel(text)
+      || isLikelyTableRow(text)
+      || isTableDelimiter(text));
   }
   _parseSingleLineBlock(line) {
     const heading = parseHeading(line.text);
@@ -2360,6 +2374,7 @@ class WritemarkEditorElement extends HTMLElement {
         ));
     const previousValue = this._value;
     this._value = normalizeLineEndings(this._sourceTextarea.value);
+    this._pendingFenceOpening = null;
     if (this._sourceTextarea.value !== this._value) this._sourceTextarea.value = this._value;
     this._selection = { start: this._sourceTextarea.selectionStart, end: this._sourceTextarea.selectionEnd, direction: this._sourceTextarea.selectionDirection || "none" };
     const after = this._snapshot();
@@ -2418,6 +2433,10 @@ class WritemarkEditorElement extends HTMLElement {
       targetStart: this._debugEditableInfo(targetRange?.startEditable),
       targetEnd: this._debugEditableInfo(targetRange?.endEditable)
     });
+    if (inputType.startsWith("insert") && targetRange?.selection) {
+      this._selection = { ...targetRange.selection };
+      this._structuredSelection = { ...targetRange.selection };
+    }
     if (this._liveSelectionAPI === false && inputTarget) {
       const targetHasSelection = inputTarget.selection.start !== inputTarget.selection.end;
       const modelHasSelection = this._selection.start !== this._selection.end;
@@ -2442,10 +2461,18 @@ class WritemarkEditorElement extends HTMLElement {
       return;
     }
     if (!this._isSourceActive() && !this.disabled && !this.readonly
+      && inputType === "insertText" && event.data != null
+      && this._applyLiveMarkdownInsertBeforeInput(event, inputType)) {
+      this._beforeInputTarget = null;
+      return;
+    }
+    if (!this._isSourceActive() && !this.disabled && !this.readonly
       && (inputType === "insertParagraph" || inputType === "insertLineBreak")) {
       event.preventDefault();
       this._beforeInputTarget = null;
+      const ctx = this._getContext();
       const actionId = inputType === "insertLineBreak"
+        && !this._isUnclosedFenceOpeningContext(ctx)
         ? "editor.insertSoftBreak"
         : "editor.smartEnter";
       this._runAction(actionId, undefined, {
@@ -2483,6 +2510,165 @@ class WritemarkEditorElement extends HTMLElement {
       return;
     }
     this._beforeInputSnapshot = this._snapshot();
+  }
+  _applyLiveMarkdownInsertBeforeInput(event, inputType) {
+    const ctx = this._getContext();
+    const candidate = this._liveMarkdownInsertCandidate(ctx, event.data);
+    if (!candidate) return false;
+    const { actionId, result, strategy, text } = candidate;
+
+    event.preventDefault();
+    if (!event.defaultPrevented) return false;
+    this._debug(1, "live.insert.source-backed", {
+      inputType,
+      strategy,
+      timing: "beforeinput",
+      textLength: text.length,
+      selectionBefore: {
+        start: ctx.selectionStart,
+        end: ctx.selectionEnd,
+        direction: ctx.selectionDirection
+      },
+      selectionAfter: result.transaction.selectionAfter
+    });
+    this._applyActionResult(actionId, result, {
+      source: "user",
+      inputType
+    });
+    return true;
+  }
+  _liveMarkdownInsertCandidate(ctx, input) {
+    const text = normalizeLineEndings(input);
+    if (!text || text.includes("\n")) return false;
+    const nextValue = applyTextChanges(ctx.value, [{
+      from: ctx.selectionStart,
+      to: ctx.selectionEnd,
+      insert: text
+    }]);
+    const nextCursor = ctx.selectionStart + text.length;
+    const currentLine = getLineRange(ctx.value, ctx.selectionStart);
+    const nextLine = getLineRange(nextValue, nextCursor);
+    const smartDashBreak = /^(\s{0,3})[\u2013\u2014]-$/.exec(nextLine.text);
+    if (smartDashBreak
+      && currentLine.start === nextLine.start
+      && ctx.selectionEnd <= currentLine.end) {
+      const insert = `${smartDashBreak[1]}---`;
+      const cursor = currentLine.start + insert.length;
+      return {
+        actionId: "editor.replaceSelection",
+        result: ok(tx(
+          ctx,
+          "editor.replaceSelection",
+          [{ from: currentLine.start, to: currentLine.end, insert }],
+          { start: cursor, end: cursor, direction: "none" },
+          "markdownShortcut"
+        )),
+        strategy: "smart-punctuation-thematic-break",
+        text
+      };
+    }
+    let actionId = "editor.replaceSelection";
+    let result = text === " " ? this._markdownShortcut(ctx) : null;
+    let strategy = "markdown-shortcut";
+
+    if (!result?.ok || !result.transaction) {
+      result = null;
+      const currentBlock = parseBlocks(ctx.value, this._parseOptions())
+        .find(block => ctx.selectionStart >= block.from
+          && ctx.selectionStart <= Math.max(block.to, block.from));
+      const nextBlock = parseBlocks(nextValue, this._parseOptions())
+        .find(block => nextCursor >= block.from
+          && nextCursor <= Math.max(block.to, block.from));
+      if (!LIVE_STRUCTURAL_BLOCK_TYPES.has(nextBlock?.type)
+        || currentBlock?.type === nextBlock.type) return false;
+      result = insertionTransaction(
+        ctx,
+        actionId,
+        text,
+        text.length,
+        "markdownShortcut"
+      );
+      strategy = "structural-transition";
+    } else {
+      actionId = "editor.markdownShortcut";
+    }
+    return { actionId, result, strategy, text };
+  }
+  _applyLiveMarkdownInsertAfterInput(inputType, previousValue, nextValue) {
+    if (!["insertText", "insertReplacementText"].includes(inputType)
+      || previousValue === nextValue) return false;
+    const changes = diffTextChange(previousValue, nextValue);
+    if (changes.length !== 1) return false;
+    const change = changes[0];
+    const selectionBefore = {
+      start: change.from,
+      end: change.to,
+      direction: "none"
+    };
+    const ctx = this._getContext(selectionBefore);
+    const candidate = this._liveMarkdownInsertCandidate(ctx, change.insert);
+    if (!candidate) return false;
+    const { actionId, result, strategy, text } = candidate;
+
+    this._beforeInputSnapshot = null;
+    this._beforeInputTarget = null;
+    this._selection = { ...selectionBefore };
+    this._structuredSelection = { ...selectionBefore };
+    this._debug(1, "live.insert.source-backed", {
+      inputType,
+      strategy,
+      timing: "input",
+      textLength: text.length,
+      selectionBefore: {
+        start: ctx.selectionStart,
+        end: ctx.selectionEnd,
+        direction: ctx.selectionDirection
+      },
+      selectionAfter: result.transaction.selectionAfter
+    });
+    const applied = this._applyActionResult(actionId, result, {
+      source: "user",
+      inputType
+    });
+    if (!applied?.ok) {
+      this._structuredSelection = null;
+      this._selection = { ...selectionBefore };
+      this._renderAll({ restoreSelection: true, force: true });
+    }
+    return true;
+  }
+  _isPendingFenceOpening(value, cursor, previousValue = null) {
+    const line = getLineRange(value, cursor);
+    if (cursor !== line.end || line.end >= value.length || value[line.end] !== "\n") {
+      return false;
+    }
+    const match = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(line.text);
+    if (!match) return false;
+    const opener = getFenceInfo(line.text);
+    if (!opener || isInsideFence(value, line.start)) return false;
+    const activePending = this._pendingFenceOpening;
+    if (activePending
+      && activePending.start === line.start
+      && activePending.marker === opener.marker) {
+      return true;
+    }
+    const previousCursor = clamp(
+      this._selection.start,
+      0,
+      previousValue?.length ?? 0
+    );
+    const previousLine = previousValue == null
+      ? null
+      : getLineRange(previousValue, previousCursor);
+    const createdNow = previousLine && !getFenceInfo(previousLine.text);
+    if (!createdNow && hasClosingFenceAfter(value, line.end, opener)) {
+      return false;
+    }
+    this._pendingFenceOpening = {
+      start: line.start,
+      marker: opener.marker
+    };
+    return true;
   }
   _shouldUseIOSNativeDeletion(event, inputType, targetRange) {
     if (!event?.isTrusted || !this._isIOSWebKitRuntime()) return false;
@@ -2691,6 +2877,16 @@ class WritemarkEditorElement extends HTMLElement {
       ? liveSelection.end - from
       : (inferredDisplayCursor ?? insert.length - virtualPrefixLength);
     const cursor = clamp(from + virtualPrefixLength + liveCursor, from, from + insert.length);
+    if (!composing && this._applyLiveMarkdownInsertAfterInput(
+      event?.inputType || "",
+      previousValue,
+      nextValue
+    )) return;
+    const pendingFenceOpening = !composing
+      && this._isPendingFenceOpening(nextValue, cursor, previousValue);
+    if (pendingFenceOpening) {
+      editable.dataset.to = String(from + insert.length);
+    }
     this._value = nextValue;
     this._selection = { start: cursor, end: cursor, direction: "none" };
     if (composing) editable.dataset.to = String(from + insert.length);
@@ -2708,7 +2904,7 @@ class WritemarkEditorElement extends HTMLElement {
       restoreSelection: true,
       previousValue,
       changes: [{ from, to, insert }],
-      preserveLiveDom: this._isIOSWebKitRuntime()
+      preserveLiveDom: this._isIOSWebKitRuntime() || pendingFenceOpening
     });
     if (!this._isComposing) this._scheduleCompletionUpdate();
   }
@@ -3912,6 +4108,7 @@ class WritemarkEditorElement extends HTMLElement {
 
     if (event.key === "Enter") {
       if (this.readonly || this.disabled) return;
+      if (!this._isSourceActive() && this._isIOSWebKitRuntime()) return;
       event.preventDefault();
       if (activeCell) {
         if (event.shiftKey || mod || event.altKey) this._exitTable(activeCell, "after");
@@ -4521,6 +4718,7 @@ class WritemarkEditorElement extends HTMLElement {
     const beforeEvent = this._dispatch("md-before-change", { transaction, before, nextValue, selectionAfter: proposedSelection, source: options.source || transaction.source || "api" }, { cancelable: true });
     if (beforeEvent.defaultPrevented) { this._announce("Change blocked."); return false; }
     this._value = nextValue;
+    this._pendingFenceOpening = null;
     const sel = proposedSelection;
     this._selection = { start: clamp(sel.start, 0, nextValue.length), end: clamp(sel.end, 0, nextValue.length), direction: sel.direction || "none" }; this._structuredSelection = null;
     const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction); this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false }); this._redoStack.length = 0; this._afterValueChanged({ source: options.source || transaction.source || "api", inputType: options.inputType, restoreSelection: true, previousValue: before.value, changes: transaction.changes }); this._scheduleCompletionUpdate();
@@ -4576,7 +4774,7 @@ class WritemarkEditorElement extends HTMLElement {
 
   _installBuiltInProviders() {
     this.registerCompletionProvider({ id: "slash", priority: 100, triggers: ["/"], match: ctx => this._matchSlash(ctx), getItems: match => this._getSlashItems(match), apply: (item, match, ctx) => this._applySlashItem(item, match, ctx) });
-    this.registerCompletionProvider({ id: "code-language", priority: 60, triggers: ["```", "~~~"], match: ctx => this._matchCodeLanguage(ctx), getItems: match => this._getLanguageItems(match), apply: (item, match, ctx) => { const insert = `${match.sequence || "```"}${item.label}`; const cursor = match.from + insert.length; return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert }], { start: cursor, end: cursor, direction: "none" }, "completion"), `Language ${item.label}.`); } });
+    this.registerCompletionProvider({ id: "code-language", priority: 60, triggers: ["```", "~~~"], match: ctx => this._matchCodeLanguage(ctx), getItems: match => this._getLanguageItems(match), apply: (item, match, ctx) => this._applyCodeLanguageItem(item, match, ctx) });
   }
   _getLanguageItems(match) {
     const q = match.query.toLowerCase(); const alias = ALIASES.get(q);
@@ -4585,9 +4783,8 @@ class WritemarkEditorElement extends HTMLElement {
 
   _smartEnter(ctx) {
     if (ctx.selectionStart !== ctx.selectionEnd) return insertionTransaction(ctx, "editor.smartEnter", "\n", 1, "smartEnter");
-    const currentTextBeforeCursor = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start);
-    const fenceInfo = getFenceInfo(ctx.currentLine.text);
-    if (fenceInfo && currentTextBeforeCursor.trim().startsWith(fenceInfo.sequence) && !isInsideFence(ctx.value, ctx.selectionStart) && !hasClosingFenceAfter(ctx.value, ctx.currentLine.end, fenceInfo)) {
+    if (this._isUnclosedFenceOpeningContext(ctx)) {
+      const fenceInfo = getFenceInfo(ctx.currentLine.text);
       return insertionTransaction(ctx, "editor.smartEnter", `\n\n${fenceInfo.sequence}`, 1, "smartEnter");
     }
     if (ctx.block.kind === "fenced-code") return insertionTransaction(ctx, "editor.smartEnter", "\n", 1, "smartEnter");
@@ -4609,6 +4806,27 @@ class WritemarkEditorElement extends HTMLElement {
       }
     }
     return insertionTransaction(ctx, "editor.smartEnter", "\n", 1, "smartEnter");
+  }
+  _isUnclosedFenceOpeningContext(ctx) {
+    if (!ctx || ctx.selectionStart !== ctx.selectionEnd) return false;
+    const currentTextBeforeCursor = ctx.currentLine.text.slice(
+      0,
+      ctx.selectionStart - ctx.currentLine.start
+    );
+    const fenceInfo = getFenceInfo(ctx.currentLine.text);
+    const pending = this._pendingFenceOpening;
+    const isPending = Boolean(
+      pending
+      && pending.start === ctx.currentLine.start
+      && pending.marker === fenceInfo?.marker
+    );
+    return Boolean(
+      fenceInfo
+      && currentTextBeforeCursor.trim().startsWith(fenceInfo.sequence)
+      && !isInsideFence(ctx.value, ctx.selectionStart)
+      && (isPending
+        || !hasClosingFenceAfter(ctx.value, ctx.currentLine.end, fenceInfo))
+    );
   }
   _smartTab(ctx) {
     if (ctx.completion?.open) return this._acceptCompletion("tab");
@@ -4693,7 +4911,25 @@ class WritemarkEditorElement extends HTMLElement {
   _getSlashItems(match) { const q = match.query.toLowerCase(); const items = []; for (const action of this._actions.values()) { if (!action.visibleInSlash) continue; const hay = [action.label, action.description, ...(action.aliases || []), ...(action.keywords || [])].filter(Boolean).join(" ").toLowerCase(); if (q && !hay.includes(q)) continue; items.push({ id: action.id, label: action.label, detail: action.group, description: action.description || displayShortcut(action.defaultShortcut), kind: "slash-command", actionId: action.id }); } return items.slice(0, 24); }
   _applySlashItem(item, match, ctx) { const repl = this._slashReplacementForAction(item.actionId); if (repl) { const insert = typeof repl.insert === "function" ? repl.insert(ctx) : repl.insert; const off = typeof repl.selectionOffset === "number" ? repl.selectionOffset : insert.length; return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert }], { start: match.from + off, end: match.from + off + (repl.selectionLength || 0), direction: "none" }, "slash"), item.label); } return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert: "" }], { start: match.from, end: match.from, direction: "none" }, "slash"), item.label); }
   _slashReplacementForAction(actionId) { return { "block.paragraph": { insert: "", selectionOffset: 0 }, "block.heading.1": { insert: "# ", selectionOffset: 2 }, "block.heading.2": { insert: "## ", selectionOffset: 3 }, "block.heading.3": { insert: "### ", selectionOffset: 4 }, "block.heading.4": { insert: "#### ", selectionOffset: 5 }, "block.heading.5": { insert: "##### ", selectionOffset: 6 }, "block.heading.6": { insert: "###### ", selectionOffset: 7 }, "block.bulletList": { insert: "- ", selectionOffset: 2 }, "block.orderedList": { insert: "1. ", selectionOffset: 3 }, "block.taskList": { insert: "- [ ] ", selectionOffset: 6 }, "block.blockquote": { insert: "> ", selectionOffset: 2 }, "block.codeFence": { insert: "```\n\n```", selectionOffset: 4 }, "block.horizontalRule": { insert: "---\n", selectionOffset: 4 }, "block.table": { insert: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| Cell 1 | Cell 2 | Cell 3 |", selectionOffset: 2, selectionLength: "Column 1".length }, "inline.link": { insert: "[]()", selectionOffset: 1 }, "inline.image": { insert: "![]()", selectionOffset: 2 }, "inline.bold": { insert: "****", selectionOffset: 2 }, "inline.italic": { insert: "**", selectionOffset: 1 }, "inline.code": { insert: "``", selectionOffset: 1 }, "inline.strikethrough": { insert: "~~~~", selectionOffset: 2 } }[actionId] || null; }
-  _matchCodeLanguage(ctx) { if (ctx.block.kind === "fenced-code") return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(before); if (!m || LANGUAGES.includes(m[3].toLowerCase())) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: m[2], sequence: m[2], query: m[3], providerId: "code-language" }; }
+  _applyCodeLanguageItem(item, match, ctx) {
+    const sequence = match.sequence || "```";
+    const opening = `${sequence}${item.label}`;
+    const hasLineBreak = ctx.currentLine.end < ctx.value.length
+      && ctx.value[ctx.currentLine.end] === "\n";
+    const shouldClose = hasLineBreak
+      && this._isUnclosedFenceOpeningContext(ctx);
+    const closing = `${match.indent || ""}${sequence}`;
+    const insert = shouldClose ? `${opening}\n\n${closing}` : opening;
+    const cursor = match.from + opening.length + (shouldClose ? 1 : 0);
+    return ok(tx(
+      ctx,
+      "completion.accept",
+      [{ from: match.from, to: match.to, insert }],
+      { start: cursor, end: cursor, direction: "none" },
+      "completion"
+    ), `Language ${item.label}.`);
+  }
+  _matchCodeLanguage(ctx) { if (ctx.block.kind === "fenced-code") return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(before); if (!m || LANGUAGES.includes(m[3].toLowerCase())) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: m[2], sequence: m[2], indent: m[1], query: m[3], providerId: "code-language" }; }
 
   _scheduleCompletionUpdate({ immediate = false } = {}) {
     if (this.disabled || this.readonly || this._isComposing) return;
