@@ -68,6 +68,29 @@ const ESCAPABLE_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 function now() { return Date.now(); }
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function normalizeLineEndings(value) { return String(value ?? "").replace(/\r\n?/g, "\n"); }
+function graphemeBoundaries(value) {
+  const text = String(value ?? "");
+  if (typeof globalThis.Intl?.Segmenter === "function") {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    return [...segmenter.segment(text)].map(part => part.index).concat(text.length);
+  }
+  const boundaries = [0];
+  let offset = 0;
+  for (const character of text) {
+    offset += character.length;
+    boundaries.push(offset);
+  }
+  return boundaries;
+}
+function previousGraphemeOffset(value, offset) {
+  const safe = clamp(offset, 0, String(value ?? "").length);
+  return graphemeBoundaries(value).filter(boundary => boundary < safe).at(-1) ?? 0;
+}
+function nextGraphemeOffset(value, offset) {
+  const text = String(value ?? "");
+  const safe = clamp(offset, 0, text.length);
+  return graphemeBoundaries(text).find(boundary => boundary > safe) ?? text.length;
+}
 function parseLengthConstraint(value) {
   if (value == null || !/^\d+$/.test(String(value).trim())) return null;
   const parsed = Number(value);
@@ -1257,6 +1280,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._formDisabled = false;
     this._hasConnected = false;
     this._isComposing = false;
+    this._compositionSnapshot = null;
     this._beforeInputSnapshot = null;
     this._beforeInputTarget = null;
     this._liveSelectionAPI = null;
@@ -1337,6 +1361,9 @@ class WritemarkEditorElement extends HTMLElement {
       return;
     }
     if (!this._hasConnected) return;
+    if (this._isComposing && ["mode", "disabled", "readonly"].includes(name)) {
+      this._onCompositionEnd();
+    }
     const restoreFocus = (name === "mode" || name === "readonly") && (this._focusWithin || Boolean(this._shadow.activeElement));
     if ((name === "disabled" || name === "readonly") && (this.disabled || this.readonly)) this._closeCompletion();
     this._syncAttributesToControls();
@@ -1412,7 +1439,7 @@ class WritemarkEditorElement extends HTMLElement {
   getPlainText() { return this.getText(); }
   getSelectionMarkdown() { const sel = this._getCurrentSelection(); return this._value.slice(Math.min(sel.start, sel.end), Math.max(sel.start, sel.end)); }
   insertMarkdown(markdown) { return this.exec("editor.insertText", { text: markdown }); }
-  canExec(actionId, args) { const action = this._actions.get(actionId); if (!action) return false; const ctx = this._getContext(); if (ctx.mode === "disabled" && !action.viewSafe) return false; if (ctx.mode === "readonly" && !action.readonlySafe && !action.viewSafe) return false; return !action.when || action.when(ctx, args); }
+  canExec(actionId, args) { const action = this._actions.get(actionId); if (!action) return false; const ctx = this._getContext(); if (ctx.mode === "disabled" && !action.viewSafe) return false; if (ctx.mode === "readonly" && !action.readonlySafe && !action.viewSafe) return false; if (ctx.mode === "composing-ime" && action.structural !== false) return false; return !action.when || action.when(ctx, args); }
   getCurrentBlock() { const sel = this._getCurrentSelection(); return this._findBlockAtOffset(sel.start) || null; }
   getSelectedBlocks() { const sel = this._getCurrentSelection(); const start = Math.min(sel.start, sel.end); const end = Math.max(sel.start, sel.end); return this._getBlocks().filter(block => block.to >= start && block.from <= end); }
   getActiveMarks() { return this._getActiveStateIds(this._getContext()); }
@@ -1604,7 +1631,7 @@ class WritemarkEditorElement extends HTMLElement {
   }
 
   _bindEvents() {
-    this._sourceTextarea.addEventListener("beforeinput", () => this._beforeInputSnapshot = this._snapshot());
+    this._sourceTextarea.addEventListener("beforeinput", event => this._onSourceBeforeInput(event));
     this._sourceTextarea.addEventListener("input", event => this._onSourceInput(event));
     this._sourceTextarea.addEventListener("change", () => this._dispatch("md-change", { value: this._value }));
     this._sourceTextarea.addEventListener("keydown", event => this._onKeyDown(event));
@@ -1613,8 +1640,8 @@ class WritemarkEditorElement extends HTMLElement {
     this._sourceTextarea.addEventListener("select", () => this._onSelectionChanged());
     this._sourceTextarea.addEventListener("paste", event => this._onPaste(event));
     this._sourceTextarea.addEventListener("drop", event => this._onDrop(event));
-    this._sourceTextarea.addEventListener("compositionstart", () => { this._isComposing = true; this._closeCompletion(); });
-    this._sourceTextarea.addEventListener("compositionend", () => { this._isComposing = false; this._scheduleCompletionUpdate(); });
+    this._sourceTextarea.addEventListener("compositionstart", () => this._onCompositionStart());
+    this._sourceTextarea.addEventListener("compositionend", () => this._onCompositionEnd());
 
     this._liveEditor.addEventListener("focus", () => { if (this._selection.start > this._value.length) this._selection = { start: 0, end: 0, direction: "none" }; }, true);
     this._liveEditor.addEventListener("keydown", event => this._onKeyDown(event));
@@ -1629,8 +1656,8 @@ class WritemarkEditorElement extends HTMLElement {
     this._liveEditor.addEventListener("cut", event => this._onLiveCut(event));
     this._liveEditor.addEventListener("paste", event => this._onPaste(event));
     this._liveEditor.addEventListener("drop", event => this._onDrop(event));
-    this._liveEditor.addEventListener("compositionstart", () => { this._isComposing = true; this._closeCompletion(); });
-    this._liveEditor.addEventListener("compositionend", () => { this._isComposing = false; this._onSelectionChanged(); });
+    this._liveEditor.addEventListener("compositionstart", () => this._onCompositionStart());
+    this._liveEditor.addEventListener("compositionend", () => this._onCompositionEnd());
     this._preview.addEventListener("click", event => this._onPreviewClick(event));
 
     this._completionPopup.addEventListener("mousedown", e => e.preventDefault());
@@ -1769,11 +1796,22 @@ class WritemarkEditorElement extends HTMLElement {
   _renderAll({ restoreSelection = true, previousValue = null, changes = null, force = false } = {}) {
     if (!this._liveEditor) return;
     this._hasRenderedOnce = true;
-    this._sourceTextarea.value = this._value;
+    if (this._sourceTextarea.value !== this._value) this._sourceTextarea.value = this._value;
+    if (restoreSelection && this._isSourceActive()) {
+      this._sourceTextarea.setSelectionRange(
+        this._selection.start,
+        this._selection.end,
+        this._selection.direction
+      );
+    }
     if (this._isLiveVisible()) {
-      this._renderLive({ previousValue, changes, force });
-      this._liveDirty = false;
-      if (restoreSelection && !this._isSourceActive()) this._restoreLiveSelection(this._selection);
+      if (this._isComposing) {
+        this._liveDirty = true;
+      } else {
+        this._renderLive({ previousValue, changes, force });
+        this._liveDirty = false;
+        if (restoreSelection && !this._isSourceActive()) this._restoreLiveSelection(this._selection);
+      }
     } else {
       this._liveDirty = true;
     }
@@ -2192,20 +2230,88 @@ class WritemarkEditorElement extends HTMLElement {
     return `<div class="md-table-block" part="table" data-kind="table" data-from="${block.from}" data-to="${block.to}"><table class="md-table">${header}${body}</table></div>${afterAnchor}`;
   }
 
+  _onSourceBeforeInput(event) {
+    this._beforeInputSnapshot = null;
+    if (this.disabled || this.readonly) {
+      event.preventDefault();
+      return;
+    }
+    if (this._isComposing || event?.isComposing) return;
+    const inputType = event?.inputType || "";
+    if (inputType === "historyUndo" || inputType === "historyRedo") {
+      event.preventDefault();
+      inputType === "historyUndo"
+        ? this._undo({ source: "user", inputType })
+        : this._redo({ source: "user", inputType });
+      return;
+    }
+    this._beforeInputSnapshot = this._snapshot();
+  }
   _onSourceInput(event) {
-    const before = this._beforeInputSnapshot;
+    if (this.disabled || this.readonly) {
+      this._sourceTextarea.value = this._value;
+      this._sourceTextarea.setSelectionRange(
+        this._selection.start,
+        this._selection.end,
+        this._selection.direction
+      );
+      this._beforeInputSnapshot = null;
+      return;
+    }
+    const composing = this._isComposing || event?.isComposing;
+    const before = composing
+      ? null
+      : (this._beforeInputSnapshot || makeSnapshot(
+          this._value,
+          this._selection.start,
+          this._selection.end,
+          this._selection.direction
+        ));
     const previousValue = this._value;
     this._value = normalizeLineEndings(this._sourceTextarea.value);
     if (this._sourceTextarea.value !== this._value) this._sourceTextarea.value = this._value;
     this._selection = { start: this._sourceTextarea.selectionStart, end: this._sourceTextarea.selectionEnd, direction: this._sourceTextarea.selectionDirection || "none" };
     const after = this._snapshot();
-    if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
     this._beforeInputSnapshot = null;
+    if (previousValue === this._value) {
+      if (!this._isComposing) this._scheduleCompletionUpdate();
+      return;
+    }
+    if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+    this._redoStack.length = 0;
     this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: false, previousValue, changes: diffTextChange(previousValue, this._value) });
     if (!this._isComposing) this._scheduleCompletionUpdate();
   }
+  _onCompositionStart() {
+    if (this.disabled || this.readonly || this._isComposing) return;
+    this._compositionSnapshot = this._snapshot();
+    this._beforeInputSnapshot = null;
+    this._beforeInputTarget = null;
+    this._isComposing = true;
+    this._closeCompletion();
+  }
+  _onCompositionEnd() {
+    if (!this._isComposing) return;
+    const before = this._compositionSnapshot;
+    const after = this._snapshot();
+    this._isComposing = false;
+    this._compositionSnapshot = null;
+    this._beforeInputSnapshot = null;
+    this._beforeInputTarget = null;
+    if (before?.value !== after.value) this._recordUndo(before, after, "composition");
+    if (before?.value !== after.value) this._redoStack.length = 0;
+    if (this._isLiveVisible() && this._liveDirty) {
+      this._renderAll({
+        restoreSelection: true,
+        previousValue: before?.value ?? this._value,
+        changes: before ? diffTextChange(before.value, this._value) : null,
+        force: true
+      });
+    }
+    this._scheduleCompletionUpdate();
+  }
   _onLiveBeforeInput(event) {
-    if (this._isComposing) return;
+    if (this._isComposing || event?.isComposing) return;
     this._ignoreSelectionChangeCount = 0;
     this._structuredSelection = null;
     const inputType = event?.inputType || "";
@@ -2225,6 +2331,29 @@ class WritemarkEditorElement extends HTMLElement {
       this._ensureEmptyLiveEditable();
       return;
     }
+    if (!this._isSourceActive() && !this.disabled && !this.readonly
+      && (inputType === "historyUndo" || inputType === "historyRedo")) {
+      event.preventDefault();
+      this._beforeInputTarget = null;
+      inputType === "historyUndo"
+        ? this._undo({ source: "user", inputType })
+        : this._redo({ source: "user", inputType });
+      return;
+    }
+    if (!this._isSourceActive() && !this.disabled && !this.readonly
+      && (inputType === "insertParagraph" || inputType === "insertLineBreak")) {
+      event.preventDefault();
+      this._beforeInputTarget = null;
+      const actionId = inputType === "insertLineBreak"
+        ? "editor.insertSoftBreak"
+        : "editor.smartEnter";
+      this._runAction(actionId, undefined, {
+        source: "user",
+        inputType,
+        apply: true
+      });
+      return;
+    }
     if (!this._isSourceActive() && !this.disabled && !this.readonly) {
       const ctx = this._getContext();
       const hasSelection = ctx.selectionStart !== ctx.selectionEnd;
@@ -2237,14 +2366,14 @@ class WritemarkEditorElement extends HTMLElement {
       if (hasSelection && inputType.startsWith("delete") && !selectionInsideTableCell) {
         event.preventDefault();
         this._beforeInputTarget = null;
-        this._applyActionResult("editor.deleteSelection", this._deleteSelectionResult(ctx, "editor.deleteSelection"), { source: "user" });
+        this._applyActionResult("editor.deleteSelection", this._deleteSelectionResult(ctx, "editor.deleteSelection"), { source: "user", inputType });
         return;
       }
-      if (hasSelection && inputType === "insertText" && event.data != null && !selectionInsideTableCell) {
+      if (hasSelection && inputType.startsWith("insert") && event.data != null && !selectionInsideTableCell) {
         event.preventDefault();
         this._beforeInputTarget = null;
         const text = normalizeLineEndings(event.data);
-        this._applyActionResult("editor.replaceSelection", insertionTransaction(ctx, "editor.replaceSelection", text, text.length, "typing"), { source: "user" });
+        this._applyActionResult("editor.replaceSelection", insertionTransaction(ctx, "editor.replaceSelection", text, text.length, "typing"), { source: "user", inputType });
         return;
       }
     }
@@ -2255,14 +2384,27 @@ class WritemarkEditorElement extends HTMLElement {
     this._beforeInputSnapshot = this._snapshot();
   }
   _onLiveInput(event) {
-    if (this.disabled || this.readonly) return;
+    if (this.disabled || this.readonly) {
+      this._beforeInputSnapshot = null;
+      this._beforeInputTarget = null;
+      this._renderAll({ restoreSelection: !this.disabled, force: true });
+      return;
+    }
     this._ignoreSelectionChangeCount = 0;
     this._structuredSelection = null;
     const inputTarget = this._beforeInputTarget;
     const editable = this._closestEditable(event.target) || inputTarget?.editable || this._activeEditableFromSelection();
     this._beforeInputTarget = null;
     if (!editable) return;
-    const before = this._beforeInputSnapshot;
+    const composing = this._isComposing || event?.isComposing;
+    const before = composing
+      ? null
+      : (this._beforeInputSnapshot || makeSnapshot(
+          this._value,
+          this._selection.start,
+          this._selection.end,
+          this._selection.direction
+        ));
     const from = Number(editable.dataset.from); const to = Number(editable.dataset.to);
     const raw = this._plainText(editable).replace(/\n/g, "");
     const liveSelection = this._getLiveSelection(editable);
@@ -2280,9 +2422,23 @@ class WritemarkEditorElement extends HTMLElement {
       const previousValue = this._value;
       this._value = tableEdit.nextValue;
       this._selection = { start: tableEdit.cursor, end: tableEdit.cursor, direction: "none" };
+      if (composing) {
+        editable.dataset.from = String(tableEdit.cellFrom);
+        editable.dataset.to = String(tableEdit.cellTo);
+        const table = editable.closest(".md-table-block");
+        if (table) {
+          table.dataset.from = String(tableEdit.blockFrom);
+          table.dataset.to = String(tableEdit.blockTo);
+        }
+      }
       const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction);
-      if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
       this._beforeInputSnapshot = null;
+      if (previousValue === this._value) {
+        if (!this._isComposing) this._scheduleCompletionUpdate();
+        return;
+      }
+      if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+      this._redoStack.length = 0;
       this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: true, previousValue, changes: diffTextChange(previousValue, this._value) });
       if (!this._isComposing) this._scheduleCompletionUpdate();
       return;
@@ -2304,9 +2460,15 @@ class WritemarkEditorElement extends HTMLElement {
     const cursor = clamp(from + virtualPrefixLength + liveCursor, from, from + insert.length);
     this._value = nextValue;
     this._selection = { start: cursor, end: cursor, direction: "none" };
+    if (composing) editable.dataset.to = String(from + insert.length);
     const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction);
-    if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
     this._beforeInputSnapshot = null;
+    if (previousValue === this._value) {
+      if (!this._isComposing) this._scheduleCompletionUpdate();
+      return;
+    }
+    if (before) this._recordUndo(before, after, this._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+    this._redoStack.length = 0;
     this._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: true, previousValue, changes: [{ from, to, insert }] });
     if (!this._isComposing) this._scheduleCompletionUpdate();
   }
@@ -2348,9 +2510,9 @@ class WritemarkEditorElement extends HTMLElement {
         start = inputTarget.selection.start;
         end = inputTarget.selection.end;
       } else if (start === end && inputType.includes("Backward") && start > 0) {
-        start -= Array.from(this._value.slice(0, start)).at(-1)?.length || 1;
+        start = previousGraphemeOffset(this._value, start);
       } else if (start === end && inputType.includes("Forward") && end < this._value.length) {
-        end += Array.from(this._value.slice(end))[0]?.length || 1;
+        end = nextGraphemeOffset(this._value, end);
       }
       if (start === end) return false;
     } else {
@@ -2938,16 +3100,17 @@ class WritemarkEditorElement extends HTMLElement {
     return live || this._selection || { start: 0, end: 0, direction: "none" };
   }
   _getLiveSelection(preferredEditable = null) {
-    const exposed = this._readLiveSelection(preferredEditable);
-    if (exposed) return exposed;
-    if (this._liveSelectionAPI !== false || !this._selection) return null;
-    if (preferredEditable) {
-      const range = this._editableSourceRange(preferredEditable);
-      if (!range
-        || this._selection.start < range.from
-        || this._selection.end > range.to) return null;
+    if (this._liveSelectionAPI === false) {
+      if (!this._selection) return null;
+      if (preferredEditable) {
+        const range = this._editableSourceRange(preferredEditable);
+        if (!range
+          || this._selection.start < range.from
+          || this._selection.end > range.to) return null;
+      }
+      return { ...this._selection };
     }
-    return { ...this._selection };
+    return this._readLiveSelection(preferredEditable);
   }
   _readLiveSelection(preferredEditable = null) {
     const sel = this._exposedLiveSelection();
@@ -3121,17 +3284,18 @@ class WritemarkEditorElement extends HTMLElement {
     this._undoStack.push({ before, after, group, timestamp }); if (this._undoStack.length > this._maxUndo) this._undoStack.shift();
   }
   _undoGroupForInput(inputType) { if (inputType?.startsWith("insert")) return "typing"; if (inputType?.startsWith("delete")) return "delete"; return inputType || "input"; }
-  _undo() { const entry = this._undoStack.pop(); if (!entry) return false; const current = this._snapshot(); this._redoStack.push({ before: entry.before, after: current, group: entry.group, timestamp: now() }); this._restoreSnapshot(entry.before, "undo"); this._dispatch("md-action", { actionId: "history.undo", source: "keyboard", before: current, after: this._snapshot() }); return true; }
-  _redo() { const entry = this._redoStack.pop(); if (!entry) return false; const current = this._snapshot(); this._undoStack.push({ before: current, after: entry.after, group: entry.group, timestamp: now() }); this._restoreSnapshot(entry.after, "redo"); this._dispatch("md-action", { actionId: "history.redo", source: "keyboard", before: current, after: this._snapshot() }); return true; }
-  _restoreSnapshot(snapshot, source) {
+  _undo({ source = "keyboard", inputType = null } = {}) { const entry = this._undoStack.pop(); if (!entry) return false; const current = this._snapshot(); this._redoStack.push({ before: entry.before, after: current, group: entry.group, timestamp: now() }); this._restoreSnapshot(entry.before, "undo", inputType); this._dispatch("md-action", { actionId: "history.undo", source, before: current, after: this._snapshot() }); return true; }
+  _redo({ source = "keyboard", inputType = null } = {}) { const entry = this._redoStack.pop(); if (!entry) return false; const current = this._snapshot(); this._undoStack.push({ before: current, after: entry.after, group: entry.group, timestamp: now() }); this._restoreSnapshot(entry.after, "redo", inputType); this._dispatch("md-action", { actionId: "history.redo", source, before: current, after: this._snapshot() }); return true; }
+  _restoreSnapshot(snapshot, source, inputType = null) {
     const previousValue = this._value;
     this._value = snapshot.value;
     this._selection = { ...snapshot.selection };
     this._redoStack = this._redoStack;
-    this._afterValueChanged({ source, restoreSelection: true, previousValue, changes: diffTextChange(previousValue, this._value) });
+    this._afterValueChanged({ source, inputType, restoreSelection: true, previousValue, changes: diffTextChange(previousValue, this._value) });
   }
 
   _onKeyDown(event) {
+    if (this._isComposing || event?.isComposing || event?.keyCode === 229) return;
     const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "");
     const mod = isMac ? event.metaKey : event.ctrlKey;
     const taskCheckbox = event.target.closest?.("[data-task-checkbox]");
@@ -3161,8 +3325,6 @@ class WritemarkEditorElement extends HTMLElement {
       this._expandSelection();
       return;
     }
-
-    if (this._isComposing) return;
 
     if (this._completion.open) {
       const map = { ArrowDown: "completion.next", ArrowUp: "completion.previous", Home: "completion.first", End: "completion.last", Escape: "completion.close" };
@@ -3504,6 +3666,10 @@ class WritemarkEditorElement extends HTMLElement {
     const escapedCursor = this._escapeTableCellText(raw.slice(0, rawCursor)).length;
     const cursor = info.block.from + (serialized.lineStarts[lineIndex] ?? 0) + (cellOffsets?.from ?? 0) + escapedCursor;
     return {
+      blockFrom: info.block.from,
+      blockTo: info.block.from + serialized.source.length,
+      cellFrom: info.block.from + (serialized.lineStarts[lineIndex] ?? 0) + (cellOffsets?.from ?? 0),
+      cellTo: info.block.from + (serialized.lineStarts[lineIndex] ?? 0) + (cellOffsets?.to ?? 0),
       nextValue: this._value.slice(0, info.block.from) + serialized.source + this._value.slice(info.block.to),
       cursor,
     };
@@ -3768,11 +3934,15 @@ class WritemarkEditorElement extends HTMLElement {
   _runAction(actionId, args, options = {}) {
     const action = this._actions.get(actionId); if (!action) return fail("not-applicable", `Unknown action: ${actionId}`);
     const ctx = this._getContext(); if (ctx.mode === "disabled" && !action.viewSafe) return fail("disabled"); if (ctx.mode === "readonly" && !action.readonlySafe && !action.viewSafe) return fail("readonly"); if (ctx.mode === "composing-ime" && action.structural !== false) return fail("composition-active"); if (action.when && !action.when(ctx, args)) return fail("not-applicable");
-    try { const result = action.run(ctx, args); if (options.apply === false) return result; return this._applyActionResult(actionId, result, options); } catch (error) { this._emitError("action", error, true, { actionId }); return fail("provider-error", String(error?.message || error)); }
+    try { const result = action.run(ctx, args, options); if (options.apply === false) return result; return this._applyActionResult(actionId, result, options); } catch (error) { this._emitError("action", error, true, { actionId }); return fail("provider-error", String(error?.message || error)); }
   }
   _applyActionResult(actionId, result, options = {}) {
     if (!result?.ok) return result; const before = this._snapshot();
-    if (result.transaction) { const t = { ...result.transaction, source: options.source || result.transaction.source || "api", actionId, timestamp: now() }; this._applyTransaction(t, { source: t.source }); const after = this._snapshot(); this._dispatch("md-action", { actionId, args: t.args, source: t.source, before, after }); }
+    if (result.actionHandled) {
+      if (result.announcement) this._announce(result.announcement);
+      return result;
+    }
+    if (result.transaction) { const t = { ...result.transaction, source: options.source || result.transaction.source || "api", actionId, timestamp: now() }; if (!this._applyTransaction(t, { source: t.source, inputType: options.inputType })) return fail("change-canceled", "Change blocked."); const after = this._snapshot(); this._dispatch("md-action", { actionId, args: t.args, source: t.source, before, after }); }
     else this._dispatch("md-action", { actionId, source: options.source || "api", before, after: this._snapshot() });
     if (result.announcement) this._announce(result.announcement); return result;
   }
@@ -3785,7 +3955,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._value = nextValue;
     const sel = proposedSelection;
     this._selection = { start: clamp(sel.start, 0, nextValue.length), end: clamp(sel.end, 0, nextValue.length), direction: sel.direction || "none" }; this._structuredSelection = null;
-    const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction); this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false }); this._redoStack.length = 0; this._afterValueChanged({ source: options.source || transaction.source || "api", restoreSelection: true, previousValue: before.value, changes: transaction.changes }); this._scheduleCompletionUpdate();
+    const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction); this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false }); this._redoStack.length = 0; this._afterValueChanged({ source: options.source || transaction.source || "api", inputType: options.inputType, restoreSelection: true, previousValue: before.value, changes: transaction.changes }); this._scheduleCompletionUpdate();
     return true;
   }
 
@@ -3803,8 +3973,8 @@ class WritemarkEditorElement extends HTMLElement {
     r({ id: "editor.markdownShortcut", label: "Markdown shortcut", group: "Editor", defaultShortcut: "Space", run: ctx => this._markdownShortcut(ctx) });
     r({ id: "editor.deleteSelection", label: "Delete selection", group: "Editor", run: ctx => this._deleteSelectionResult(ctx, "editor.deleteSelection") });
     r({ id: "editor.selectAllExpand", label: "Expand selection", group: "Editor", defaultShortcut: "Mod+A", viewSafe: true, readonlySafe: true, run: () => { this._expandSelection(); return okNoop("Selection expanded."); } });
-    r({ id: "history.undo", label: "Undo", group: "History", defaultShortcut: "Mod+Z", run: () => this._undo() ? okNoop("Undo.") : fail("not-applicable") });
-    r({ id: "history.redo", label: "Redo", group: "History", defaultShortcut: "Mod+Shift+Z", run: () => this._redo() ? okNoop("Redo.") : fail("not-applicable") });
+    r({ id: "history.undo", label: "Undo", group: "History", defaultShortcut: "Mod+Z", run: (_ctx, _args, options) => this._undo({ source: options?.source || "api" }) ? { ...okNoop("Undo."), actionHandled: true } : fail("not-applicable") });
+    r({ id: "history.redo", label: "Redo", group: "History", defaultShortcut: "Mod+Shift+Z", run: (_ctx, _args, options) => this._redo({ source: options?.source || "api" }) ? { ...okNoop("Redo."), actionHandled: true } : fail("not-applicable") });
     r({ id: "block.paragraph", label: "Paragraph", description: "Convert current block to paragraph", group: "Blocks", aliases: ["p", "text", "clear"], visibleInSlash: true, run: ctx => this._toggleParagraph(ctx) });
     for (let level = 1; level <= 6; level += 1) r({ id: `block.heading.${level}`, label: `Heading ${level}`, description: `Convert to heading level ${level}`, group: "Blocks", aliases: [`h${level}`, `heading${level}`], keywords: ["title", "section"], defaultShortcut: level <= 3 ? `Mod+Alt+${level}` : undefined, visibleInSlash: true, run: ctx => this._toggleHeading(ctx, level) });
     r({ id: "block.bulletList", label: "Bullet list", description: "Create an unordered list", group: "Blocks", aliases: ["bullet", "ul", "list"], visibleInSlash: true, run: ctx => this._toggleList(ctx, "bullet") });
@@ -4049,6 +4219,7 @@ class WritemarkEditorElement extends HTMLElement {
   formDisabledCallback(disabled) {
     const next = Boolean(disabled);
     if (this._formDisabled === next) return;
+    if (this._isComposing) this._onCompositionEnd();
     this._formDisabled = next;
     if (!this._hasConnected) return;
     if (next) this._closeCompletion();

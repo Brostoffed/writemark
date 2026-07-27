@@ -448,13 +448,14 @@ Linux CI gate always runs Chromium, Firefox, and WebKit. Playwright no longer
 provides a current WebKit build for macOS 14 and older, so the local config
 omits only that unavailable project on those hosts.
 
-The current suite registers 343 independent cases per browser project,
+The current suite registers 396 independent cases per browser project,
 including every one of the 230 checks migrated from the retired page-hosted
-suite. It also includes a hostile Markdown corpus, property-based parser and
-sanitizer checks, and CommonMark differential coverage. Playwright owns
-discovery, isolation, browser lifecycle, and assertions; the specs drive real
-keyboard, pointer, form, and host-API workflows. Failed expectations, uncaught
-page errors, and browser console errors make the command exit nonzero.
+suite. It also includes a browser input and synthetic IME-composition contract,
+a hostile Markdown corpus, property-based parser and sanitizer checks, and
+CommonMark differential coverage. Playwright owns discovery, isolation,
+browser lifecycle, and assertions; the specs drive real keyboard, pointer,
+form, and host-API workflows. Failed expectations, uncaught page errors, and
+browser console errors make the command exit nonzero.
 
 For a faster Chromium-only development pass:
 

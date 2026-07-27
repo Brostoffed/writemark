@@ -5,10 +5,10 @@ browser lifecycle, fixture isolation, assertions, retries, reporting, traces,
 screenshots, and video. There is no page-hosted runner, wrapper spec, shared
 serial iterator, or browser-side pass/fail protocol.
 
-The current suite registers 343 independent cases per browser project,
+The current suite registers 396 independent cases per browser project,
 including every one of the 230 checks migrated from the previous suite and a
-dedicated security suite for hostile inputs, generated invariants, and
-CommonMark differential behavior.
+dedicated input/composition contract plus security coverage for hostile inputs,
+generated invariants, and CommonMark differential behavior.
 
 Before the browser projects, `npm test` also runs the Node-based
 `version-policy.test.mjs` checks. They prevent a release from retaining notes
@@ -87,6 +87,11 @@ npx playwright show-report output/playwright/report
   disabled state, value defaults, constraints, validity, and form association.
 - `editing.spec.js` drives live and source editing through real keyboard and
   selection input.
+- `input-contract.spec.js` verifies browser `beforeinput`/`input` reconciliation,
+  target ranges, replacement and deletion variants, grapheme-safe fallback
+  editing, software-keyboard paragraph events, cancellation and no-op behavior,
+  history/event integrity, readonly and disabled rollback, and synthetic IME
+  lifecycle, state-transition, completion, and action-gating contracts.
 - `completion.spec.js` verifies slash, code-language, and host-provided
   completion flows and ARIA state.
 - `markdown.spec.js` verifies parser behavior, code fences, headings, links,
