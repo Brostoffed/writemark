@@ -4308,7 +4308,57 @@ class WritemarkEditorElement extends HTMLElement {
     return a && b && a.start === b.start && a.end === b.end;
   }
 
+  _normalizedClipboardSelectionText(value) {
+    return String(value ?? "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  _selectionTextCoversLiveDocument(selectedText) {
+    const selected = this._normalizedClipboardSelectionText(selectedText);
+    if (!selected) return false;
+    const segments = this._liveEditables()
+      .map(editable => this._normalizedClipboardSelectionText(
+        this._plainText(editable)
+      ))
+      .filter(Boolean);
+    if (!segments.length) return false;
+    let cursor = 0;
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index];
+      const found = selected.indexOf(segment, cursor);
+      if (found === -1) return false;
+      if (index === 0 && found !== 0) return false;
+      cursor = found + segment.length;
+    }
+    return cursor === selected.length;
+  }
+  _opaqueIOSClipboardSelectionText() {
+    if (!this._isIOSWebKitRuntime() || this._readLiveSelection()) return null;
+    let selectedText = "";
+    for (const { selection } of this._liveSelectionCandidates()) {
+      try {
+        const candidate = this._normalizedClipboardSelectionText(
+          selection?.toString?.()
+        );
+        if (candidate.length > selectedText.length) selectedText = candidate;
+      } catch {}
+    }
+    return selectedText || null;
+  }
+  _opaqueIOSFullDocumentClipboardRange(selectedText = this._opaqueIOSClipboardSelectionText()) {
+    if (!selectedText) return null;
+    if (!this._selectionTextCoversLiveDocument(selectedText)) return null;
+    this._debug(2, "live.clipboard.full-selection-inferred", {
+      selectedTextLength: selectedText.length
+    });
+    return { start: 0, end: this._value.length };
+  }
   _clipboardRangeFromSelection(selection = this._getCurrentSelection()) {
+    const opaqueSelectionText = this._opaqueIOSClipboardSelectionText();
+    if (opaqueSelectionText) {
+      return this._opaqueIOSFullDocumentClipboardRange(opaqueSelectionText);
+    }
     if (!selection || selection.start === selection.end) return null;
     const start = Math.min(selection.start, selection.end);
     const end = Math.max(selection.start, selection.end);

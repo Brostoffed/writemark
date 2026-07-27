@@ -47,6 +47,48 @@ async function copy(editor, markdown, selection) {
   }, { markdown, selection });
 }
 
+async function copyWithOpaqueIOSSelection(editor, selectedText = null) {
+  return editor.host.evaluate((element, nextSelectedText) => {
+    const live = element.shadowRoot.querySelector(".live-editor");
+    const originalRuntime = element._isIOSWebKitRuntime;
+    const originalCandidates = element._liveSelectionCandidates;
+    const opaqueSelection = {
+      anchorNode: element,
+      anchorOffset: 0,
+      focusNode: element,
+      focusOffset: 0,
+      rangeCount: 1,
+      toString: () => nextSelectedText ?? live.innerText
+    };
+    element._isIOSWebKitRuntime = () => true;
+    element._liveSelectionCandidates = () => [{
+      channel: "document",
+      selection: opaqueSelection
+    }];
+
+    const output = {};
+    let prevented = false;
+    element._onLiveCopy({
+      clipboardData: {
+        files: [],
+        getData(type) {
+          return output[type] || "";
+        },
+        setData(type, value) {
+          output[type] = value;
+        }
+      },
+      preventDefault() {
+        prevented = true;
+      }
+    });
+
+    element._isIOSWebKitRuntime = originalRuntime;
+    element._liveSelectionCandidates = originalCandidates;
+    return { output, prevented };
+  }, selectedText);
+}
+
 test.describe("paste", () => {
   test("live paste intercepts plain Markdown and inserts canonical source", async ({ editor }) => {
     const result = await paste(editor, "", {
@@ -145,5 +187,49 @@ test.describe("copy", () => {
     const start = source.indexOf("site");
     const result = await copy(editor, source, [start, start + 4]);
     expect(result.output["text/plain"]).toBe("site");
+  });
+
+  test("opaque iOS Select All copies the complete canonical Markdown", async ({ editor }) => {
+    const source = [
+      "# Heading",
+      "",
+      "- [x] Built as a web component",
+      "",
+      "---",
+      "",
+      "| Feature | Status |",
+      "| --- | --- |",
+      "| Table | Works |",
+      "",
+      "```js",
+      "code()",
+      "```"
+    ].join("\n");
+    await editor.reset({ value: source });
+    await editor.setSelection(source.indexOf("Heading"));
+
+    const result = await copyWithOpaqueIOSSelection(editor);
+
+    expect(result.prevented).toBe(true);
+    expect(result.output).toMatchObject({
+      "text/markdown": source,
+      "text/plain": source,
+      "text/x-markdown": source
+    });
+    expect(result.output["text/html"]).toContain("<table");
+    expect(result.output["text/html"]).toContain("<pre><code");
+  });
+
+  test("opaque iOS partial selection is left to the native clipboard", async ({ editor }) => {
+    const source = "# Heading\n\nParagraph\n\nTail";
+    await editor.reset({ value: source });
+    await editor.setSelection(0, source.length);
+
+    const result = await copyWithOpaqueIOSSelection(editor, "Paragraph");
+
+    expect(result).toEqual({
+      output: {},
+      prevented: false
+    });
   });
 });

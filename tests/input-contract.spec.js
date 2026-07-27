@@ -200,6 +200,7 @@ async function installStaleIOSShadowSelection(editor, {
   unavailableDocumentSelection = false
 } = {}) {
   await editor.host.evaluate((element, options) => {
+    const nativeGetSelection = globalThis.getSelection?.bind(globalThis);
     const initialStart = element._domPositionFromSource(
       element.selectionStart
     );
@@ -276,7 +277,8 @@ async function installStaleIOSShadowSelection(editor, {
         focusNode = node;
         focusOffset = offset;
         rangeCount = 1;
-      })
+      }),
+      toString: () => nativeGetSelection?.()?.toString?.() || ""
     };
     element._iosSelectionSimulation = {
       getSelectionDescriptor: Object.getOwnPropertyDescriptor(
@@ -870,6 +872,66 @@ test.describe("live input contract", () => {
       end: value.length,
       start: 0
     });
+  });
+
+  test("browser Copy after opaque iOS Select All writes canonical Markdown", async ({ editor }) => {
+    const source = [
+      "# Heading",
+      "",
+      "- [x] Built as a web component",
+      "",
+      "---",
+      "",
+      "| Feature | Status |",
+      "| --- | --- |",
+      "| Table | Works |",
+      "",
+      "```js",
+      "code()",
+      "```"
+    ].join("\n");
+    const blankStart = source.indexOf("\n\n") + 1;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value: source
+    });
+    await editor.setSelection(blankStart);
+    await installStaleIOSShadowSelection(editor, {
+      opaqueDocumentSelection: true
+    });
+    const commandState = await editor.host.evaluate(element => {
+      window.testEvents.length = 0;
+      const selectAll = document.execCommand("selectAll");
+      const selectionText = element._liveSelectionCandidates()[0]
+        ?.selection?.toString?.() || "";
+      const inferredRange = element._opaqueIOSFullDocumentClipboardRange();
+      const copy = document.execCommand("copy");
+      return {
+        copy,
+        inferredRange,
+        selectAll,
+        selectionTextLength: selectionText.length
+      };
+    });
+
+    await editor.settle();
+    const copyEvents = await editor.events("md-copy");
+    const diagnostics = await editor.events("md-debug");
+    await removeStaleIOSShadowSelection(editor);
+
+    expect(commandState, JSON.stringify(commandState, null, 2)).toMatchObject({
+      inferredRange: { end: source.length, start: 0 },
+      selectionTextLength: expect.any(Number)
+    });
+    expect(commandState.selectionTextLength).toBeGreaterThan(0);
+    expect(copyEvents).toEqual([
+      expect.objectContaining({
+        markdown: source
+      })
+    ]);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      phase: "live.clipboard.full-selection-inferred"
+    }));
   });
 
   test("non-iOS selection-channel failure retains the scoped fallback host", async ({ editor }) => {
