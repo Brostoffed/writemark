@@ -479,38 +479,47 @@ test.describe("pointer selection", () => {
     expect(await editor.selection()).toEqual({ start: 1, end });
   });
 
-  test("iOS browser-owned drag can select across multiple live blocks", async ({ editor, page }) => {
-    const markdown = "alpha\nbeta\ngamma";
-    const end = markdown.indexOf("gamma") + 3;
-    await editor.reset({ value: markdown });
-    await editor.host.evaluate(element => {
-      element._testOriginalIOSWebKitRuntime = element._isIOSWebKitRuntime;
-      element._isIOSWebKitRuntime = () => true;
-    });
+  for (const runtime of [
+    { ios: true, label: "iOS" },
+    { ios: false, label: "desktop Safari" }
+  ]) {
+    test(`${runtime.label} browser-owned drag can select across multiple live blocks`, async ({ editor, page }) => {
+      const markdown = "alpha\nbeta\ngamma";
+      const end = markdown.indexOf("gamma") + 3;
+      await editor.reset({ value: markdown });
+      await editor.host.evaluate((element, ios) => {
+        element._testOriginalAppleWebKitRuntime = element._isAppleWebKitRuntime;
+        element._testOriginalIOSWebKitRuntime = element._isIOSWebKitRuntime;
+        element._isAppleWebKitRuntime = () => true;
+        element._isIOSWebKitRuntime = () => ios;
+      }, runtime.ios);
 
-    await dragSourceSelection(editor, page, 1, end);
-    const state = await editor.host.evaluate(element => {
-      const live = element.shadowRoot.querySelector(".live-editor");
-      const nativeSelection = element._readLiveSelection();
-      element._isIOSWebKitRuntime = element._testOriginalIOSWebKitRuntime;
-      delete element._testOriginalIOSWebKitRuntime;
-      return {
-        modelSelection: { ...element._selection },
-        nativeSelection,
-        nestedEditingHosts: live.querySelectorAll(
-          '[data-editable][contenteditable="true"]'
-        ).length,
-        rootEditingHost: live.getAttribute("contenteditable")
-      };
-    });
+      await dragSourceSelection(editor, page, 1, end);
+      const state = await editor.host.evaluate(element => {
+        const live = element.shadowRoot.querySelector(".live-editor");
+        const nativeSelection = element._readLiveSelection();
+        element._isAppleWebKitRuntime = element._testOriginalAppleWebKitRuntime;
+        element._isIOSWebKitRuntime = element._testOriginalIOSWebKitRuntime;
+        delete element._testOriginalAppleWebKitRuntime;
+        delete element._testOriginalIOSWebKitRuntime;
+        return {
+          modelSelection: { ...element._selection },
+          nativeSelection,
+          nestedEditingHosts: live.querySelectorAll(
+            '[data-editable][contenteditable="true"]'
+          ).length,
+          rootEditingHost: live.getAttribute("contenteditable")
+        };
+      });
 
-    expect(state).toEqual({
-      modelSelection: { direction: "forward", end, start: 1 },
-      nativeSelection: { direction: "forward", end, start: 1 },
-      nestedEditingHosts: 0,
-      rootEditingHost: "true"
+      expect(state).toEqual({
+        modelSelection: { direction: "forward", end, start: 1 },
+        nativeSelection: { direction: "forward", end, start: 1 },
+        nestedEditingHosts: 0,
+        rootEditingHost: "true"
+      });
     });
-  });
+  }
 
   test("Mouse hit testing below live horizontal rule reaches following row", async ({ editor }) => {
     const markdown = "alpha\n***\nbeta\ngamma";

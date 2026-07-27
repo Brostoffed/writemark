@@ -50,7 +50,7 @@ async function copy(editor, markdown, selection) {
 async function copyWithOpaqueIOSSelection(editor, selectedText = null) {
   return editor.host.evaluate((element, nextSelectedText) => {
     const live = element.shadowRoot.querySelector(".live-editor");
-    const originalRuntime = element._isIOSWebKitRuntime;
+    const originalRuntime = element._isAppleWebKitRuntime;
     const originalCandidates = element._liveSelectionCandidates;
     const opaqueSelection = {
       anchorNode: element,
@@ -60,7 +60,7 @@ async function copyWithOpaqueIOSSelection(editor, selectedText = null) {
       rangeCount: 1,
       toString: () => nextSelectedText ?? live.innerText
     };
-    element._isIOSWebKitRuntime = () => true;
+    element._isAppleWebKitRuntime = () => true;
     element._liveSelectionCandidates = () => [{
       channel: "document",
       selection: opaqueSelection
@@ -83,7 +83,7 @@ async function copyWithOpaqueIOSSelection(editor, selectedText = null) {
       }
     });
 
-    element._isIOSWebKitRuntime = originalRuntime;
+    element._isAppleWebKitRuntime = originalRuntime;
     element._liveSelectionCandidates = originalCandidates;
     return { output, prevented };
   }, selectedText);

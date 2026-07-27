@@ -206,11 +206,13 @@ async function dispatchSourceBeforeInput(editor, inputType) {
 
 async function installStaleIOSShadowSelection(editor, {
   deferDocumentSelection = false,
+  desktopSafari = false,
   opaqueDocumentSelection = false,
   unavailableDocumentSelection = false
 } = {}) {
   await editor.host.evaluate((element, options) => {
     const nativeGetSelection = globalThis.getSelection?.bind(globalThis);
+    const nativeLiveSelection = element._exposedLiveSelection();
     const initialStart = element._domPositionFromSource(
       element.selectionStart
     );
@@ -273,7 +275,15 @@ async function installStaleIOSShadowSelection(editor, {
       ) => {
         selectionWriteCount += 1;
         applyWhenReady(() => {
-          if (options.opaqueDocumentSelection) return;
+          if (options.opaqueDocumentSelection) {
+            nativeLiveSelection?.setBaseAndExtent?.(
+              nextAnchorNode,
+              nextAnchorOffset,
+              nextFocusNode,
+              nextFocusOffset
+            );
+            return;
+          }
           anchorNode = nextAnchorNode;
           anchorOffset = nextAnchorOffset;
           focusNode = nextFocusNode;
@@ -295,10 +305,12 @@ async function installStaleIOSShadowSelection(editor, {
         globalThis,
         "getSelection"
       ),
+      isAppleWebKitRuntime: element._isAppleWebKitRuntime,
       isIOSWebKitRuntime: element._isIOSWebKitRuntime,
       selectionWriteCount: () => selectionWriteCount
     };
-    element._isIOSWebKitRuntime = () => true;
+    element._isAppleWebKitRuntime = () => true;
+    element._isIOSWebKitRuntime = () => !options.desktopSafari;
     Object.defineProperty(element.shadowRoot, "activeElement", {
       configurable: true,
       get: () => null
@@ -315,6 +327,7 @@ async function installStaleIOSShadowSelection(editor, {
     });
   }, {
     deferDocumentSelection,
+    desktopSafari,
     opaqueDocumentSelection,
     unavailableDocumentSelection
   });
@@ -332,6 +345,8 @@ async function removeStaleIOSShadowSelection(editor) {
     const liveContentEditable = element._liveEditor.contentEditable;
     delete element.shadowRoot.activeElement;
     delete element.shadowRoot.getSelection;
+    element._isAppleWebKitRuntime = element._iosSelectionSimulation
+      .isAppleWebKitRuntime;
     element._isIOSWebKitRuntime = element._iosSelectionSimulation
       .isIOSWebKitRuntime;
     if (descriptor) {
@@ -476,6 +491,41 @@ async function composeSource(editor, updates) {
 }
 
 test.describe("live input contract", () => {
+  test("Apple WebKit runtime classification includes Safari and excludes Chromium", async ({ editor }) => {
+    const classification = await editor.host.evaluate(element => {
+      const desktopSafari = {
+        maxTouchPoints: 0,
+        platform: "MacIntel",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/616.1.14 (KHTML, like Gecko) Version/17.0 Safari/616.1.14"
+      };
+      const mobileSafari = {
+        maxTouchPoints: 5,
+        platform: "iPhone",
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+      };
+      const desktopChrome = {
+        maxTouchPoints: 0,
+        platform: "MacIntel",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+      };
+      return {
+        desktopChrome: element._isAppleWebKitRuntime(desktopChrome),
+        desktopSafari: element._isAppleWebKitRuntime(desktopSafari),
+        desktopSafariIsIOS: element._isIOSWebKitRuntime(desktopSafari),
+        mobileSafari: element._isAppleWebKitRuntime(mobileSafari),
+        mobileSafariIsIOS: element._isIOSWebKitRuntime(mobileSafari)
+      };
+    });
+
+    expect(classification).toEqual({
+      desktopChrome: false,
+      desktopSafari: true,
+      desktopSafariIsIOS: false,
+      mobileSafari: true,
+      mobileSafariIsIOS: true
+    });
+  });
+
   test("real keyboard input reports canonical value, source, and input type", async ({ editor, page }) => {
     await editor.reset({ value: "ab" });
     await editor.setSelection(1);
@@ -799,6 +849,138 @@ test.describe("live input contract", () => {
     )).toBe(false);
   });
 
+  test("desktop Safari Backspace and typing keep the caret at the edit point", async ({ editor }) => {
+    const value = "## Formatting\n\nUse **bold** and *italic*.";
+    const paragraphStart = value.indexOf("Use ");
+    const caret = paragraphStart + "Use ".length;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(caret);
+    await installStaleIOSShadowSelection(editor, {
+      desktopSafari: true,
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    await editor.live.press("Backspace");
+    await editor.live.press("X");
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(await editor.value()).toBe(
+      "## Formatting\n\nUseX**bold** and *italic*."
+    );
+    expect(restored).toMatchObject({
+      liveContentEditable: "true",
+      liveSelection: null,
+      liveSelectionAPI: true,
+      modelSelection: {
+        end: caret,
+        start: caret
+      },
+      nativeLiveSelection: {
+        end: caret,
+        start: caret
+      }
+    });
+    expect(restored.selectionWriteCount).toBeGreaterThan(0);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      inputType: "deleteContentBackward",
+      phase: "live.delete.browser-owned",
+      reason: "webkit-native-selection"
+    }));
+    expect(diagnostics.filter(event =>
+      event.phase === "live.dom.native-preserved"
+    )).toHaveLength(2);
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+      || event.phase === "live.selection.fallback-enabled"
+    )).toBe(false);
+  });
+
+  test("desktop Safari blank-line Backspace keeps focus for the next keystroke", async ({ editor }) => {
+    const value = "## Formatting\n\nUse **bold** and *italic*.";
+    const blankStart = value.indexOf("\n") + 1;
+    await editor.reset({
+      attributes: { debug: 2 },
+      value
+    });
+    await editor.setSelection(blankStart);
+    await installStaleIOSShadowSelection(editor, {
+      desktopSafari: true,
+      opaqueDocumentSelection: true
+    });
+    await editor.host.evaluate(() => {
+      window.testEvents.length = 0;
+    });
+
+    await editor.live.press("Backspace");
+    await editor.live.press("X");
+    await editor.live.press("Y");
+    await editor.settle();
+    const diagnostics = await editor.events("md-debug");
+    const restored = await removeStaleIOSShadowSelection(editor);
+
+    expect(await editor.value()).toBe(
+      "## FormattingXY\nUse **bold** and *italic*."
+    );
+    expect(restored).toMatchObject({
+      liveContentEditable: "true",
+      liveSelectionAPI: true,
+      modelSelection: {
+        end: blankStart + 1,
+        start: blankStart + 1
+      }
+    });
+    expect(restored.nativeLiveSelection).not.toBeNull();
+    expect(diagnostics.some(event =>
+      event.phase === "live.selection.restore-fallback"
+      || event.phase === "live.selection.fallback-enabled"
+    )).toBe(false);
+  });
+
+  test("desktop Safari real keyboard creates thematic breaks and fenced code blocks", async ({ editor, page }) => {
+    await editor.reset();
+    await editor.host.evaluate(element => {
+      element._testOriginalAppleWebKitRuntime = element._isAppleWebKitRuntime;
+      element._testOriginalIOSWebKitRuntime = element._isIOSWebKitRuntime;
+      element._isAppleWebKitRuntime = () => true;
+      element._isIOSWebKitRuntime = () => false;
+      element.focus();
+    });
+
+    await page.keyboard.type("---");
+    await editor.settle();
+    expect(await editor.value()).toBe("---");
+    await expect(editor.host.locator(".md-hr-line")).toHaveCount(1);
+
+    await editor.reset();
+    await editor.host.evaluate(element => element.focus());
+    await page.keyboard.type("```py");
+    await editor.host.getByRole("option", { name: /python/ }).click();
+    await page.keyboard.press("Enter");
+    await editor.settle();
+
+    expect(await editor.value()).toBe("```python\n\n```");
+    await expect(editor.host.locator(".md-code-block")).toHaveCount(1);
+    expect(await editor.selection()).toEqual({
+      end: "```python\n".length,
+      start: "```python\n".length
+    });
+
+    await editor.host.evaluate(element => {
+      element._isAppleWebKitRuntime = element._testOriginalAppleWebKitRuntime;
+      element._isIOSWebKitRuntime = element._testOriginalIOSWebKitRuntime;
+      delete element._testOriginalAppleWebKitRuntime;
+      delete element._testOriginalIOSWebKitRuntime;
+    });
+  });
+
   test("physical iOS pointer placement stays browser-owned when selection read-back is opaque", async ({ editor }) => {
     await editor.reset({
       attributes: { debug: 2 },
@@ -884,7 +1066,11 @@ test.describe("live input contract", () => {
     });
   });
 
-  test("browser Copy after opaque iOS Select All writes canonical Markdown", async ({ editor }) => {
+  for (const runtime of [
+    { desktopSafari: false, label: "iOS" },
+    { desktopSafari: true, label: "desktop Safari" }
+  ]) {
+    test(`browser Copy after opaque ${runtime.label} Select All writes canonical Markdown`, async ({ editor }) => {
     const source = [
       "# Heading",
       "",
@@ -907,6 +1093,7 @@ test.describe("live input contract", () => {
     });
     await editor.setSelection(blankStart);
     await installStaleIOSShadowSelection(editor, {
+      desktopSafari: runtime.desktopSafari,
       opaqueDocumentSelection: true
     });
     const commandState = await editor.host.evaluate(element => {
@@ -914,7 +1101,7 @@ test.describe("live input contract", () => {
       const selectAll = document.execCommand("selectAll");
       const selectionText = element._liveSelectionCandidates()[0]
         ?.selection?.toString?.() || "";
-      const inferredRange = element._opaqueIOSFullDocumentClipboardRange();
+      const inferredRange = element._opaqueAppleWebKitFullDocumentClipboardRange();
       const copy = document.execCommand("copy");
       return {
         copy,
@@ -942,9 +1129,10 @@ test.describe("live input contract", () => {
     expect(diagnostics).toContainEqual(expect.objectContaining({
       phase: "live.clipboard.full-selection-inferred"
     }));
-  });
+    });
+  }
 
-  test("non-iOS selection-channel failure retains the scoped fallback host", async ({ editor }) => {
+  test("non-Apple-WebKit selection-channel failure retains the scoped fallback host", async ({ editor }) => {
     await editor.reset({
       attributes: { debug: 2 },
       value: "alpha\nbeta"
@@ -952,9 +1140,9 @@ test.describe("live input contract", () => {
 
     const state = await editor.host.evaluate(element => {
       const originalCandidates = element._liveSelectionCandidates;
-      const originalRuntime = element._isIOSWebKitRuntime;
+      const originalRuntime = element._isAppleWebKitRuntime;
       element._liveSelectionCandidates = () => [];
-      element._isIOSWebKitRuntime = () => false;
+      element._isAppleWebKitRuntime = () => false;
       element.setSelectionRange(2, 2);
       const live = element.shadowRoot.querySelector(".live-editor");
       const result = {
@@ -965,7 +1153,7 @@ test.describe("live input contract", () => {
         rootEditingHost: live.getAttribute("contenteditable")
       };
       element._liveSelectionCandidates = originalCandidates;
-      element._isIOSWebKitRuntime = originalRuntime;
+      element._isAppleWebKitRuntime = originalRuntime;
       element._liveSelectionAPI = true;
       element._fallbackEditable = null;
       element._fallbackSelectionPending = false;
@@ -1902,10 +2090,15 @@ test.describe("live input contract", () => {
         ?.getSelectionDescriptor;
       const isIOSWebKitRuntime = element._iosSelectionSimulation
         ?.isIOSWebKitRuntime;
+      const isAppleWebKitRuntime = element._iosSelectionSimulation
+        ?.isAppleWebKitRuntime;
       delete element.shadowRoot.activeElement;
       delete element.shadowRoot.getSelection;
       if (isIOSWebKitRuntime) {
         element._isIOSWebKitRuntime = isIOSWebKitRuntime;
+      }
+      if (isAppleWebKitRuntime) {
+        element._isAppleWebKitRuntime = isAppleWebKitRuntime;
       }
       if (getSelectionDescriptor) {
         Object.defineProperty(

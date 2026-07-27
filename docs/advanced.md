@@ -531,7 +531,7 @@ Run the Chromium suite in a visible browser with:
 npm run test:browser:headed
 ```
 
-The current desktop suite registers 411 independent cases per browser project. It
+The current desktop suite registers 462 independent cases per browser project. It
 covers the public component contract, live and source editing, keyboard
 shortcuts, undo/redo, tasks, completion providers, tables, forms, validation,
 multiple instances, hostile rendering, property-based parser and sanitizer

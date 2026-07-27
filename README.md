@@ -492,7 +492,7 @@ complete input contract in an iPhone 13 Mobile Safari context. Playwright no
 longer provides a current WebKit build for macOS 14 and older, so the local
 config omits those unavailable WebKit projects on those hosts.
 
-The current desktop suite registers 411 independent cases per browser project,
+The current desktop suite registers 462 independent cases per browser project,
 including every one of the 230 checks migrated from the retired page-hosted
 suite. It also includes a browser input and synthetic IME-composition contract,
 a hostile Markdown corpus, property-based parser and sanitizer checks, and

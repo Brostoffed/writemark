@@ -1296,7 +1296,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._beforeInputSnapshot = null;
     this._beforeInputTarget = null;
     this._pendingFenceOpening = null;
-    this._iosNativeInput = null;
+    this._webKitNativeInput = null;
     this._liveSelectionAPI = null;
     this._fallbackEditable = null;
     this._fallbackSelectionPending = false;
@@ -1839,6 +1839,11 @@ class WritemarkEditorElement extends HTMLElement {
     this._updateValidity();
     if (preserveLiveDom && this._isLiveVisible() && !this._isComposing) {
       this._adoptNativeLiveDom({ previousValue, changes });
+      if (restoreSelection
+        && this._isAppleWebKitRuntime()
+        && !this._isIOSWebKitRuntime()) {
+        this._restoreLiveSelection(this._selection);
+      }
     } else {
       this._renderAll({ restoreSelection, previousValue, changes });
     }
@@ -2420,7 +2425,7 @@ class WritemarkEditorElement extends HTMLElement {
     if (this._isComposing || event?.isComposing) return;
     this._ignoreSelectionChangeCount = 0;
     this._structuredSelection = null;
-    this._iosNativeInput = null;
+    this._webKitNativeInput = null;
     const inputType = event?.inputType || "";
     const targetRange = this._sourceSelectionFromBeforeInput(event);
     const inputTarget = this._inputTargetFromBeforeInput(event, targetRange);
@@ -2670,8 +2675,8 @@ class WritemarkEditorElement extends HTMLElement {
     };
     return true;
   }
-  _shouldUseIOSNativeDeletion(event, inputType, targetRange) {
-    if (!event?.isTrusted || !this._isIOSWebKitRuntime()) return false;
+  _shouldUseAppleWebKitNativeDeletion(event, inputType, targetRange) {
+    if (!event?.isTrusted || !this._isAppleWebKitRuntime()) return false;
     if (!inputType.startsWith("delete")) return false;
     const selection = targetRange?.selection;
     if (!selection || selection.start === selection.end) return false;
@@ -2684,9 +2689,9 @@ class WritemarkEditorElement extends HTMLElement {
     });
   }
   _applyLiveDeletionBeforeInput(event, inputType, targetRange) {
-    if (this._shouldUseIOSNativeDeletion(event, inputType, targetRange)) {
+    if (this._shouldUseAppleWebKitNativeDeletion(event, inputType, targetRange)) {
       const selection = targetRange.selection;
-      this._iosNativeInput = {
+      this._webKitNativeInput = {
         changes: [{
           from: selection.start,
           to: selection.end,
@@ -2701,7 +2706,7 @@ class WritemarkEditorElement extends HTMLElement {
       };
       this._debug(1, "live.delete.browser-owned", {
         inputType,
-        reason: "ios-native-selection",
+        reason: "webkit-native-selection",
         targetSelection: selection
       });
       return false;
@@ -2792,10 +2797,10 @@ class WritemarkEditorElement extends HTMLElement {
     }
     this._ignoreSelectionChangeCount = 0;
     this._structuredSelection = null;
-    const iosNativeInput = this._iosNativeInput;
-    this._iosNativeInput = null;
-    if (iosNativeInput) {
-      this._commitIOSNativeInput(event, iosNativeInput);
+    const webKitNativeInput = this._webKitNativeInput;
+    this._webKitNativeInput = null;
+    if (webKitNativeInput) {
+      this._commitWebKitNativeInput(event, webKitNativeInput);
       return;
     }
     const inputTarget = this._beforeInputTarget;
@@ -2857,7 +2862,7 @@ class WritemarkEditorElement extends HTMLElement {
         restoreSelection: true,
         previousValue,
         changes: diffTextChange(previousValue, this._value),
-        preserveLiveDom: this._isIOSWebKitRuntime()
+        preserveLiveDom: this._isAppleWebKitRuntime()
       });
       if (!this._isComposing) this._scheduleCompletionUpdate();
       return;
@@ -2904,11 +2909,11 @@ class WritemarkEditorElement extends HTMLElement {
       restoreSelection: true,
       previousValue,
       changes: [{ from, to, insert }],
-      preserveLiveDom: this._isIOSWebKitRuntime() || pendingFenceOpening
+      preserveLiveDom: this._isAppleWebKitRuntime() || pendingFenceOpening
     });
     if (!this._isComposing) this._scheduleCompletionUpdate();
   }
-  _commitIOSNativeInput(event, pending) {
+  _commitWebKitNativeInput(event, pending) {
     const inputType = event?.inputType || pending.inputType;
     const before = this._beforeInputSnapshot || makeSnapshot(
       this._value,
@@ -3221,7 +3226,7 @@ class WritemarkEditorElement extends HTMLElement {
     if (anchor == null) return;
     const editable = this._liveEditableFromPoint(event.clientX, event.clientY);
     this._closeCompletion();
-    if (this._liveSelectionAPI === false || this._isIOSWebKitRuntime()) {
+    if (this._liveSelectionAPI === false || this._isAppleWebKitRuntime()) {
       if (this._liveSelectionAPI === false) this._fallbackEditable = editable;
       this._fallbackSelectionPending = false;
       this._selection = { start: anchor, end: anchor, direction: "none" };
@@ -3684,13 +3689,19 @@ class WritemarkEditorElement extends HTMLElement {
     const shadowActive = this._shadow?.activeElement || null;
     return Boolean(shadowActive);
   }
-  _isIOSWebKitRuntime() {
-    const navigator = globalThis.navigator;
+  _isIOSWebKitRuntime(navigator = globalThis.navigator) {
     const userAgent = navigator?.userAgent || "";
     const platform = navigator?.platform || "";
     const iOSDevice = /iPhone|iPad|iPod/.test(`${userAgent} ${platform}`)
       || (platform === "MacIntel" && Number(navigator?.maxTouchPoints) > 1);
     return iOSDevice && /AppleWebKit/.test(userAgent);
+  }
+  _isAppleWebKitRuntime(navigator = globalThis.navigator) {
+    const userAgent = navigator?.userAgent || "";
+    if (!/AppleWebKit/.test(userAgent)) return false;
+    if (this._isIOSWebKitRuntime(navigator)) return true;
+    return /Safari\//.test(userAgent)
+      && !/(?:Chrome|Chromium|CriOS|Edg|EdgiOS|OPR|OPiOS|FxiOS|Firefox|Android)/.test(userAgent);
   }
   _displayOffsetFromSelection(editable) {
     const sel = this._exposedLiveSelection();
@@ -3754,7 +3765,7 @@ class WritemarkEditorElement extends HTMLElement {
     const strictDocumentRestore = options.strictDocumentRestore ?? Boolean(
       candidates.length === 1
       && candidates[0].channel === "document"
-      && this._isIOSWebKitRuntime()
+      && this._isAppleWebKitRuntime()
     );
     let actual = null;
     let observed = null;
@@ -3872,7 +3883,7 @@ class WritemarkEditorElement extends HTMLElement {
       }
     }
     if (!actual) {
-      if (this._isIOSWebKitRuntime()) {
+      if (this._isAppleWebKitRuntime()) {
         this._liveSelectionAPI = true;
         this._fallbackEditable = null;
         this._fallbackSelectionPending = false;
@@ -4525,8 +4536,8 @@ class WritemarkEditorElement extends HTMLElement {
     }
     return cursor === selected.length;
   }
-  _opaqueIOSClipboardSelectionText() {
-    if (!this._isIOSWebKitRuntime() || this._readLiveSelection()) return null;
+  _opaqueAppleWebKitClipboardSelectionText() {
+    if (!this._isAppleWebKitRuntime() || this._readLiveSelection()) return null;
     let selectedText = "";
     for (const { selection } of this._liveSelectionCandidates()) {
       try {
@@ -4538,7 +4549,7 @@ class WritemarkEditorElement extends HTMLElement {
     }
     return selectedText || null;
   }
-  _opaqueIOSFullDocumentClipboardRange(selectedText = this._opaqueIOSClipboardSelectionText()) {
+  _opaqueAppleWebKitFullDocumentClipboardRange(selectedText = this._opaqueAppleWebKitClipboardSelectionText()) {
     if (!selectedText) return null;
     if (!this._selectionTextCoversLiveDocument(selectedText)) return null;
     this._debug(2, "live.clipboard.full-selection-inferred", {
@@ -4547,9 +4558,9 @@ class WritemarkEditorElement extends HTMLElement {
     return { start: 0, end: this._value.length };
   }
   _clipboardRangeFromSelection(selection = this._getCurrentSelection()) {
-    const opaqueSelectionText = this._opaqueIOSClipboardSelectionText();
+    const opaqueSelectionText = this._opaqueAppleWebKitClipboardSelectionText();
     if (opaqueSelectionText) {
-      return this._opaqueIOSFullDocumentClipboardRange(opaqueSelectionText);
+      return this._opaqueAppleWebKitFullDocumentClipboardRange(opaqueSelectionText);
     }
     if (!selection || selection.start === selection.end) return null;
     const start = Math.min(selection.start, selection.end);
