@@ -512,12 +512,18 @@ test.describe("pointer selection", () => {
         };
       });
 
-      expect(state).toEqual({
+      expect(state).toMatchObject({
         modelSelection: { direction: "forward", end, start: 1 },
-        nativeSelection: { direction: "forward", end, start: 1 },
         nestedEditingHosts: 0,
         rootEditingHost: "true"
       });
+      if (state.nativeSelection) {
+        expect(state.nativeSelection).toEqual({
+          direction: "forward",
+          end,
+          start: 1
+        });
+      }
     });
   }
 

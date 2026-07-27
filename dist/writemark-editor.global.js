@@ -4,7 +4,7 @@
  */
 (() => {
 /*
- * <writemark-editor> v1.5.0 live inline Markdown editor.
+ * <writemark-editor> v1.5.1 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -2477,6 +2477,15 @@ class WritemarkEditorElement extends HTMLElement {
       return;
     }
     if (!this._isSourceActive() && !this.disabled && !this.readonly
+      && this._isAppleWebKitRuntime() && !this._isIOSWebKitRuntime()
+      && event?.isTrusted && event?.cancelable
+      && (inputType === "insertText" || inputType === "insertReplacementText")
+      && event.data != null
+      && this._applyFallbackBeforeInput(event, inputTarget)) {
+      this._beforeInputTarget = null;
+      return;
+    }
+    if (!this._isSourceActive() && !this.disabled && !this.readonly
       && (inputType === "insertParagraph" || inputType === "insertLineBreak")) {
       event.preventDefault();
       this._beforeInputTarget = null;
@@ -2836,8 +2845,24 @@ class WritemarkEditorElement extends HTMLElement {
     const inferredDisplayCursor = changedDisplay
       ? changedDisplay.from + changedDisplay.insert.length
       : null;
+    const compositionSourceCursor = composing
+      && this._compositionSnapshot?.selection
+      && event?.data != null
+      ? this._compositionSnapshot.selection.start + String(event.data).length
+      : null;
+    const compositionDisplayStart = compositionSourceCursor != null
+      ? this._displayOffsetFromSourceOffset(
+          editable,
+          this._compositionSnapshot.selection.start
+        )
+      : null;
+    const compositionDisplayCursor = compositionDisplayStart == null
+      ? null
+      : compositionDisplayStart + String(event.data).length;
     const tableDisplayCursor = editable.dataset.editable === "cell"
-      ? (this._displayOffsetFromSelection(editable) ?? inferredDisplayCursor)
+      ? (compositionDisplayCursor
+        ?? this._displayOffsetFromSelection(editable)
+        ?? inferredDisplayCursor)
       : null;
     const tableEdit = editable.dataset.editable === "cell" ? this._tableCellInputEdit(editable, raw, tableDisplayCursor) : null;
     if (tableEdit) {
@@ -2886,7 +2911,9 @@ class WritemarkEditorElement extends HTMLElement {
     const liveCursor = liveSelection?.end != null
       ? liveSelection.end - from
       : (inferredDisplayCursor ?? insert.length - virtualPrefixLength);
-    const cursor = clamp(from + virtualPrefixLength + liveCursor, from, from + insert.length);
+    const cursor = compositionSourceCursor == null
+      ? clamp(from + virtualPrefixLength + liveCursor, from, from + insert.length)
+      : clamp(compositionSourceCursor, from, from + insert.length);
     if (!composing && this._applyLiveMarkdownInsertAfterInput(
       event?.inputType || "",
       previousValue,
@@ -3319,7 +3346,8 @@ class WritemarkEditorElement extends HTMLElement {
 
   _maybeHandleLineBoundaryKey(event, activeCell = null, activeEditable = null) {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || activeCell || this.mode === "preview") return false;
-    const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "");
+    const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "")
+      || (this._isAppleWebKitRuntime() && !this._isIOSWebKitRuntime());
     let boundary = null;
     if (!event.metaKey && (event.key === "Home" || event.key === "End")) boundary = event.key === "Home" ? "start" : "end";
     else if (isMac && event.metaKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) boundary = event.key === "ArrowLeft" ? "start" : "end";
@@ -4294,7 +4322,6 @@ class WritemarkEditorElement extends HTMLElement {
       const editable = this._closestEditable(node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement);
       if (editable) return editable;
     }
-    if (this._liveSelectionAPI !== false) return null;
     const focus = this._selection.direction === "backward"
       ? this._selection.start
       : this._selection.end;

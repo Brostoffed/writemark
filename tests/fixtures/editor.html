@@ -66,6 +66,24 @@
     ];
 
     window.testEvents = [];
+    window.testLiveSelection = element =>
+      element._liveSelectionCandidates()[0]?.selection || null;
+    window.testSetLiveRange = (element, range) => {
+      const selection = window.testLiveSelection(element);
+      if (!selection) return false;
+      selection.removeAllRanges();
+      if (typeof selection.setBaseAndExtent === "function") {
+        selection.setBaseAndExtent(
+          range.startContainer,
+          range.startOffset,
+          range.endContainer,
+          range.endOffset
+        );
+      } else {
+        selection.addRange(range);
+      }
+      return true;
+    };
     for (const type of trackedEvents) {
       editor.addEventListener(type, event => {
         const detail = event.detail || {};

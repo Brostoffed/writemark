@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.5.1 - 2026-07-27
+
+- Fixed repeated typing in desktop Safari by applying trusted text insertion to
+  canonical source transactions, preventing stale native carets from reversing
+  characters or inserting into the wrong rendered row, table cell, or fence.
+- Fixed macOS Command+Arrow line-boundary handling when Safari contracts run on
+  a non-macOS CI host.
+- Preserved canonical IME caret offsets across decorated inline Markdown and
+  escaped table-cell content.
+- Hardened the Playwright mobile-WebKit contract for opaque native selection
+  endpoints while keeping desktop Safari and iOS behavior independently tested.
+
 ## 1.5.0 - 2026-07-27
 
 - Added opt-in, event-first device diagnostics through the `debug` property and

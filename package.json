@@ -1,6 +1,6 @@
 {
   "name": "writemark-editor",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Writemark is a dependency-free live inline Markdown editor web component with slash commands, smart editing, form integration, source fallback, and no built-in toolbar.",
   "type": "module",
   "main": "./dist/writemark-editor.js",

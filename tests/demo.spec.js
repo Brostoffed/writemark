@@ -67,7 +67,9 @@ test.describe("published demo", () => {
     await expect(editor).toHaveJSProperty("debug", 2);
     await expect(editor).toHaveJSProperty("debugLog", true);
     await expect(page.locator("#log")).toContainText("md-debug live.beforeinput");
-    await expect(page.locator("#log")).toContainText("live.delete.source-backed");
+    await expect(page.locator("#log")).toContainText(
+      /live\.delete\.(?:source-backed|browser-owned)/
+    );
     await expect(copyDebug).toBeEnabled();
     await copyDebug.click();
     await expect(page.locator("#debug-copy-status")).toContainText(/^Copied \d+ debug events?\.$/);
@@ -80,12 +82,12 @@ test.describe("published demo", () => {
       url: expect.stringContaining("/demo/index.html"),
       userAgent: expect.any(String)
     });
-    expect(copied.events.map(event => event.phase)).toEqual(
-      expect.arrayContaining([
-        "live.beforeinput",
-        "live.delete.source-backed"
-      ])
-    );
+    const phases = copied.events.map(event => event.phase);
+    expect(phases).toContain("live.beforeinput");
+    expect(phases.some(phase =>
+      phase === "live.delete.source-backed"
+      || phase === "live.delete.browser-owned"
+    )).toBe(true);
     expect(JSON.stringify(copied.events)).not.toContain("alpha");
     await page.locator("#clear-log").click();
     await expect(page.locator("#log")).toBeEmpty();

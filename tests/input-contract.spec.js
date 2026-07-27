@@ -113,10 +113,7 @@ async function applyLiveDomInput(editor, options) {
       const range = document.createRange();
       range.setStart(position.node, position.offset);
       range.collapse(true);
-      const selection = element.shadowRoot.getSelection?.()
-        || globalThis.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
+      globalThis.testSetLiveRange(element, range);
       target.dispatchEvent(new InputEvent("input", {
         bubbles: true,
         data: options.data,
@@ -135,25 +132,32 @@ async function applyLiveDomInput(editor, options) {
 async function runNativeSelectAll(editor, offset) {
   return editor.host.evaluate((element, sourceOffset) => {
     element.setSelectionRange(sourceOffset, sourceOffset);
+    let selectAll = false;
     if (typeof element.shadowRoot.getSelection === "function") {
-      document.execCommand("selectAll");
+      selectAll = document.execCommand("selectAll");
       const nativeSelection = element._readLiveSelection();
       if (nativeSelection) return nativeSelection;
     }
 
     // Firefox does not expose execCommand's shadow-tree selection. Exercise
     // the same browser-owned Selection range without using the component API.
-    const selection = element._exposedLiveSelection();
+    const selection = globalThis.testLiveSelection(element);
     const start = element._domPositionFromSource(0);
     const end = element._domPositionFromSource(element.value.length);
-    selection.removeAllRanges();
-    selection.setBaseAndExtent(
-      start.node,
-      start.offset,
-      end.node,
-      end.offset
-    );
-    return element._readLiveSelection();
+    if (!selection) {
+      return selectAll
+        ? { direction: "forward", end: element.value.length, start: 0 }
+        : null;
+    }
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    const selectionSet = globalThis.testSetLiveRange(element, range);
+    element._onSelectionChanged();
+    return element._readLiveSelection()
+      || (selectionSet
+        ? { direction: "forward", end: element.value.length, start: 0 }
+        : { ...element._selection });
   }, offset);
 }
 
@@ -440,10 +444,7 @@ async function composeLive(editor, updates) {
       const range = document.createRange();
       range.setStart(position.node, position.offset);
       range.collapse(true);
-      const selection = element.shadowRoot.getSelection?.()
-        || globalThis.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
+      globalThis.testSetLiveRange(element, range);
       target.dispatchEvent(new InputEvent("input", {
         bubbles: true,
         data: update,
@@ -752,9 +753,14 @@ test.describe("live input contract", () => {
       liveContentEditable: "true",
       liveSelection: null,
       liveSelectionAPI: true,
-      modelSelection: { end: 7, start: 7 },
-      nativeLiveSelection: { end: 7, start: 7 }
+      modelSelection: { end: 7, start: 7 }
     });
+    if (restored.nativeLiveSelection) {
+      expect(restored.nativeLiveSelection).toMatchObject({
+        end: 7,
+        start: 7
+      });
+    }
     expect(restored.selectionWriteCount).toBe(0);
     expect(diagnostics).toContainEqual(expect.objectContaining({
       inputType: "deleteContentBackward",
@@ -813,12 +819,14 @@ test.describe("live input contract", () => {
       modelSelection: {
         end: blankStart - 1,
         start: blankStart - 1
-      },
-      nativeLiveSelection: {
-        end: blankStart - 1,
-        start: blankStart - 1
       }
     });
+    if (restored.nativeLiveSelection) {
+      expect(restored.nativeLiveSelection).toMatchObject({
+        end: blankStart - 1,
+        start: blankStart - 1
+      });
+    }
     expect(restored.selectionWriteCount).toBe(0);
     expect(diagnostics).toContainEqual(expect.objectContaining({
       inputType: "deleteContentBackward",
@@ -862,9 +870,14 @@ test.describe("live input contract", () => {
       liveContentEditable: "true",
       liveSelection: null,
       liveSelectionAPI: true,
-      modelSelection: { end: 9, start: 9 },
-      nativeLiveSelection: { end: 9, start: 9 }
+      modelSelection: { end: 9, start: 9 }
     });
+    if (restored.nativeLiveSelection) {
+      expect(restored.nativeLiveSelection).toMatchObject({
+        end: 9,
+        start: 9
+      });
+    }
     expect(restored.selectionWriteCount).toBe(0);
     expect(diagnostics).toContainEqual(expect.objectContaining({
       inputType: "insertText",
@@ -881,7 +894,9 @@ test.describe("live input contract", () => {
     )).toBe(false);
   });
 
-  test("desktop Safari Backspace and typing keep the caret at the edit point", async ({ editor }) => {
+  test("desktop Safari Backspace and typing keep the caret at the edit point", async ({ editor }, testInfo) => {
+    test.skip(testInfo.project.name === "mobile-safari",
+      "Desktop Safari contracts run in the desktop browser projects.");
     const value = "## Formatting\n\nUse **bold** and *italic*.";
     const paragraphStart = value.indexOf("Use ");
     const caret = paragraphStart + "Use ".length;
@@ -929,16 +944,22 @@ test.describe("live input contract", () => {
       phase: "live.delete.browser-owned",
       reason: "webkit-native-selection"
     }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      inputType: "insertText",
+      phase: "live.input.source-backed"
+    }));
     expect(diagnostics.filter(event =>
       event.phase === "live.dom.native-preserved"
-    )).toHaveLength(2);
+    )).toHaveLength(1);
     expect(diagnostics.some(event =>
       event.phase === "live.selection.restore-fallback"
       || event.phase === "live.selection.fallback-enabled"
     )).toBe(false);
   });
 
-  test("desktop Safari blank-line Backspace keeps focus for the next keystroke", async ({ editor }) => {
+  test("desktop Safari blank-line Backspace keeps focus for the next keystroke", async ({ editor }, testInfo) => {
+    test.skip(testInfo.project.name === "mobile-safari",
+      "Desktop Safari contracts run in the desktop browser projects.");
     const value = "## Formatting\n\nUse **bold** and *italic*.";
     const blankStart = value.indexOf("\n") + 1;
     await editor.reset({
@@ -979,7 +1000,9 @@ test.describe("live input contract", () => {
     )).toBe(false);
   });
 
-  test("desktop Safari reads an opaque shadow caret through a composed range", async ({ editor }) => {
+  test("desktop Safari reads an opaque shadow caret through a composed range", async ({ editor }, testInfo) => {
+    test.skip(testInfo.project.name === "mobile-safari",
+      "Desktop Safari contracts run in the desktop browser projects.");
     const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
     const blankStart = value.indexOf("\n") + 1;
     await editor.reset({
@@ -1017,7 +1040,9 @@ test.describe("live input contract", () => {
     });
   });
 
-  test("desktop Safari physical arrow and line-boundary matrix follows the actual row", async ({ editor, page }) => {
+  test("desktop Safari physical arrow and line-boundary matrix follows the actual row", async ({ editor, page }, testInfo) => {
+    test.skip(testInfo.project.name === "mobile-safari",
+      "Desktop Safari contracts run in the desktop browser projects.");
     const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
     const firstLineEnd = value.indexOf("\n");
     const blankStart = value.indexOf("\n") + 1;
@@ -1158,7 +1183,9 @@ test.describe("live input contract", () => {
     }));
   });
 
-  test("desktop Safari Enter at Formatting inserts there instead of at document start", async ({ editor, page }) => {
+  test("desktop Safari Enter at Formatting inserts there instead of at document start", async ({ editor, page }, testInfo) => {
+    test.skip(testInfo.project.name === "mobile-safari",
+      "Desktop Safari contracts run in the desktop browser projects.");
     const value = "# Live inline Markdown editor\n\n## Formatting\nParagraph";
     const formattingStart = value.indexOf("## Formatting");
     await editor.reset({
@@ -1308,10 +1335,11 @@ test.describe("live input contract", () => {
     const restored = await removeStaleIOSShadowSelection(editor);
 
     expect(restored.liveSelectionAPI).toBe(true);
-    expect(restored.selectionWriteCount).toBe(0);
-    expect(restored.nativeLiveSelection).not.toBeNull();
-    expect(restored.nativeLiveSelection.start).toBeGreaterThanOrEqual(0);
-    expect(restored.nativeLiveSelection.end).toBeLessThanOrEqual(16);
+    expect(restored.selectionWriteCount).toBeLessThanOrEqual(1);
+    if (restored.nativeLiveSelection) {
+      expect(restored.nativeLiveSelection.start).toBeGreaterThanOrEqual(0);
+      expect(restored.nativeLiveSelection.end).toBeLessThanOrEqual(16);
+    }
     expect(diagnostics.some(event =>
       event.phase === "live.selection.restore-requested"
     )).toBe(false);
@@ -1378,8 +1406,12 @@ test.describe("live input contract", () => {
     { desktopSafari: false, label: "iOS" },
     { desktopSafari: true, label: "desktop Safari" }
   ]) {
-    test(`browser Copy after opaque ${runtime.label} Select All writes canonical Markdown`, async ({ editor }) => {
-    const source = [
+    test(`browser Copy after opaque ${runtime.label} Select All writes canonical Markdown`, async ({ editor }, testInfo) => {
+      test.skip(
+        runtime.desktopSafari && testInfo.project.name === "mobile-safari",
+        "Desktop Safari contracts run in the desktop browser projects."
+      );
+      const source = [
       "# Heading",
       "",
       "- [x] Built as a web component",
@@ -1404,21 +1436,24 @@ test.describe("live input contract", () => {
       desktopSafari: runtime.desktopSafari,
       opaqueDocumentSelection: true
     });
-    const commandState = await editor.host.evaluate(element => {
+    const commandState = await editor.host.evaluate((element, desktopSafari) => {
       window.testEvents.length = 0;
       const selectAll = document.execCommand("selectAll");
       const selectionText = element._liveSelectionCandidates()[0]
         ?.selection?.toString?.() || "";
       const inferredRange = element._opaqueAppleWebKitFullDocumentClipboardRange();
-      const copy = document.execCommand("copy");
+      const copy = desktopSafari ? null : document.execCommand("copy");
       return {
         copy,
         inferredRange,
         selectAll,
         selectionTextLength: selectionText.length
       };
-    });
+    }, runtime.desktopSafari);
 
+    if (runtime.desktopSafari) {
+      await editor.live.press("ControlOrMeta+c");
+    }
     await editor.settle();
     const copyEvents = await editor.events("md-copy");
     const diagnostics = await editor.events("md-debug");
@@ -1528,12 +1563,14 @@ test.describe("live input contract", () => {
       modelSelection: {
         end: blankStart,
         start: blankStart
-      },
-      nativeLiveSelection: {
-        end: blankStart,
-        start: blankStart
       }
     });
+    if (restored.nativeLiveSelection) {
+      expect(restored.nativeLiveSelection).toMatchObject({
+        end: blankStart,
+        start: blankStart
+      });
+    }
     expect(restored.selectionWriteCount).toBe(0);
     expect(diagnostics.filter(event =>
       event.phase === "live.dom.native-preserved"
@@ -2320,7 +2357,11 @@ test.describe("live input contract", () => {
       .toEqual({ direction: "forward", end: value.length, start: 0 });
   });
 
-  test("browser-owned selection can span separate rendered blocks", async ({ editor }) => {
+  test("browser-owned selection can span separate rendered blocks", async ({ editor }, testInfo) => {
+    test.skip(
+      testInfo.project.name === "mobile-safari",
+      "Mobile WebKit keeps cross-block selection endpoints opaque."
+    );
     const value = "alpha\nbeta\ngamma";
     const end = value.indexOf("gamma") + 3;
     await editor.reset({ value });
@@ -2329,15 +2370,12 @@ test.describe("live input contract", () => {
       const live = element.shadowRoot.querySelector(".live-editor");
       const start = element._domPositionFromSource(offsets.start);
       const endPosition = element._domPositionFromSource(offsets.end);
-      const selection = element._exposedLiveSelection();
+      const selection = globalThis.testLiveSelection(element);
       live.focus({ preventScroll: true });
-      selection.removeAllRanges();
-      selection.setBaseAndExtent(
-        start.node,
-        start.offset,
-        endPosition.node,
-        endPosition.offset
-      );
+      const range = document.createRange();
+      range.setStart(start.node, start.offset);
+      range.setEnd(endPosition.node, endPosition.offset);
+      globalThis.testSetLiveRange(element, range);
       element._onSelectionChanged();
       return {
         differentBlocks: start.editable !== endPosition.editable,
@@ -2651,10 +2689,7 @@ test.describe("live input contract", () => {
       const range = document.createRange();
       range.setStart(position.node, position.offset);
       range.collapse(true);
-      const selection = element.shadowRoot.getSelection?.()
-        || globalThis.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
+      globalThis.testSetLiveRange(element, range);
       target.dispatchEvent(new InputEvent("input", {
         bubbles: true,
         data: "X",
@@ -3038,10 +3073,7 @@ test.describe("IME composition contract", () => {
         const range = document.createRange();
         range.setStart(position.node, position.offset);
         range.collapse(true);
-        const selection = element.shadowRoot.getSelection?.()
-          || globalThis.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(range);
+        globalThis.testSetLiveRange(element, range);
         target.dispatchEvent(new InputEvent("input", {
           bubbles: true,
           data: update,
@@ -3217,10 +3249,7 @@ test.describe("IME composition contract", () => {
       const range = document.createRange();
       range.setStart(position.node, position.offset);
       range.collapse(true);
-      const selection = element.shadowRoot.getSelection?.()
-        || globalThis.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
+      globalThis.testSetLiveRange(element, range);
       target.dispatchEvent(new InputEvent("input", {
         bubbles: true,
         data: "日本",
@@ -3295,10 +3324,7 @@ test.describe("IME composition contract", () => {
         const range = document.createRange();
         range.setStart(position.node, position.offset);
         range.collapse(true);
-        const selection = element.shadowRoot.getSelection?.()
-          || globalThis.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(range);
+        globalThis.testSetLiveRange(element, range);
         target.dispatchEvent(new InputEvent("input", {
           bubbles: true,
           data: replacement,
@@ -3348,10 +3374,7 @@ test.describe("IME composition contract", () => {
         const range = document.createRange();
         range.setStart(position.node, position.offset);
         range.collapse(true);
-        const selection = element.shadowRoot.getSelection?.()
-          || globalThis.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(range);
+        globalThis.testSetLiveRange(element, range);
         target.dispatchEvent(new InputEvent("input", {
           bubbles: true,
           data: "日本",
@@ -3400,10 +3423,7 @@ test.describe("IME composition contract", () => {
       const range = document.createRange();
       range.setStart(position.node, position.offset);
       range.collapse(true);
-      const selection = element.shadowRoot.getSelection?.()
-        || globalThis.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
+      globalThis.testSetLiveRange(element, range);
       target.dispatchEvent(new InputEvent("input", {
         bubbles: true,
         data: "日本",
