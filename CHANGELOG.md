@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.5.2 - 2026-08-01
+
+- Kept slash-command and language-completion menus inside the visual viewport.
+  The menu now moves above the caret when the lower space is too small.
+- Updated open completion menus after page scrolling, editor scrolling,
+  viewport resizing, and mobile visual-viewport changes.
+- Added Playwright geometry tests for lower placement, upper placement,
+  viewport resizing, narrow viewports, active-item visibility, and cleanup.
+
 ## 1.5.1 - 2026-07-27
 
 - Fixed repeated typing in desktop Safari by applying trusted text insertion to

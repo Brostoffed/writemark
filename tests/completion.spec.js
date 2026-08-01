@@ -28,6 +28,46 @@ async function openDisabledCompletion(editor, page) {
   await expect(editor.completion).toBeVisible();
 }
 
+async function completionGeometry(editor) {
+  return editor.completion.evaluate(popup => {
+    const selected = popup.querySelector('[role="option"][aria-selected="true"]');
+    const popupRect = popup.getBoundingClientRect();
+    const selectedRect = selected?.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const viewportRect = {
+      bottom: (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight),
+      left: viewport?.offsetLeft || 0,
+      right: (viewport?.offsetLeft || 0) + (viewport?.width || window.innerWidth),
+      top: viewport?.offsetTop || 0
+    };
+    return {
+      placement: popup.dataset.placement || null,
+      popup: {
+        bottom: popupRect.bottom,
+        height: popupRect.height,
+        left: popupRect.left,
+        right: popupRect.right,
+        top: popupRect.top,
+        width: popupRect.width
+      },
+      selected: selectedRect ? {
+        bottom: selectedRect.bottom,
+        top: selectedRect.top
+      } : null,
+      viewport: viewportRect
+    };
+  });
+}
+
+function expectCompletionInsideViewport(geometry) {
+  expect(geometry.popup.top).toBeGreaterThanOrEqual(geometry.viewport.top + 7);
+  expect(geometry.popup.bottom).toBeLessThanOrEqual(geometry.viewport.bottom - 7);
+  expect(geometry.popup.left).toBeGreaterThanOrEqual(geometry.viewport.left + 7);
+  expect(geometry.popup.right).toBeLessThanOrEqual(geometry.viewport.right - 7);
+  expect(geometry.selected?.top).toBeGreaterThanOrEqual(geometry.popup.top - 1);
+  expect(geometry.selected?.bottom).toBeLessThanOrEqual(geometry.popup.bottom + 1);
+}
+
 test.describe("completion UI", () => {
   test("Completion skips disabled option and exposes disabled state", async ({ editor, page }) => {
     await openDisabledCompletion(editor, page);
@@ -144,6 +184,103 @@ test.describe("completion UI", () => {
       activeIndex: 0,
       overflowed: true,
       selectedVisible: true
+    });
+  });
+
+  test("keeps the completion popover below the caret when the viewport has space", async ({ editor, page }) => {
+    await page.setViewportSize({ width: 800, height: 800 });
+    await editor.reset();
+    await editor.host.evaluate(element => element.focus());
+    await page.keyboard.type("/");
+
+    await expect(editor.completion).toBeVisible();
+    await expect(editor.completion).toHaveAttribute("data-placement", "below");
+    expectCompletionInsideViewport(await completionGeometry(editor));
+  });
+
+  test("flips the completion popover above a caret near the viewport bottom", async ({ editor, page }) => {
+    await page.setViewportSize({ width: 800, height: 600 });
+    await editor.reset();
+    await editor.host.evaluate(element => {
+      element.style.position = "fixed";
+      element.style.right = "24px";
+      element.style.bottom = "8px";
+      element.style.width = "480px";
+      element.style.setProperty("--md-editor-min-height", "72px");
+      element.focus();
+    });
+    await page.keyboard.type("/");
+
+    await expect(editor.completion).toBeVisible();
+    await expect(editor.completion).toHaveAttribute("data-placement", "above");
+    expectCompletionInsideViewport(await completionGeometry(editor));
+
+    await page.keyboard.press("End");
+    await expect.poll(() => completionGeometry(editor)).toMatchObject({
+      placement: "above"
+    });
+    expectCompletionInsideViewport(await completionGeometry(editor));
+  });
+
+  test("repositions an open completion popover after the viewport height changes", async ({ editor, page }) => {
+    await page.setViewportSize({ width: 800, height: 800 });
+    await editor.reset();
+    await editor.host.evaluate(element => {
+      element.style.position = "fixed";
+      element.style.left = "24px";
+      element.style.top = "120px";
+      element.style.width = "480px";
+      element.style.setProperty("--md-editor-min-height", "72px");
+      element.focus();
+    });
+    await page.keyboard.type("/");
+
+    await expect(editor.completion).toHaveAttribute("data-placement", "below");
+    await page.setViewportSize({ width: 800, height: 300 });
+    await expect(editor.completion).toHaveAttribute("data-placement", "above");
+    expectCompletionInsideViewport(await completionGeometry(editor));
+
+    await page.setViewportSize({ width: 800, height: 800 });
+    await expect(editor.completion).toHaveAttribute("data-placement", "below");
+    expectCompletionInsideViewport(await completionGeometry(editor));
+  });
+
+  test("keeps the completion popover inside a narrow viewport and clears placement styles", async ({ editor, page }) => {
+    await page.setViewportSize({ width: 320, height: 600 });
+    await editor.reset();
+    await editor.host.evaluate(element => {
+      element.style.position = "fixed";
+      element.style.right = "0";
+      element.style.top = "24px";
+      element.style.width = "120px";
+      element.style.setProperty("--md-editor-min-height", "72px");
+      element.focus();
+    });
+    await page.keyboard.type("/");
+
+    await expect(editor.completion).toBeVisible();
+    const geometry = await completionGeometry(editor);
+    expect(geometry.popup.width).toBeLessThanOrEqual(304);
+    expectCompletionInsideViewport(geometry);
+
+    await page.keyboard.press("Escape");
+    await expect(editor.completion).toBeHidden();
+    expect(await editor.completion.evaluate(popup => ({
+      left: popup.style.left,
+      maxHeight: popup.style.maxHeight,
+      maxWidth: popup.style.maxWidth,
+      minWidth: popup.style.minWidth,
+      placement: popup.dataset.placement || null,
+      top: popup.style.top,
+      width: popup.style.width
+    }))).toEqual({
+      left: "",
+      maxHeight: "",
+      maxWidth: "",
+      minWidth: "",
+      placement: null,
+      top: "",
+      width: ""
     });
   });
 

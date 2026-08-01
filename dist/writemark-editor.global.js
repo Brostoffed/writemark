@@ -4,7 +4,7 @@
  */
 (() => {
 /*
- * <writemark-editor> v1.5.1 live inline Markdown editor.
+ * <writemark-editor> v1.5.2 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -1329,6 +1329,9 @@ class WritemarkEditorElement extends HTMLElement {
     this._validationVisible = false;
     this._previewRenderTimer = 0;
     this._completionUpdateFrame = 0;
+    this._completionPositionFrame = 0;
+    this._completionVisualViewport = null;
+    this._boundCompletionViewportChange = () => this._scheduleCompletionPositionUpdate();
     this._virtualState = { active: false, start: 0, end: 0, total: 0, lineHeight: 24 };
     this._virtualScrollFrame = 0;
     this._actions = new Map();
@@ -1358,15 +1361,18 @@ class WritemarkEditorElement extends HTMLElement {
       this._updateFormValue();
       this._updateValidity();
     }
+    if (this._completion.open) this._startCompletionPositionTracking();
   }
   disconnectedCallback() {
     this._selectionRestoreRequest += 1;
     this._completion.abort?.abort();
     if (this._previewRenderTimer) globalThis.clearTimeout?.(this._previewRenderTimer);
     if (this._completionUpdateFrame) cancelAnimationFrame(this._completionUpdateFrame);
+    this._stopCompletionPositionTracking();
     if (this._virtualScrollFrame) cancelAnimationFrame(this._virtualScrollFrame);
     this._previewRenderTimer = 0;
     this._completionUpdateFrame = 0;
+    this._completionPositionFrame = 0;
     this._virtualScrollFrame = 0;
   }
   attributeChangedCallback(name, oldValue, newValue) {
@@ -1634,7 +1640,7 @@ class WritemarkEditorElement extends HTMLElement {
         .preview blockquote { border-inline-start: 4px solid var(--md-editor-border); margin-inline-start: 0; padding-inline-start: 1em; color: var(--md-editor-muted); }
         .preview img { max-inline-size: 100%; block-size: auto; }
         .preview .md-table-wrap { overflow: auto; } .preview table { border-collapse: collapse; inline-size: 100%; } .preview th, .preview td { border: 1px solid var(--md-editor-border); padding: 6px 8px; }
-        .completion-popup { position: absolute; z-index: 20; min-inline-size: 240px; max-inline-size: min(420px, 90vw); max-block-size: min(320px, 50vh); overflow: auto; border: 1px solid var(--md-editor-popup-border); border-radius: var(--md-editor-radius); background: var(--md-editor-popup-bg); color: var(--md-editor-popup-fg); box-shadow: var(--md-editor-popup-shadow); padding: 4px; }
+        .completion-popup { position: absolute; z-index: 20; box-sizing: border-box; min-inline-size: min(240px, calc(100vw - 16px)); max-inline-size: min(420px, calc(100vw - 16px)); max-block-size: min(320px, 50vh); overflow: auto; border: 1px solid var(--md-editor-popup-border); border-radius: var(--md-editor-radius); background: var(--md-editor-popup-bg); color: var(--md-editor-popup-fg); box-shadow: var(--md-editor-popup-shadow); padding: 4px; }
         .completion-popup[hidden] { display: none; }
         @keyframes md-editor-pop { from { opacity: 0; transform: translateY(-3px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
         .completion-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
@@ -5161,18 +5167,19 @@ class WritemarkEditorElement extends HTMLElement {
     try { Promise.resolve(selectedProvider.getItems(selectedMatch, ctx, abort.signal)).then(items => { if (abort.signal.aborted || this._completion.requestId !== requestId) return; const normalized = this._normalizeCompletionItems(items); if (!normalized.length) { this._closeCompletion(); return; } this._openCompletion(selectedProvider.id, selectedMatch, normalized); }).catch(error => { if (!abort.signal.aborted) { this._emitError("completion", error, true, { providerId: selectedProvider.id }); this._closeCompletion(); } }); } catch (error) { this._emitError("completion", error, true, { providerId: selectedProvider.id }); this._closeCompletion(); }
   }
   _normalizeCompletionItems(items) { const seen = new Set(); const out = []; for (const item of items || []) { if (!item?.id || !item?.label) continue; const key = `${item.kind}:${item.id}`; if (seen.has(key)) continue; seen.add(key); out.push(item); } return out; }
-  _openCompletion(providerId, match, items) { const was = this._completion.open; this._completion.open = true; this._completion.providerId = providerId; this._completion.match = match; this._completion.items = items; const preferred = clamp(this._completion.activeIndex, 0, items.length - 1); this._completion.activeIndex = this._enabledCompletionIndex(preferred, 1); this._renderCompletion(); if (!was) this._dispatch("md-completion-open", { providerId, match, items }); }
+  _openCompletion(providerId, match, items) { const was = this._completion.open; this._completion.open = true; this._completion.providerId = providerId; this._completion.match = match; this._completion.items = items; const preferred = clamp(this._completion.activeIndex, 0, items.length - 1); this._completion.activeIndex = this._enabledCompletionIndex(preferred, 1); if (!was) this._startCompletionPositionTracking(); this._renderCompletion(); if (!was) this._dispatch("md-completion-open", { providerId, match, items }); }
   _closeCompletion() {
     const wasOpen = this._completion.open;
     const detail = { providerId: this._completion.providerId, match: this._completion.match };
     this._completion.abort?.abort();
     this._completion = { ...this._completion, open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: this._completion.requestId + 1, abort: null };
+    this._stopCompletionPositionTracking();
     this._renderCompletion();
     if (wasOpen) this._dispatch("md-completion-close", detail);
   }
   _renderCompletion() {
     if (!this._completionPopup) return; const open = this._completion.open && this._completion.items.length > 0; this._completionPopup.hidden = !open; const controller = this._isSourceActive() ? this._sourceTextarea : this._liveEditor; controller?.setAttribute("aria-expanded", open ? "true" : "false");
-    if (!open) { this._completionPopup.innerHTML = ""; this._completionPopup.scrollTop = 0; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
+    if (!open) { this._completionPopup.innerHTML = ""; this._completionPopup.scrollTop = 0; this._completionPopup.style.left = ""; this._completionPopup.style.top = ""; this._completionPopup.style.width = ""; this._completionPopup.style.minWidth = ""; this._completionPopup.style.maxWidth = ""; this._completionPopup.style.maxHeight = ""; delete this._completionPopup.dataset.placement; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
     const previousScrollTop = this._completionPopup.scrollTop;
     const activeId = this._completion.activeIndex >= 0 ? `${this._ids.completion}-item-${this._completion.activeIndex}` : null;
     if (activeId) controller?.setAttribute("aria-activedescendant", activeId); else controller?.removeAttribute("aria-activedescendant");
@@ -5192,12 +5199,82 @@ class WritemarkEditorElement extends HTMLElement {
     if (optionTop < visibleTop) popup.scrollTop = optionTop;
     else if (optionBottom > visibleBottom) popup.scrollTop = optionBottom - popup.clientHeight;
   }
+  _startCompletionPositionTracking() {
+    globalThis.addEventListener?.("resize", this._boundCompletionViewportChange);
+    globalThis.addEventListener?.("scroll", this._boundCompletionViewportChange, true);
+    const viewport = globalThis.visualViewport || null;
+    if (this._completionVisualViewport && this._completionVisualViewport !== viewport) {
+      this._completionVisualViewport.removeEventListener?.("resize", this._boundCompletionViewportChange);
+      this._completionVisualViewport.removeEventListener?.("scroll", this._boundCompletionViewportChange);
+    }
+    this._completionVisualViewport = viewport;
+    viewport?.addEventListener?.("resize", this._boundCompletionViewportChange);
+    viewport?.addEventListener?.("scroll", this._boundCompletionViewportChange);
+  }
+  _stopCompletionPositionTracking() {
+    globalThis.removeEventListener?.("resize", this._boundCompletionViewportChange);
+    globalThis.removeEventListener?.("scroll", this._boundCompletionViewportChange, true);
+    this._completionVisualViewport?.removeEventListener?.("resize", this._boundCompletionViewportChange);
+    this._completionVisualViewport?.removeEventListener?.("scroll", this._boundCompletionViewportChange);
+    this._completionVisualViewport = null;
+    if (this._completionPositionFrame) cancelAnimationFrame(this._completionPositionFrame);
+    this._completionPositionFrame = 0;
+  }
+  _scheduleCompletionPositionUpdate() {
+    if (!this._completion.open || !this._completionPopup || this._completionPositionFrame) return;
+    this._completionPositionFrame = requestAnimationFrame(() => {
+      this._completionPositionFrame = 0;
+      if (!this._completion.open || !this._completionPopup) return;
+      this._positionCompletionPopup();
+      this._scrollActiveCompletionIntoView();
+    });
+  }
+  _completionViewportRect() {
+    const viewport = globalThis.visualViewport;
+    const documentElement = globalThis.document?.documentElement;
+    const width = Math.max(0, Number(viewport?.width) || globalThis.innerWidth || documentElement?.clientWidth || 0);
+    const height = Math.max(0, Number(viewport?.height) || globalThis.innerHeight || documentElement?.clientHeight || 0);
+    const left = Number(viewport?.offsetLeft) || 0;
+    const top = Number(viewport?.offsetTop) || 0;
+    return { left, top, right: left + width, bottom: top + height, width, height };
+  }
   _positionCompletionPopup() {
-    const shell = this._shadow.querySelector(".editor-shell"); if (!shell || !this._completionPopup) return; const shellRect = shell.getBoundingClientRect(); let rect = null;
+    const shell = this._shadow.querySelector(".editor-shell"); if (!shell || !this._completionPopup) return; const popup = this._completionPopup; const shellRect = shell.getBoundingClientRect(); let rect = null;
     try { const sel = this._shadow.getSelection?.() || globalThis.getSelection?.(); if (sel?.rangeCount) rect = sel.getRangeAt(0).getBoundingClientRect(); } catch {}
     if (!rect || (!rect.width && !rect.height)) { const target = this._domPositionFromSource(this._selection.start)?.editable || this._sourceTextarea; rect = target?.getBoundingClientRect?.(); }
-    const left = clamp((rect?.left ?? shellRect.left) - shellRect.left, 4, Math.max(4, shellRect.width - 260)); const top = clamp((rect?.bottom ?? shellRect.top) - shellRect.top + 6, 4, Math.max(4, shellRect.height - 16));
-    this._completionPopup.style.left = `${left}px`; this._completionPopup.style.top = `${top}px`;
+    const anchor = rect || shellRect;
+    const viewport = this._completionViewportRect();
+    const margin = 8;
+    const gap = 6;
+    const availableWidth = Math.max(0, viewport.width - (margin * 2));
+    popup.style.width = "";
+    popup.style.minWidth = `${Math.min(240, availableWidth)}px`;
+    popup.style.maxWidth = `${availableWidth}px`;
+    popup.style.maxHeight = "";
+    let popupRect = popup.getBoundingClientRect();
+    popup.style.width = `${popupRect.width}px`;
+    popupRect = popup.getBoundingClientRect();
+    const belowSpace = Math.max(0, viewport.bottom - margin - anchor.bottom - gap);
+    const aboveSpace = Math.max(0, anchor.top - gap - viewport.top - margin);
+    const placement = belowSpace >= popupRect.height || belowSpace >= aboveSpace ? "below" : "above";
+    const availableHeight = placement === "above" ? aboveSpace : belowSpace;
+    popup.style.maxHeight = `${Math.max(0, Math.min(popupRect.height, availableHeight))}px`;
+    popupRect = popup.getBoundingClientRect();
+    const minimumLeft = viewport.left + margin;
+    const maximumLeft = Math.max(minimumLeft, viewport.right - margin - popupRect.width);
+    const viewportLeft = clamp(anchor.left, minimumLeft, maximumLeft);
+    const desiredTop = placement === "above"
+      ? anchor.top - gap - popupRect.height
+      : anchor.bottom + gap;
+    const minimumTop = viewport.top + margin;
+    const maximumTop = Math.max(minimumTop, viewport.bottom - margin - popupRect.height);
+    const viewportTop = clamp(desiredTop, minimumTop, maximumTop);
+    popup.style.left = "0px";
+    popup.style.top = "0px";
+    const positioningOrigin = popup.getBoundingClientRect();
+    popup.dataset.placement = placement;
+    popup.style.left = `${viewportLeft - positioningOrigin.left}px`;
+    popup.style.top = `${viewportTop - positioningOrigin.top}px`;
   }
   _enabledCompletionIndex(start, direction = 1) {
     const n = this._completion.items.length;
