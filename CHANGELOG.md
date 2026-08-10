@@ -16,6 +16,8 @@
   existing tag, including tags at the start of a line.
 - Required a space after an ATX heading marker. A lone `#` now stays ordinary
   text so it can start tag input without changing the line font size.
+- Kept a completion popover inside the active editor when it fits. A clipped
+  caret row now scrolls into view before the popover opens.
 - Added positive, negative, boundary, event, form, mode, multiple-editor,
   completion, activation, security, undo, and deterministic fuzz coverage for
   tags across Chromium and Firefox.
@@ -23,8 +25,8 @@
   README, generated bundles, and live demo for tag parsing and host catalogs.
 - Expanded the live demo with a document tag index, editable host catalog,
   explicit tag creation, tag activation, host action buttons, and live state.
-- Replaced the README demo GIF with real tag indexing, host completion,
-  explicit creation, catalog persistence, and canonical source flows.
+- Replaced the README demo GIF with core Markdown editing, tag indexing, host
+  completion, explicit creation, catalog persistence, and source flows.
 
 ## 1.5.2 - 2026-08-01
 

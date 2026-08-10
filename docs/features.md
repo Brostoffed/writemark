@@ -146,9 +146,10 @@ Completion keyboard behavior:
 
 Disabled completion items are skipped and exposed with disabled ARIA state.
 
-The completion menu stays inside the visual viewport. It opens below the caret
-when space permits and moves above the caret when the lower space is too small.
-The menu updates after viewport size changes and page or editor scrolling.
+The completion menu stays inside the visual viewport. When the full menu fits,
+it also stays inside the active editing surface. A clipped caret row scrolls
+into view before the menu opens. The menu moves above the caret when the lower
+space is too small. It updates after viewport size changes and scrolling.
 
 Typing a fence and partial language, such as `` ```py ``, opens language
 completion. Aliases such as `py`, `js`, `ts`, `yml`, and `md` rank their full

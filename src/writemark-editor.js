@@ -5451,7 +5451,7 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _renderCompletion() {
     if (!this._completionPopup) return; const open = this._completion.open && this._completion.items.length > 0; this._completionPopup.hidden = !open; const controller = this._isSourceActive() ? this._sourceTextarea : this._liveEditor; controller?.setAttribute("aria-expanded", open ? "true" : "false");
-    if (!open) { this._completionPopup.innerHTML = ""; this._completionPopup.scrollTop = 0; this._completionPopup.style.left = ""; this._completionPopup.style.top = ""; this._completionPopup.style.width = ""; this._completionPopup.style.minWidth = ""; this._completionPopup.style.maxWidth = ""; this._completionPopup.style.maxHeight = ""; delete this._completionPopup.dataset.placement; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
+    if (!open) { this._completionPopup.innerHTML = ""; this._completionPopup.scrollTop = 0; this._completionPopup.style.left = ""; this._completionPopup.style.top = ""; this._completionPopup.style.width = ""; this._completionPopup.style.minWidth = ""; this._completionPopup.style.maxWidth = ""; this._completionPopup.style.maxHeight = ""; delete this._completionPopup.dataset.boundary; delete this._completionPopup.dataset.placement; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
     const previousScrollTop = this._completionPopup.scrollTop;
     const activeId = this._completion.activeIndex >= 0 ? `${this._ids.completion}-item-${this._completion.activeIndex}` : null;
     if (activeId) controller?.setAttribute("aria-activedescendant", activeId); else controller?.removeAttribute("aria-activedescendant");
@@ -5510,11 +5510,33 @@ class WritemarkEditorElement extends HTMLElement {
     const top = Number(viewport?.offsetTop) || 0;
     return { left, top, right: left + width, bottom: top + height, width, height };
   }
+  _scrollCompletionAnchorIntoView(anchor, surface) {
+    if (!anchor || !surface || surface.scrollHeight <= surface.clientHeight) return false;
+    const surfaceRect = surface.getBoundingClientRect();
+    const inset = 8;
+    const visibleTop = surfaceRect.top + inset;
+    const visibleBottom = surfaceRect.bottom - inset;
+    const delta = anchor.top < visibleTop
+      ? anchor.top - visibleTop
+      : anchor.bottom > visibleBottom
+        ? anchor.bottom - visibleBottom
+        : 0;
+    if (Math.abs(delta) < 1) return false;
+    const previousScrollTop = surface.scrollTop;
+    surface.scrollTop += delta;
+    return Math.abs(surface.scrollTop - previousScrollTop) >= 1;
+  }
   _positionCompletionPopup() {
-    const shell = this._shadow.querySelector(".editor-shell"); if (!shell || !this._completionPopup) return; const popup = this._completionPopup; const shellRect = shell.getBoundingClientRect(); let rect = null;
-    try { const sel = this._shadow.getSelection?.() || globalThis.getSelection?.(); if (sel?.rangeCount) rect = sel.getRangeAt(0).getBoundingClientRect(); } catch {}
-    if (!rect || (!rect.width && !rect.height)) { const target = this._domPositionFromSource(this._selection.start)?.editable || this._sourceTextarea; rect = target?.getBoundingClientRect?.(); }
-    const anchor = rect || shellRect;
+    const shell = this._shadow.querySelector(".editor-shell"); if (!shell || !this._completionPopup) return; const popup = this._completionPopup; const shellRect = shell.getBoundingClientRect();
+    const surface = this._isSourceActive() ? this._sourceTextarea : this._liveEditor;
+    const readAnchor = () => {
+      let rect = null;
+      try { const sel = this._shadow.getSelection?.() || globalThis.getSelection?.(); if (sel?.rangeCount) rect = sel.getRangeAt(0).getBoundingClientRect(); } catch {}
+      if (!rect || (!rect.width && !rect.height)) { const target = this._domPositionFromSource(this._selection.start)?.editable || this._sourceTextarea; rect = target?.getBoundingClientRect?.(); }
+      return rect || shellRect;
+    };
+    let anchor = readAnchor();
+    if (this._scrollCompletionAnchorIntoView(anchor, surface)) anchor = readAnchor();
     const viewport = this._completionViewportRect();
     const margin = 8;
     const gap = 6;
@@ -5526,8 +5548,19 @@ class WritemarkEditorElement extends HTMLElement {
     let popupRect = popup.getBoundingClientRect();
     popup.style.width = `${popupRect.width}px`;
     popupRect = popup.getBoundingClientRect();
-    const belowSpace = Math.max(0, viewport.bottom - margin - anchor.bottom - gap);
-    const aboveSpace = Math.max(0, anchor.top - gap - viewport.top - margin);
+    const viewportTop = viewport.top + margin;
+    const viewportBottom = viewport.bottom - margin;
+    const surfaceRect = surface?.getBoundingClientRect?.();
+    const editorTop = Math.max(viewportTop, (surfaceRect?.top ?? viewportTop) + margin);
+    const editorBottom = Math.min(viewportBottom, (surfaceRect?.bottom ?? viewportBottom) - margin);
+    const editorBelowSpace = Math.max(0, editorBottom - anchor.bottom - gap);
+    const editorAboveSpace = Math.max(0, anchor.top - gap - editorTop);
+    const useEditorBoundary = editorBottom > editorTop
+      && (editorBelowSpace >= popupRect.height || editorAboveSpace >= popupRect.height);
+    const verticalTop = useEditorBoundary ? editorTop : viewportTop;
+    const verticalBottom = useEditorBoundary ? editorBottom : viewportBottom;
+    const belowSpace = Math.max(0, verticalBottom - anchor.bottom - gap);
+    const aboveSpace = Math.max(0, anchor.top - gap - verticalTop);
     const placement = belowSpace >= popupRect.height || belowSpace >= aboveSpace ? "below" : "above";
     const availableHeight = placement === "above" ? aboveSpace : belowSpace;
     popup.style.maxHeight = `${Math.max(0, Math.min(popupRect.height, availableHeight))}px`;
@@ -5538,15 +5571,16 @@ class WritemarkEditorElement extends HTMLElement {
     const desiredTop = placement === "above"
       ? anchor.top - gap - popupRect.height
       : anchor.bottom + gap;
-    const minimumTop = viewport.top + margin;
-    const maximumTop = Math.max(minimumTop, viewport.bottom - margin - popupRect.height);
-    const viewportTop = clamp(desiredTop, minimumTop, maximumTop);
+    const minimumTop = verticalTop;
+    const maximumTop = Math.max(minimumTop, verticalBottom - popupRect.height);
+    const popupTop = clamp(desiredTop, minimumTop, maximumTop);
     popup.style.left = "0px";
     popup.style.top = "0px";
     const positioningOrigin = popup.getBoundingClientRect();
+    popup.dataset.boundary = useEditorBoundary ? "editor" : "viewport";
     popup.dataset.placement = placement;
     popup.style.left = `${viewportLeft - positioningOrigin.left}px`;
-    popup.style.top = `${viewportTop - positioningOrigin.top}px`;
+    popup.style.top = `${popupTop - positioningOrigin.top}px`;
   }
   _enabledCompletionIndex(start, direction = 1) {
     const n = this._completion.items.length;
