@@ -5605,7 +5605,65 @@ class WritemarkEditorElement extends HTMLElement {
     if (index >= 0) this._setCompletionIndex(index, delta);
   }
   _setCompletionIndex(index, direction = 1) { const n = this._completion.items.length; if (!n) return; this._completion.activeIndex = this._enabledCompletionIndex(clamp(index, 0, n - 1), direction); this._renderCompletion(); }
-  _acceptCompletion(source = "action") { if (!this._completion.open || !this._completion.items.length) return fail("not-applicable"); const provider = this._providers.get(this._completion.providerId); const item = this._completion.items[this._completion.activeIndex]; if (!provider || !item || item.disabled) return fail("not-applicable"); const ctx = this._getContext(); let result; try { const currentMatch = provider.match(ctx); const shownMatch = this._completion.match; const stale = !currentMatch || !shownMatch || currentMatch.from !== shownMatch.from || currentMatch.to !== shownMatch.to || currentMatch.query !== shownMatch.query || currentMatch.trigger !== shownMatch.trigger; if (stale) { this._closeCompletion(); this._scheduleCompletionUpdate({ immediate: true }); return fail("not-applicable"); } result = provider.apply(item, currentMatch, ctx); } catch (error) { this._emitError("completion", error, true, { providerId: provider.id }); this._closeCompletion(); return fail("provider-error", String(error?.message || error)); } this._closeCompletion(); if (result?.ok && result.transaction) { const before = this._snapshot(); this._applyTransaction({ ...result.transaction, source: source === "pointer" ? "pointer" : "keyboard", actionId: "completion.accept" }, { source: source === "pointer" ? "pointer" : "keyboard" }); const after = this._snapshot(); this._dispatch("md-completion-accept", { providerId: provider.id, item, before, after }); if (result.announcement) this._announce(result.announcement); return okNoop(result.announcement); } return result || fail("not-applicable"); }
+  _acceptCompletion(source = "action") {
+    if (!this._completion.open || !this._completion.items.length) return fail("not-applicable");
+    const provider = this._providers.get(this._completion.providerId);
+    const item = this._completion.items[this._completion.activeIndex];
+    if (!provider || !item || item.disabled) return fail("not-applicable");
+    const ctx = this._getContext();
+    let result;
+    try {
+      const currentMatch = provider.match(ctx);
+      const shownMatch = this._completion.match;
+      const exactMatch = Boolean(
+        currentMatch
+        && shownMatch
+        && currentMatch.from === shownMatch.from
+        && currentMatch.to === shownMatch.to
+        && currentMatch.query === shownMatch.query
+        && currentMatch.trigger === shownMatch.trigger
+      );
+      const currentTagQuery = normalizeTagKey(currentMatch?.query || "");
+      const shownTagQuery = normalizeTagKey(shownMatch?.query || "");
+      const itemTagKey = normalizeTagKey(String(item.value || "").replace(/^#/, ""));
+      const safeTagRefinement = Boolean(
+        provider.id === "tags"
+        && currentMatch
+        && shownMatch
+        && currentMatch.from === shownMatch.from
+        && currentMatch.trigger === shownMatch.trigger
+        && currentMatch.to >= shownMatch.to
+        && currentTagQuery.startsWith(shownTagQuery)
+        && itemTagKey.startsWith(currentTagQuery)
+      );
+      if (!exactMatch && !safeTagRefinement) {
+        this._closeCompletion();
+        this._scheduleCompletionUpdate({ immediate: true });
+        return fail("not-applicable");
+      }
+      result = provider.apply(item, currentMatch, ctx);
+    } catch (error) {
+      this._emitError("completion", error, true, { providerId: provider.id });
+      this._closeCompletion();
+      return fail("provider-error", String(error?.message || error));
+    }
+    this._closeCompletion();
+    if (result?.ok && result.transaction) {
+      const before = this._snapshot();
+      this._applyTransaction({
+        ...result.transaction,
+        source: source === "pointer" ? "pointer" : "keyboard",
+        actionId: "completion.accept"
+      }, {
+        source: source === "pointer" ? "pointer" : "keyboard"
+      });
+      const after = this._snapshot();
+      this._dispatch("md-completion-accept", { providerId: provider.id, item, before, after });
+      if (result.announcement) this._announce(result.announcement);
+      return okNoop(result.announcement);
+    }
+    return result || fail("not-applicable");
+  }
 
   _updateFormValue() { if (!this._internals) return; this.disabled ? this._internals.setFormValue(null) : this._internals.setFormValue(this._value); }
   _fallbackValidity() { const flags = this._computeValidityFlags(); return { valid: Object.keys(flags).length === 0, valueMissing: Boolean(flags.valueMissing), tooShort: Boolean(flags.tooShort), tooLong: Boolean(flags.tooLong), customError: Boolean(flags.customError) }; }

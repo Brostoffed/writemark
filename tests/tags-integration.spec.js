@@ -470,6 +470,40 @@ test.describe("tag completion integration", () => {
     expect(result).toMatchObject({ accepted: { ok: false }, open: false, value: "#az" });
   });
 
+  test("accepts a visible tag when the current query safely refines its shown query", async ({ editor }) => {
+    const result = await editor.host.evaluate(element => {
+      element.value = "#pla";
+      element.setSelectionRange(4, 4);
+      element._completion = {
+        ...element._completion,
+        activeIndex: 0,
+        items: [{
+          id: "tag:platform",
+          kind: "tag",
+          label: "#platform",
+          value: "platform"
+        }],
+        match: { from: 0, providerId: "tags", query: "p", to: 2, trigger: "#" },
+        open: true,
+        providerId: "tags"
+      };
+      const accepted = element._acceptCompletion("action");
+      return {
+        accepted,
+        open: element._completion.open,
+        selection: { end: element.selectionEnd, start: element.selectionStart },
+        value: element.value
+      };
+    });
+
+    expect(result).toMatchObject({
+      accepted: { ok: true },
+      open: false,
+      selection: { end: 10, start: 10 },
+      value: "#platform "
+    });
+  });
+
   test("closes tag completion when readonly or disabled becomes active", async ({ editor, page }) => {
     for (const property of ["readonly", "disabled"]) {
       await editor.reset({ attributes: { mode: "source" } });

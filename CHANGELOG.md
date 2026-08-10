@@ -18,6 +18,8 @@
   text so it can start tag input without changing the line font size.
 - Kept a completion popover inside the active editor when it fits. A clipped
   caret row now scrolls into view before the popover opens.
+- Allowed Enter to accept a visible tag when fast input safely refines its
+  prior query. Incompatible stale completion items remain blocked.
 - Added positive, negative, boundary, event, form, mode, multiple-editor,
   completion, activation, security, undo, and deterministic fuzz coverage for
   tags across Chromium and Firefox.
