@@ -83,7 +83,8 @@ test.describe("completion UI", () => {
     const unavailable = editor.host.locator(
       '[role="option"][aria-disabled="true"]'
     );
-    await unavailable.click({ force: true });
+    await expect(unavailable).toBeVisible();
+    await unavailable.dispatchEvent("click");
     await expect(editor.completion).toBeVisible();
     await expect(editor.host.getByRole("option", { name: "Available", exact: true }))
       .toHaveAttribute("aria-selected", "true");

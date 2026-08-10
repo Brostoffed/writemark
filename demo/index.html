@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>&lt;writemark-editor&gt; v1.5.2 Live Inline Demo</title>
+  <title>&lt;writemark-editor&gt; v1.6.0 Live Inline Demo</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
     body { margin: 0; padding: 32px; background: Canvas; color: CanvasText; }
@@ -111,7 +111,7 @@
         mode="live"
         preview="none"
         markdown-flavor="gfm"
-        placeholder="Type / for commands. Try #, -, 1., >, or [ ] then Space. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
+        placeholder="Type / for commands or # for tags. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
         required
         maxlength="50000"
         spellcheck="true"
@@ -242,6 +242,10 @@ Type \`/\` at the start of a line for slash commands. Headings are sized inside 
 
 Use **bold**, *italic*, ***bold italic***, \`inline code\`, and ~~strikethrough~~ in ordinary text.
 
+## Tags
+
+Use #editor and #demo/writemark. Type #doc to use the host tag catalog.
+
 ## Blockquotes
 
 > Standard blockquote
@@ -339,6 +343,16 @@ print("hello")
       };
     }
 
+    const demoTags = new Set(['docs', 'documentation', 'editor', 'release', 'demo/writemark']);
+    editor.tagProvider = {
+      allowCreate: true,
+      getItems({ query }) {
+        const normalized = query.toLowerCase();
+        return [...demoTags]
+          .filter(tag => tag.toLowerCase().startsWith(normalized))
+          .map(tag => ({ value: tag, detail: 'demo catalog' }));
+      }
+    };
     editor.value = demoMarkdown;
 
     mode.addEventListener('change', () => editor.mode = mode.value);
@@ -375,7 +389,12 @@ print("hello")
     editor.addEventListener('md-paste', event => writeLog('md-paste', { kind: event.detail.kind, length: event.detail.markdown.length }));
     editor.addEventListener('md-input', event => writeLog('md-input', { length: event.detail.value.length, source: event.detail.source }));
     editor.addEventListener('md-action', event => writeLog('md-action', { actionId: event.detail.actionId, source: event.detail.source }));
-    editor.addEventListener('md-completion-accept', event => writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label }));
+    editor.addEventListener('md-completion-accept', event => {
+      if (event.detail.item.kind === 'tag-create') demoTags.add(event.detail.item.value);
+      writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label });
+    });
+    editor.addEventListener('md-tags-change', event => writeLog('md-tags-change', { tags: event.detail.current.map(tag => tag.value) }));
+    editor.addEventListener('md-tag-activate', event => writeLog('md-tag-activate', event.detail));
     editor.addEventListener('md-debug', event => {
       debugEvents.push(event.detail);
       copyDebug.disabled = false;

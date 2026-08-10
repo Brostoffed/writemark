@@ -20,8 +20,14 @@ const htmlCases = [
   },
   {
     name: "ATX parser supports empty headings",
-    markdown: "###",
+    markdown: "### ",
     contains: "<h3"
+  },
+  {
+    name: "ATX marker without a separator stays literal",
+    markdown: "###",
+    contains: "###",
+    excludes: "<h3"
   },
   {
     name: "Escaped punctuation remains literal instead of becoming emphasis",
@@ -105,6 +111,26 @@ test.describe("Markdown parser output", () => {
 });
 
 test.describe("heading editing", () => {
+  test("Lone hash stays paragraph sized until Space makes a heading", async ({ editor, page }) => {
+    await editor.reset();
+    await editor.host.evaluate(element => element.focus());
+
+    await page.keyboard.type("#");
+    await expect(editor.host.locator(".md-heading")).toHaveCount(0);
+    const paragraphSize = await editor.host.locator('[data-kind="paragraph"]').evaluate(element =>
+      Number.parseFloat(getComputedStyle(element).fontSize)
+    );
+
+    await page.keyboard.press("Space");
+    await expect(editor.host.locator(".md-heading")).toBeVisible();
+    const headingSize = await editor.host.locator(".md-heading").evaluate(element =>
+      Number.parseFloat(getComputedStyle(element).fontSize)
+    );
+
+    expect(await editor.value()).toBe("# ");
+    expect(headingSize).toBeGreaterThan(paragraphSize);
+  });
+
   test("Backspace at content start removes full spaced heading marker", async ({ editor, page }) => {
     await editor.reset({ value: "### heading" });
     await editor.setSelection(4);

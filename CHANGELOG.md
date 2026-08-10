@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 1.6.0 - 2026-08-09
+
+- Added dependency-free `#tag` parsing with Unicode names, nested `/` segments,
+  normalized keys, occurrence counts, and canonical Markdown source ranges.
+- Added rendered live and preview tags, `getTags()`, `parseTags()`,
+  `md-tags-change`, and pointer or keyboard `md-tag-activate` events.
+- Added built-in tag completion from document tags and the optional host-owned
+  `tagProvider`. Added cancellable catalog requests and explicit new-tag choices
+  through `allowCreate`.
+- Prevented stale completion results from replacing a newer query. Tag
+  completion now stays closed when the caret or a selection is inside an
+  existing tag, including tags at the start of a line.
+- Required a space after an ATX heading marker. A lone `#` now stays ordinary
+  text so it can start tag input without changing the line font size.
+- Added positive, negative, boundary, event, form, mode, multiple-editor,
+  completion, activation, security, undo, and deterministic fuzz coverage for
+  tags across Chromium and Firefox.
+- Updated the public API reference, feature guide, advanced integration guide,
+  README, generated bundles, and live demo for tag parsing and host catalogs.
+
 ## 1.5.2 - 2026-08-01
 
 - Kept slash-command and language-completion menus inside the visual viewport.

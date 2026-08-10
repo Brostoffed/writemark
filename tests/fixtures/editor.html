@@ -56,12 +56,15 @@
       "md-copy",
       "md-debug",
       "md-dirty-change",
+      "md-error",
       "md-file-drop",
       "md-file-paste",
       "md-input",
       "md-paste",
       "md-render",
       "md-selection-change",
+      "md-tag-activate",
+      "md-tags-change",
       "md-cut"
     ];
 
@@ -95,6 +98,8 @@
           deferredAttempt: detail.deferredAttempt,
           focusRequired: detail.focusRequired,
           inputType: detail.inputType,
+          itemKind: detail.item?.kind,
+          itemValue: detail.item?.value,
           key: detail.key,
           kind: detail.kind,
           level: detail.level,
@@ -112,6 +117,11 @@
           selectionVerification: detail.selectionVerification,
           sequence: detail.sequence,
           source: detail.source,
+          surface: detail.surface,
+          tag: detail.tag,
+          tagsAdded: detail.added,
+          tagsCurrent: detail.current,
+          tagsRemoved: detail.removed,
           targetSelection: detail.targetSelection,
           value: detail.value
         });

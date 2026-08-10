@@ -1,6 +1,6 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.5.2. The default `live` mode
+This page is the lookup reference for Writemark 1.6.0. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
@@ -71,6 +71,7 @@ their text value.
 | `readonly` | `boolean` | Reflects `readonly`. |
 | `required` | `boolean` | Reflects `required`. |
 | `dirty` | `boolean`, read-only | Whether current Markdown differs from `defaultValue`. |
+| `tagProvider` | Object or `null` | Optional host tag catalog. The object requires `getItems` and can set `allowCreate`. |
 | `selectionStart` | `number` | Start offset in canonical Markdown. May be set directly. |
 | `selectionEnd` | `number` | End offset in canonical Markdown. May be set directly. |
 | `validationMessage` | `string`, read-only | Current native/custom validation message. |
@@ -112,6 +113,7 @@ their text value.
 | `getHTML()` | `string` | Render canonical Markdown with the built-in safe renderer. |
 | `getText()` | `string` | Extract structural plain text. |
 | `getPlainText()` | `string` | Alias of `getText()`. |
+| `getTags()` | `object[]` | Return derived tags with `value`, normalized `key`, `count`, and source `ranges`. |
 
 ### Actions and structure
 
@@ -283,8 +285,8 @@ result can be `{ ok: false, reason, message? }`.
 Completion items require truthy `id` and `label`. Supported display/state fields
 are `detail`, `description`, `kind`, and `disabled`.
 
-Built-in providers are `slash` at priority 100 and `code-language` at priority
-60.
+Built-in providers are `slash` at priority 100, `tags` at priority 80, and
+`code-language` at priority 60.
 
 ## Events
 
@@ -301,6 +303,8 @@ cancelable.
 | `md-completion-open` | `{ providerId, match, items }`. |
 | `md-completion-close` | `{ providerId, match }`. |
 | `md-completion-accept` | `{ providerId, item, before, after }`. |
+| `md-tags-change` | `{ current, added, removed, source, inputType }`. The current list matches `getTags()`. |
+| `md-tag-activate` | `{ tag, key, surface }`. Surface is `live` or `preview`. |
 | `md-render` | `{ html }`; preview output was generated. |
 | `md-file-paste` | `{ files, insertionPoint, insertMarkdown }`. |
 | `md-file-drop` | `{ files, insertionPoint, insertMarkdown }`. |
@@ -398,6 +402,9 @@ available.
 | `--md-editor-code-bg` | Mixed canvas code background. |
 | `--md-editor-code-header-bg` | Mixed canvas header background. |
 | `--md-editor-code-accent` | Mixed canvas code accent. |
+| `--md-editor-tag-bg` | Mixed highlight tag background. |
+| `--md-editor-tag-fg` | Mixed highlight tag text. |
+| `--md-editor-tag-border` | Mixed highlight tag border. |
 | `--md-editor-danger` | `#b00020` |
 | `--md-editor-transition-duration` | `140ms` |
 | `--md-editor-transition-ease` | `cubic-bezier(.2,.8,.2,1)` |
@@ -415,6 +422,7 @@ available.
 | `completion-popup` | Completion listbox. |
 | `completion-item` | Every completion option. |
 | `completion-item-active` | Currently active completion option. |
+| `tag` | A rendered tag in live mode or preview. |
 | `line` | Rendered editable line and terminal anchor. |
 | `checkbox` | Task checkbox. |
 | `code-block` | Complete rendered fenced block. |
@@ -435,6 +443,7 @@ import {
   renderMarkdown,
   renderInlineMarkdown,
   parseBlocks,
+  parseTags,
   parseListItem,
   parseHeading,
   parseBlockquote,
@@ -450,6 +459,7 @@ import {
 | `renderMarkdown(markdown, options?)` | Render a Markdown document to safe HTML. |
 | `renderInlineMarkdown(source, options?)` | Render supported inline Markdown to safe HTML. |
 | `parseBlocks(markdown, options?)` | Parse source-backed block metadata. |
+| `parseTags(markdown, options?)` | Derive unique tags, counts, and source ranges. |
 | `parseListItem(line, options?)` | Parse one supported list item. |
 | `parseHeading(line)` | Parse one ATX heading line. |
 | `parseBlockquote(line)` | Parse one blockquote line. |

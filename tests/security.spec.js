@@ -86,6 +86,7 @@ async function auditMarkdown(page, markdown, options = {}) {
       ol: new Set(["start"]),
       p: new Set(),
       pre: new Set(),
+      span: new Set(["class", "data-md-tag", "data-tag-key", "part"]),
       strong: new Set(),
       table: new Set(),
       tbody: new Set(),
