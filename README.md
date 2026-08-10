@@ -53,6 +53,10 @@ See the [documentation index](docs/README.md) for suggested learning paths and t
 The [public demo](https://brostoffed.github.io/writemark/demo/) runs entirely in
 the browser and does not require an account or installation.
 
+The demo includes a host tag catalog, a live document tag index, explicit tag
+creation, tag activation, action buttons, readonly and disabled controls, and a
+live inspector for selection, dirty state, validity, active marks, and counts.
+
 To run the same demo locally, open `demo/index.html` directly in a browser or
 serve it from the repository:
 

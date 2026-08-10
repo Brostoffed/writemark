@@ -21,6 +21,10 @@
   tags across Chromium and Firefox.
 - Updated the public API reference, feature guide, advanced integration guide,
   README, generated bundles, and live demo for tag parsing and host catalogs.
+- Expanded the live demo with a document tag index, editable host catalog,
+  explicit tag creation, tag activation, host action buttons, and live state.
+- Replaced the README demo GIF with real tag indexing, host completion,
+  explicit creation, catalog persistence, and canonical source flows.
 
 ## 1.5.2 - 2026-08-01
 
