@@ -97,6 +97,11 @@ npx playwright show-report output/playwright/report
   contracts.
 - `completion.spec.js` verifies slash, code-language, and host-provided
   completion flows and ARIA state.
+- `tags.spec.js` verifies tag parsing, rendering, events, completion, and activation.
+- `tags-integration.spec.js` verifies modes, element names, forms, state, providers,
+  completion failures, undo, isolation, and activation.
+- `tags-fuzz.spec.js` verifies generated syntax, parser ranges, renderer safety,
+  completion filtering, deduplication, and result bounds.
 - `markdown.spec.js` verifies parser behavior, code fences, headings, links,
   tables, and task source preservation.
 - `navigation.spec.js` verifies keyboard and pointer selection, line movement,

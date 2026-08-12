@@ -175,6 +175,43 @@ Custom action transaction objects are an advanced contract. Test selection
 restoration, undo/redo, cancellation, readonly behavior, and source/live parity
 for every custom mutation.
 
+## Tag catalog and completion
+
+Writemark derives document tags from canonical Markdown. The host owns the
+application tag catalog, persistence, search, routes, and global rename.
+
+Set `tagProvider` to add host tags to the built-in `#` completion:
+
+```js
+editor.tagProvider = {
+  allowCreate: true,
+
+  async getItems({ query, documentTags, signal }) {
+    const response = await fetch(
+      `/api/tags?q=${encodeURIComponent(query)}`,
+      { signal }
+    );
+    return response.json();
+  }
+};
+```
+
+Each returned item can be a tag string. It can also contain `value`, `id`,
+`label`, `detail`, and `kind`. Writemark filters invalid tags and escapes labels.
+
+`allowCreate: true` adds a `Create #tag` item when no exact tag exists. Listen
+for `md-completion-accept` and check `event.detail.item.kind === 'tag-create'`.
+This explicit choice is a good time to persist a new application tag.
+Writemark offers creation only at the end of a tag token. A caret inside an
+existing tag closes completion instead of treating the prefix as a new tag.
+
+`md-tags-change` reports document facts after `md-input`. Do not treat each
+typing event as an application tag creation. Reconcile the derived index during
+save or `md-change` when the host needs a persisted document-to-tag relation.
+
+Use `getTags()` to read values, normalized keys, counts, and source ranges.
+Use `md-tag-activate` to open host search or navigation for a rendered tag.
+
 ## Custom completion providers
 
 A provider controls four stages:

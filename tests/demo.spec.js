@@ -94,6 +94,120 @@ test.describe("published demo", () => {
     await expect(copyDebug).toBeDisabled();
     await expect(page.locator("#debug-copy-status")).toHaveText("Debug log cleared.");
   });
+
+  test("shows document tag facts and manages the demo host catalog", async ({ page }) => {
+    const pageErrors = [];
+    page.on("pageerror", error => pageErrors.push(error.message));
+    await page.goto("/demo/index.html");
+    const editor = page.locator("#editor");
+
+    await expect(page.getByRole("button", { name: "Focus #editor, 2 occurrences" }))
+      .toBeVisible();
+    await expect(page.locator("#document-tag-summary")).toHaveText("(3 unique, 4 total)");
+
+    await page.getByRole("button", { name: "Focus #editor, 2 occurrences" }).click();
+    const firstEditorRange = await editor.evaluate(element =>
+      element.getTags().find(tag => tag.key === "editor").ranges[0]
+    );
+    await expect(page.locator("#state-selection"))
+      .toHaveText(`${firstEditorRange.from}–${firstEditorRange.to}`);
+    await expect(page.locator("#tag-activity"))
+      .toContainText("Focused the first #editor occurrence");
+
+    await page.getByRole("textbox", { name: "Add a completion choice" })
+      .fill("product/demo");
+    await page.getByRole("button", { name: "Add catalog tag" }).click();
+    await expect(page.getByRole("button", { name: "Insert #product/demo" }))
+      .toBeVisible();
+    await expect(page.locator("#tag-activity"))
+      .toHaveText("Added #product/demo to the host catalog.");
+
+    await editor.evaluate(element => {
+      element.setSelectionRange(element.value.length, element.value.length);
+    });
+    await page.getByRole("textbox", { name: "Insert a tag at the selection" })
+      .fill("product/demo");
+    await page.getByRole("button", { name: "Insert tag" }).click();
+    expect((await editor.evaluate(element => element.value)).endsWith("#product/demo "))
+      .toBe(true);
+    await expect(page.getByRole("button", { name: "Focus #product/demo, 1 occurrence" }))
+      .toBeVisible();
+
+    await page.getByRole("button", { name: "Remove #product/demo from catalog" }).click();
+    await expect(page.getByRole("button", { name: "Insert #product/demo" }))
+      .toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Focus #product/demo, 1 occurrence" }))
+      .toBeVisible();
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("persists explicit tag creation and supports tag activation", async ({ page }) => {
+    await page.goto("/demo/index.html");
+    const editor = page.locator("#editor");
+
+    await page.locator("#mode").selectOption("source");
+    await editor.evaluate(element => {
+      element.setSelectionRange(element.value.length, element.value.length);
+      element.focus();
+    });
+    await page.keyboard.type("#fresh/demo");
+    await expect(editor.getByRole("option", { name: "Create #fresh/demo new tag" }))
+      .toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByRole("button", { name: "Insert #fresh/demo" }))
+      .toBeVisible();
+    await expect(page.locator("#tag-activity"))
+      .toHaveText("Created #fresh/demo and saved it in the demo host catalog.");
+    await expect(page.getByRole("button", { name: "Focus #fresh/demo, 1 occurrence" }))
+      .toBeVisible();
+
+    await page.locator("#mode").selectOption("live");
+    await editor.locator(".md-tag").filter({ hasText: "#editor" }).first().click();
+    await expect(page.locator("#tag-activity"))
+      .toHaveText("Activated #editor in the live surface.");
+
+    await page.getByRole("checkbox", { name: "Offer new tag creation" }).uncheck();
+    expect(await editor.evaluate(element => element.tagProvider.allowCreate)).toBe(false);
+    await expect(page.locator("#tag-activity"))
+      .toHaveText("Completion now shows existing document and host tags only.");
+  });
+
+  test("runs host actions and reports dirty, readonly, and disabled state", async ({ page }) => {
+    await page.goto("/demo/index.html");
+    const editor = page.locator("#editor");
+    const initialValue = await editor.evaluate(element => element.value);
+    await expect(page.locator("#status-dirty")).toHaveText("clean");
+
+    await editor.evaluate(element => {
+      element.setSelectionRange(element.value.length, element.value.length);
+    });
+    await page.getByRole("button", { name: "Bold" }).click();
+    expect((await editor.evaluate(element => element.value)).endsWith("****"))
+      .toBe(true);
+    await expect(page.locator("#status-dirty")).toHaveText("dirty");
+    await expect(page.locator("#state-action")).toHaveText("inline.bold");
+
+    await page.getByRole("button", { name: "Undo" }).click();
+    expect(await editor.evaluate(element => element.value)).toBe(initialValue);
+    await expect(page.locator("#status-dirty")).toHaveText("clean");
+
+    await page.getByRole("button", { name: "Bold" }).click();
+    await page.getByRole("button", { name: "Commit" }).click();
+    await expect(page.locator("#status-dirty")).toHaveText("clean");
+    await expect(page.locator("#state-action")).toHaveText("commit");
+
+    await page.getByRole("checkbox", { name: "Readonly" }).check();
+    await expect(editor).toHaveJSProperty("readonly", true);
+    await expect(page.getByRole("button", { name: "Bold" })).toBeDisabled();
+    await expect(page.locator("#status-mode")).toHaveText("live, readonly");
+
+    await page.getByRole("checkbox", { name: "Readonly" }).uncheck();
+    await page.getByRole("checkbox", { name: "Disabled" }).check();
+    await expect(editor).toHaveJSProperty("disabled", true);
+    await expect(page.locator("#status-mode")).toHaveText("live, disabled");
+    await expect(page.locator("#status-validity")).toHaveText("not validated");
+  });
 });
 
 test.describe("published demo sizing controls", () => {

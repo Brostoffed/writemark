@@ -33,6 +33,9 @@ async function completionGeometry(editor) {
     const selected = popup.querySelector('[role="option"][aria-selected="true"]');
     const popupRect = popup.getBoundingClientRect();
     const selectedRect = selected?.getBoundingClientRect();
+    const surfaceRect = popup.parentElement
+      ?.querySelector(".live-editor")
+      ?.getBoundingClientRect();
     const viewport = window.visualViewport;
     const viewportRect = {
       bottom: (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight),
@@ -54,6 +57,10 @@ async function completionGeometry(editor) {
         bottom: selectedRect.bottom,
         top: selectedRect.top
       } : null,
+      surface: surfaceRect ? {
+        bottom: surfaceRect.bottom,
+        top: surfaceRect.top
+      } : null,
       viewport: viewportRect
     };
   });
@@ -66,6 +73,12 @@ function expectCompletionInsideViewport(geometry) {
   expect(geometry.popup.right).toBeLessThanOrEqual(geometry.viewport.right - 7);
   expect(geometry.selected?.top).toBeGreaterThanOrEqual(geometry.popup.top - 1);
   expect(geometry.selected?.bottom).toBeLessThanOrEqual(geometry.popup.bottom + 1);
+}
+
+function expectCompletionInsideEditor(geometry) {
+  expect(geometry.surface).not.toBeNull();
+  expect(geometry.popup.top).toBeGreaterThanOrEqual(geometry.surface.top + 7);
+  expect(geometry.popup.bottom).toBeLessThanOrEqual(geometry.surface.bottom - 7);
 }
 
 test.describe("completion UI", () => {
@@ -83,7 +96,8 @@ test.describe("completion UI", () => {
     const unavailable = editor.host.locator(
       '[role="option"][aria-disabled="true"]'
     );
-    await unavailable.click({ force: true });
+    await expect(unavailable).toBeVisible();
+    await unavailable.dispatchEvent("click");
     await expect(editor.completion).toBeVisible();
     await expect(editor.host.getByRole("option", { name: "Available", exact: true }))
       .toHaveAttribute("aria-selected", "true");
@@ -198,6 +212,49 @@ test.describe("completion UI", () => {
     expectCompletionInsideViewport(await completionGeometry(editor));
   });
 
+  test("scrolls a clipped tag caret into view and keeps its popover inside the editor", async ({ editor, page }) => {
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await editor.reset();
+    const markdown = `${Array.from(
+      { length: 18 },
+      (_, index) => `Paragraph ${index + 1}`
+    ).join("\n\n")}\n\n#re`;
+    await editor.host.evaluate((element, value) => {
+      element.style.width = "640px";
+      element.style.setProperty("--md-editor-min-height", "360px");
+      element.style.setProperty("--md-editor-max-height", "360px");
+      element.tagProvider = {
+        allowCreate: true,
+        getItems() {
+          return [{ value: "release", detail: "host catalog" }];
+        }
+      };
+      element.value = value;
+      element.setSelectionRange(value.length, value.length);
+      element.focus();
+      element.shadowRoot.querySelector(".live-editor").scrollTop = 0;
+    }, markdown);
+
+    await expect(editor.completion).toBeVisible();
+    await expect(editor.completion).toHaveAttribute("data-boundary", "editor");
+    await expect(editor.completion).toHaveAttribute("data-placement", "above");
+    const geometry = await completionGeometry(editor);
+    expectCompletionInsideViewport(geometry);
+    expectCompletionInsideEditor(geometry);
+    expect(await editor.live.evaluate(surface => surface.scrollTop)).toBeGreaterThan(0);
+    expect(await editor.host.evaluate(element => {
+      const surface = element.shadowRoot.querySelector(".live-editor");
+      const surfaceRect = surface.getBoundingClientRect();
+      const anchor = element._domPositionFromSource(element.selectionEnd)?.editable;
+      const anchorRect = anchor?.getBoundingClientRect();
+      return Boolean(
+        anchorRect
+        && anchorRect.top >= surfaceRect.top
+        && anchorRect.bottom <= surfaceRect.bottom
+      );
+    })).toBe(true);
+  });
+
   test("flips the completion popover above a caret near the viewport bottom", async ({ editor, page }) => {
     await page.setViewportSize({ width: 800, height: 600 });
     await editor.reset();
@@ -267,6 +324,7 @@ test.describe("completion UI", () => {
     await expect(editor.completion).toBeHidden();
     expect(await editor.completion.evaluate(popup => ({
       left: popup.style.left,
+      boundary: popup.dataset.boundary || null,
       maxHeight: popup.style.maxHeight,
       maxWidth: popup.style.maxWidth,
       minWidth: popup.style.minWidth,
@@ -275,6 +333,7 @@ test.describe("completion UI", () => {
       width: popup.style.width
     }))).toEqual({
       left: "",
+      boundary: null,
       maxHeight: "",
       maxWidth: "",
       minWidth: "",

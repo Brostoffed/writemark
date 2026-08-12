@@ -46,7 +46,7 @@ rendering features below.
 | Structure | Examples and notes |
 |---|---|
 | Paragraphs and soft wraps | Consecutive nonblank source lines render as a paragraph in preview output. |
-| ATX headings | `#` through `######`, including optional space-delimited closing hashes. |
+| ATX headings | `# ` through `###### `, with a required separator and optional space-delimited closing hashes. |
 | Setext headings | Text followed by `===` or `---`. |
 | Emphasis | Asterisk and underscore emphasis and strong emphasis, including nested combinations. |
 | Strikethrough | `~~text~~` in GFM mode. |
@@ -106,6 +106,21 @@ link such as `[Jump to details](#details)` scrolls to `## Details` inside the
 same live editor or preview. Repeated heading names use `-1`, `-2`, and later
 suffixes in document order.
 
+## Tags
+
+Type `#` and a tag name to add a tag. Tag names support Unicode letters,
+numbers, underscores, hyphens, and nested `/` segments. A tag must contain one
+nonnumeric character.
+
+Writemark derives the current tag index from canonical Markdown. It does not
+store an application tag catalog. Code spans, fenced code, escaped hashes,
+link destinations, and reference definitions do not create tags.
+
+Current document tags provide completion without host setup. A host can set
+`tagProvider` to merge application tags into the same completion menu.
+Completion opens at the end of a tag token. A caret inside an existing tag does
+not offer a partial tag or a new tag.
+
 ## Slash commands and completions
 
 Type `/` at the start of an otherwise empty line to open the built-in command
@@ -131,9 +146,10 @@ Completion keyboard behavior:
 
 Disabled completion items are skipped and exposed with disabled ARIA state.
 
-The completion menu stays inside the visual viewport. It opens below the caret
-when space permits and moves above the caret when the lower space is too small.
-The menu updates after viewport size changes and page or editor scrolling.
+The completion menu stays inside the visual viewport. When the full menu fits,
+it also stays inside the active editing surface. A clipped caret row scrolls
+into view before the menu opens. The menu moves above the caret when the lower
+space is too small. It updates after viewport size changes and scrolling.
 
 Typing a fence and partial language, such as `` ```py ``, opens language
 completion. Aliases such as `py`, `js`, `ts`, `yml`, and `md` rank their full

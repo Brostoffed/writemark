@@ -4,7 +4,7 @@
  */
 (() => {
 /*
- * <writemark-editor> v1.5.2 live inline Markdown editor.
+ * <writemark-editor> v1.6.0 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -687,15 +687,15 @@ function parseListItem(line, opts = {}) {
 }
 
 function parseHeading(line) {
-  const m = /^(\s{0,3})(#{1,6})(?:([ \t]+)(.*)|[ \t]*)$/.exec(line);
+  const m = /^(\s{0,3})(#{1,6})([ \t]+)(.*)$/.exec(line);
   if (!m) return null;
-  let content = m[4] ?? "";
+  let content = m[4];
   if (/^#+[ \t]*$/.test(content)) content = "";
   else {
     const closing = /^(.*?)[ \t]+#+[ \t]*$/.exec(content);
     content = closing ? closing[1] : content.replace(/[ \t]+$/, "");
   }
-  const separator = m[3] ?? "";
+  const separator = m[3];
   return {
     indent: m[1],
     level: m[2].length,
@@ -979,6 +979,122 @@ function parseBlocks(markdown, opts = {}) {
   return assignHeadingIds(blocks);
 }
 
+function normalizeTagKey(value) {
+  return String(value ?? "").normalize("NFC").toLowerCase();
+}
+
+function isTagBodyCharacter(char) {
+  return Boolean(char) && /[\p{L}\p{M}\p{N}_-]/u.test(char);
+}
+
+function isValidTagValue(value) {
+  const tag = String(value ?? "");
+  if (!tag || tag.startsWith("/") || tag.endsWith("/") || tag.includes("//")) return false;
+  if (!tag.split("/").every(segment => segment && [...segment].every(isTagBodyCharacter))) return false;
+  return /[\p{L}\p{M}_-]/u.test(tag);
+}
+
+function isTagBoundary(source, index) {
+  if (index === 0) return true;
+  const before = source[index - 1];
+  if (!/\s|[\p{P}\p{S}]/u.test(before) || before === "#" || before === "/") return false;
+  const tokenStart = Math.max(
+    source.lastIndexOf(" ", index - 1),
+    source.lastIndexOf("\n", index - 1),
+    source.lastIndexOf("\t", index - 1)
+  ) + 1;
+  const prefix = source.slice(tokenStart, index);
+  return !/(?:^|[([{<])(?:[a-z][a-z\d+.-]*:\/\/|www\.)/i.test(prefix);
+}
+
+function parseTagAt(source, index) {
+  const text = String(source ?? "");
+  if (text[index] !== "#" || isBackslashEscaped(text, index) || !isTagBoundary(text, index)) return null;
+  const match = /^([\p{L}\p{M}\p{N}_-]+(?:\/[\p{L}\p{M}\p{N}_-]+)*)/u.exec(text.slice(index + 1));
+  const value = match?.[1] || "";
+  if (!isValidTagValue(value) || text[index + 1 + value.length] === "/") return null;
+  const cursor = index + 1 + value.length;
+  return { value, key: normalizeTagKey(value), from: index, to: cursor };
+}
+
+function cloneTags(tags) {
+  return (tags || []).map(tag => ({
+    value: tag.value,
+    key: tag.key,
+    count: tag.count,
+    ranges: tag.ranges.map(range => ({ from: range.from, to: range.to })),
+  }));
+}
+
+function parseTags(markdown, opts = {}) {
+  const source = normalizeLineEndings(markdown);
+  const references = extractReferenceDefinitions(source).references;
+  const lines = getLines(source);
+  const excluded = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const fence = getFenceInfo(line.text);
+    if (fence && (line.newlineEnd > line.end || i + 1 < lines.length)) {
+      let closingIndex = i + 1;
+      while (closingIndex < lines.length && !isFenceCloseLine(lines[closingIndex].text, fence)) closingIndex += 1;
+      const last = lines[closingIndex] || lines.at(-1) || line;
+      excluded.push({ from: line.start, to: last.newlineEnd });
+      i = closingIndex < lines.length ? closingIndex : lines.length - 1;
+      continue;
+    }
+    if (parseReferenceDefinition(line.text)) excluded.push({ from: line.start, to: line.newlineEnd });
+  }
+  excluded.sort((a, b) => a.from - b.from);
+  const found = [];
+  const scan = (text, offset = 0) => {
+    let excludedIndex = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      const absolute = offset + i;
+      while (excludedIndex < excluded.length && excluded[excludedIndex].to <= absolute) excludedIndex += 1;
+      const blocked = excluded[excludedIndex];
+      if (offset === 0 && blocked && blocked.from <= absolute && absolute < blocked.to) {
+        i = blocked.to - 1;
+        continue;
+      }
+      if (text[i] === "`") {
+        const code = parseCodeSpanAt(text, i);
+        if (code) { i = code.to - 1; continue; }
+      }
+      const link = parseInlineLinkAt(text, i) || parseReferenceLinkAt(text, references, i);
+      if (link) {
+        scan(link.label, absolute + (link.labelStart - link.from));
+        i = link.to - 1;
+        continue;
+      }
+      const tag = parseTagAt(text, i);
+      if (!tag) continue;
+      found.push({ ...tag, from: absolute, to: offset + tag.to });
+      i = tag.to - 1;
+    }
+  };
+  scan(source);
+  const indexed = new Map();
+  for (const tag of found) {
+    const current = indexed.get(tag.key);
+    if (current) {
+      current.count += 1;
+      current.ranges.push({ from: tag.from, to: tag.to });
+    } else {
+      indexed.set(tag.key, {
+        value: tag.value,
+        key: tag.key,
+        count: 1,
+        ranges: [{ from: tag.from, to: tag.to }],
+      });
+    }
+  }
+  return [...indexed.values()];
+}
+
+function tagHtml(tag) {
+  return `<span class="md-tag" part="tag" data-md-tag="${escapeAttribute(tag.value)}" data-tag-key="${escapeAttribute(tag.key)}">#${escapeHtml(tag.value)}</span>`;
+}
+
 function decorateInline(raw, opts = {}) {
   const text = String(raw ?? "");
   const tokens = [];
@@ -1019,6 +1135,12 @@ function decorateInline(raw, opts = {}) {
         : `${prefix}<a href="${escapeAttribute(safe)}" tabindex="-1">${labelHtml}</a>${suffix}`;
       prepared += reserve(rendered);
       i = link.to - 1;
+      continue;
+    }
+    const tag = parseTagAt(text, i);
+    if (tag) {
+      prepared += reserve(tagHtml(tag));
+      i = tag.to - 1;
       continue;
     }
     prepared += text[i];
@@ -1076,6 +1198,14 @@ function renderInlineMarkdown(source, opts = {}) {
     i = link.to - 1;
   }
   text = linked;
+  let tagged = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const tag = parseTagAt(text, i);
+    if (!tag) { tagged += text[i]; continue; }
+    tagged += reserve(tagHtml(tag));
+    i = tag.to - 1;
+  }
+  text = tagged;
   if (usesGfm(opts)) {
     text = text.replace(/~~([^~\n]+)~~/g, (_, content) =>
       reserve(`<del>${renderInlineMarkdown(content, opts)}</del>`));
@@ -1336,6 +1466,8 @@ class WritemarkEditorElement extends HTMLElement {
     this._virtualScrollFrame = 0;
     this._actions = new Map();
     this._providers = new Map();
+    this._tagProvider = null;
+    this._tagIndex = [];
     this._completion = { open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: 0, abort: null };
     this._ids = { label: uid("mfe-label"), source: uid("mfe-source"), live: uid("mfe-live"), completion: uid("mfe-completion"), status: uid("mfe-status"), validation: uid("mfe-validation") };
     this._installBuiltInActions();
@@ -1444,6 +1576,14 @@ class WritemarkEditorElement extends HTMLElement {
   get required() { return this.hasAttribute("required"); }
   set required(v) { this.toggleAttribute("required", Boolean(v)); }
   get dirty() { return this._dirty; }
+  get tagProvider() { return this._tagProvider; }
+  set tagProvider(provider) {
+    if (provider != null && (typeof provider !== "object" || typeof provider.getItems !== "function")) {
+      throw new TypeError("tagProvider requires a getItems function.");
+    }
+    this._tagProvider = provider || null;
+    if (this._hasConnected) this._scheduleCompletionUpdate({ immediate: true });
+  }
   get selectionStart() { return this._getCurrentSelection().start; }
   set selectionStart(v) { this.setSelectionRange(v, this.selectionEnd); }
   get selectionEnd() { return this._getCurrentSelection().end; }
@@ -1478,6 +1618,7 @@ class WritemarkEditorElement extends HTMLElement {
   unregisterCompletionProvider(providerId) { this._providers.delete(providerId); if (this._completion.providerId === providerId) this._closeCompletion(); }
   getHTML() { return renderMarkdown(this._value, this._rendererOptions()); }
   getText() { return textFromMarkdown(this._value, this._rendererOptions()); }
+  getTags() { return cloneTags(this._tagIndex); }
   getMarkdown() { return this._value; }
   setMarkdown(markdown) { this.value = markdown; }
   getPlainText() { return this.getText(); }
@@ -1497,7 +1638,7 @@ class WritemarkEditorElement extends HTMLElement {
   setCustomValidity(message) { this._customValidityMessage = String(message ?? ""); this._updateValidity(); }
 
   _upgradeProperties() {
-    for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required"]) {
+    for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required", "tagProvider"]) {
       if (Object.prototype.hasOwnProperty.call(this, prop)) { const value = this[prop]; delete this[prop]; this[prop] = value; }
     }
   }
@@ -1535,6 +1676,9 @@ class WritemarkEditorElement extends HTMLElement {
           --md-editor-code-bg: color-mix(in srgb, CanvasText 8%, Canvas 92%);
           --md-editor-code-header-bg: color-mix(in srgb, CanvasText 5%, Canvas 95%);
           --md-editor-code-accent: color-mix(in srgb, CanvasText 45%, Canvas 55%);
+          --md-editor-tag-bg: color-mix(in srgb, Highlight 14%, Canvas 86%);
+          --md-editor-tag-fg: color-mix(in srgb, Highlight 78%, CanvasText 22%);
+          --md-editor-tag-border: color-mix(in srgb, Highlight 28%, transparent);
           --md-editor-danger: #b00020;
           --md-editor-transition-duration: 140ms;
           --md-editor-transition-ease: cubic-bezier(.2,.8,.2,1);
@@ -1576,6 +1720,9 @@ class WritemarkEditorElement extends HTMLElement {
         .md-line + .md-line, .md-code-block + .md-line, .md-table-block + .md-line { margin-block-start: 0.14rem; }
         .md-token { color: var(--md-editor-token); font-weight: 500; }
         .md-url { color: var(--md-editor-muted); text-decoration: underline; }
+        .md-tag { padding: 0.04em 0.28em; border: 1px solid var(--md-editor-tag-border); border-radius: 0.35em; background: var(--md-editor-tag-bg); color: var(--md-editor-tag-fg); }
+        .preview .md-tag { cursor: pointer; }
+        .preview .md-tag:focus-visible { outline: 2px solid var(--md-editor-border-focus); outline-offset: 2px; }
         .md-heading { font-family: var(--md-editor-font); font-weight: 760; line-height: 1.18; margin-block: 0.22em; }
         .md-h1 { font-size: 2.0em; }
         .md-h2 { font-size: 1.6em; }
@@ -1715,6 +1862,7 @@ class WritemarkEditorElement extends HTMLElement {
       });
     });
     this._preview.addEventListener("click", event => this._onPreviewClick(event));
+    this._preview.addEventListener("keydown", event => this._onPreviewKeyDown(event));
 
     this._completionPopup.addEventListener("mousedown", e => e.preventDefault());
     this._completionPopup.addEventListener("click", e => { const item = e.target.closest("[data-index]"); if (!item) return; const index = Number(item.dataset.index); if (this._completion.items[index]?.disabled) return; this._completion.activeIndex = index; this._acceptCompletion("pointer"); });
@@ -1857,6 +2005,7 @@ class WritemarkEditorElement extends HTMLElement {
   _afterValueChanged({ source = "api", inputType = null, silent = false, restoreSelection = true, previousValue = null, changes = null, preserveLiveDom = false } = {}) {
     this._selectAllLevel = 0;
     this._structuredSelection = null;
+    const tagChange = this._refreshTagIndex();
     if (["user", "keyboard", "paste", "pointer"].includes(source)) this._validationVisible = true;
     this._updateFormValue();
     this._updateValidity();
@@ -1871,7 +2020,23 @@ class WritemarkEditorElement extends HTMLElement {
       this._renderAll({ restoreSelection, previousValue, changes });
     }
     const oldDirty = this._dirty; this._dirty = this._value !== this._defaultValue; if (oldDirty !== this._dirty) this._dispatch("md-dirty-change", { dirty: this._dirty });
-    if (!silent) this._dispatch("md-input", { value: this._value, source, inputType });
+    if (!silent) {
+      this._dispatch("md-input", { value: this._value, source, inputType });
+      if (tagChange) this._dispatch("md-tags-change", { ...tagChange, source, inputType });
+    }
+  }
+  _refreshTagIndex() {
+    const previous = this._tagIndex;
+    const current = parseTags(this._value, this._parseOptions());
+    this._tagIndex = current;
+    if (JSON.stringify(previous) === JSON.stringify(current)) return null;
+    const oldKeys = new Map(previous.map(tag => [tag.key, tag.value]));
+    const newKeys = new Map(current.map(tag => [tag.key, tag.value]));
+    return {
+      current: cloneTags(current),
+      added: current.filter(tag => !oldKeys.has(tag.key)).map(tag => tag.value),
+      removed: previous.filter(tag => !newKeys.has(tag.key)).map(tag => tag.value),
+    };
   }
   _renderAll({ restoreSelection = true, previousValue = null, changes = null, force = false } = {}) {
     if (!this._liveEditor) return;
@@ -1926,7 +2091,15 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _renderPreview() {
     if (!this._preview) return;
-    try { this._preview.innerHTML = this.getHTML(); this._previewDirty = false; this._dispatch("md-render", { html: this._preview.innerHTML }); }
+    try {
+      this._preview.innerHTML = this.getHTML();
+      for (const tag of this._preview.querySelectorAll(".md-tag")) {
+        tag.tabIndex = 0;
+        tag.setAttribute("role", "button");
+      }
+      this._previewDirty = false;
+      this._dispatch("md-render", { html: this._preview.innerHTML });
+    }
     catch (error) { this._preview.innerHTML = `<pre><code>${escapeHtml(this._value)}</code></pre>`; this._emitError("render", error, true); }
   }
   _getBlocks() {
@@ -3259,7 +3432,24 @@ class WritemarkEditorElement extends HTMLElement {
     return true;
   }
   _onPreviewClick(event) {
+    if (this._activateTag(event, "preview")) return;
     this._navigateFragmentLink(event, this._preview);
+  }
+  _onPreviewKeyDown(event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (this._activateTag(event, "preview")) event.preventDefault();
+  }
+  _activateTag(event, surface) {
+    const target = event.target.closest?.("[data-md-tag]");
+    if (!target) return false;
+    const tag = target.dataset.mdTag || "";
+    if (!tag) return false;
+    this._dispatch("md-tag-activate", {
+      tag,
+      key: target.dataset.tagKey || normalizeTagKey(tag),
+      surface,
+    });
+    return true;
   }
   _onLiveClick(event) {
     if (this._suppressLiveClick) {
@@ -3269,6 +3459,7 @@ class WritemarkEditorElement extends HTMLElement {
       return;
     }
     if (this._navigateFragmentLink(event, this._liveEditor)) return;
+    this._activateTag(event, "live");
     this._structuredSelection = null;
     const checkbox = event.target.closest?.("[data-task-checkbox]");
     if (checkbox) {
@@ -4988,6 +5179,7 @@ class WritemarkEditorElement extends HTMLElement {
 
   _installBuiltInProviders() {
     this.registerCompletionProvider({ id: "slash", priority: 100, triggers: ["/"], match: ctx => this._matchSlash(ctx), getItems: match => this._getSlashItems(match), apply: (item, match, ctx) => this._applySlashItem(item, match, ctx) });
+    this.registerCompletionProvider({ id: "tags", priority: 80, triggers: ["#"], match: ctx => this._matchTag(ctx), getItems: (match, ctx, signal) => this._getTagItems(match, ctx, signal), apply: (item, match, ctx) => this._applyTagItem(item, match, ctx) });
     this.registerCompletionProvider({ id: "code-language", priority: 60, triggers: ["```", "~~~"], match: ctx => this._matchCodeLanguage(ctx), getItems: match => this._getLanguageItems(match), apply: (item, match, ctx) => this._applyCodeLanguageItem(item, match, ctx) });
   }
   _getLanguageItems(match) {
@@ -5121,6 +5313,91 @@ class WritemarkEditorElement extends HTMLElement {
   _insertLink(ctx, args = {}) { const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd); const url = args.url ?? ""; if (selected) { const insert = `[${selected}](${url})`; const cursor = url ? ctx.selectionStart + insert.length : ctx.selectionStart + selected.length + 3; return ok(tx(ctx, "inline.link", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), "Link."); } const insert = url ? `[](${url})` : `[]()`; return ok(tx(ctx, "inline.link", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: ctx.selectionStart + 1, end: ctx.selectionStart + 1, direction: "none" }, "inline"), "Link."); }
   _insertImage(ctx, args = {}) { const alt = args.alt ?? ""; const src = args.src ?? ""; const insert = `![${alt}](${src})`; const cursor = alt ? ctx.selectionStart + insert.length : ctx.selectionStart + 2; return ok(tx(ctx, "inline.image", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), "Image."); }
 
+  _matchTag(ctx) {
+    if (ctx.block.kind === "fenced-code" || ctx.inline.insideInlineCode) return null;
+    const cursor = ctx.selectionStart - ctx.currentLine.start;
+    const before = ctx.currentLine.text.slice(0, cursor);
+    const next = [...ctx.currentLine.text.slice(cursor)][0];
+    if (next === "/" || isTagBodyCharacter(next)) return null;
+    const hash = before.lastIndexOf("#");
+    if (hash < 0 || isBackslashEscaped(before, hash) || !isTagBoundary(before, hash)) return null;
+    const query = before.slice(hash + 1);
+    if (query.startsWith("/") || query.includes("//")) return null;
+    if (![...query].every(char => char === "/" || isTagBodyCharacter(char))) return null;
+    return {
+      from: ctx.currentLine.start + hash,
+      to: ctx.selectionStart,
+      trigger: "#",
+      query,
+      providerId: "tags",
+    };
+  }
+  async _getTagItems(match, ctx, signal) {
+    const queryKey = normalizeTagKey(match.query);
+    const items = new Map();
+    for (const tag of this._tagIndex) {
+      const hasOtherRange = tag.ranges.some(range => range.from !== match.from || range.to !== match.to);
+      if (!hasOtherRange || (queryKey && !tag.key.startsWith(queryKey))) continue;
+      items.set(tag.key, {
+        id: `tag:${tag.key}`,
+        label: `#${tag.value}`,
+        detail: "in document",
+        kind: "tag",
+        value: tag.value,
+        key: tag.key,
+        document: true,
+      });
+    }
+    const provider = this._tagProvider;
+    const supplied = provider
+      ? await provider.getItems({ query: match.query, documentTags: this.getTags(), context: ctx, signal })
+      : [];
+    if (signal.aborted) return [];
+    for (const suppliedItem of supplied || []) {
+      const source = typeof suppliedItem === "string" ? { value: suppliedItem } : suppliedItem;
+      const value = String(source?.value ?? source?.label ?? "").trim().replace(/^#/, "");
+      if (!isValidTagValue(value)) continue;
+      const key = normalizeTagKey(value);
+      if (queryKey && !key.startsWith(queryKey)) continue;
+      const documentItem = items.get(key);
+      items.set(key, {
+        ...source,
+        id: String(source?.id || `tag:${key}`),
+        label: String(source?.label || `#${value}`),
+        detail: String(source?.detail || documentItem?.detail || "tag"),
+        kind: String(source?.kind || "tag"),
+        value,
+        key,
+        document: Boolean(documentItem),
+      });
+    }
+    const output = [...items.values()].slice(0, 24);
+    const exact = items.has(queryKey);
+    if (provider?.allowCreate === true && isValidTagValue(match.query) && !exact) {
+      output.push({
+        id: `tag-create:${queryKey}`,
+        label: `Create #${match.query}`,
+        detail: "new tag",
+        kind: "tag-create",
+        value: match.query,
+        key: queryKey,
+      });
+    }
+    return output;
+  }
+  _applyTagItem(item, match, ctx) {
+    const value = String(item.value || "").replace(/^#/, "");
+    if (!isValidTagValue(value)) return fail("not-applicable");
+    const insert = `#${value} `;
+    const cursor = match.from + insert.length;
+    return ok(tx(
+      ctx,
+      "completion.accept",
+      [{ from: match.from, to: match.to, insert }],
+      { start: cursor, end: cursor, direction: "none" },
+      "completion"
+    ), item.kind === "tag-create" ? `Created tag ${value}.` : `Tag ${value}.`);
+  }
   _matchSlash(ctx) { if (ctx.block.kind === "fenced-code" || ctx.inline.insideInlineCode) return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)\/([\w-]*)$/.exec(before); if (!m) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: "/", query: m[2], providerId: "slash" }; }
   _getSlashItems(match) { const q = match.query.toLowerCase(); const items = []; for (const action of this._actions.values()) { if (!action.visibleInSlash) continue; const hay = [action.label, action.description, ...(action.aliases || []), ...(action.keywords || [])].filter(Boolean).join(" ").toLowerCase(); if (q && !hay.includes(q)) continue; items.push({ id: action.id, label: action.label, detail: action.group, description: action.description || displayShortcut(action.defaultShortcut), kind: "slash-command", actionId: action.id }); } return items.slice(0, 24); }
   _applySlashItem(item, match, ctx) { const repl = this._slashReplacementForAction(item.actionId); if (repl) { const insert = typeof repl.insert === "function" ? repl.insert(ctx) : repl.insert; const off = typeof repl.selectionOffset === "number" ? repl.selectionOffset : insert.length; return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert }], { start: match.from + off, end: match.from + off + (repl.selectionLength || 0), direction: "none" }, "slash"), item.label); } return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert: "" }], { start: match.from, end: match.from, direction: "none" }, "slash"), item.label); }
@@ -5179,7 +5456,7 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _renderCompletion() {
     if (!this._completionPopup) return; const open = this._completion.open && this._completion.items.length > 0; this._completionPopup.hidden = !open; const controller = this._isSourceActive() ? this._sourceTextarea : this._liveEditor; controller?.setAttribute("aria-expanded", open ? "true" : "false");
-    if (!open) { this._completionPopup.innerHTML = ""; this._completionPopup.scrollTop = 0; this._completionPopup.style.left = ""; this._completionPopup.style.top = ""; this._completionPopup.style.width = ""; this._completionPopup.style.minWidth = ""; this._completionPopup.style.maxWidth = ""; this._completionPopup.style.maxHeight = ""; delete this._completionPopup.dataset.placement; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
+    if (!open) { this._completionPopup.innerHTML = ""; this._completionPopup.scrollTop = 0; this._completionPopup.style.left = ""; this._completionPopup.style.top = ""; this._completionPopup.style.width = ""; this._completionPopup.style.minWidth = ""; this._completionPopup.style.maxWidth = ""; this._completionPopup.style.maxHeight = ""; delete this._completionPopup.dataset.boundary; delete this._completionPopup.dataset.placement; this._sourceTextarea?.removeAttribute("aria-activedescendant"); this._liveEditor?.removeAttribute("aria-activedescendant"); return; }
     const previousScrollTop = this._completionPopup.scrollTop;
     const activeId = this._completion.activeIndex >= 0 ? `${this._ids.completion}-item-${this._completion.activeIndex}` : null;
     if (activeId) controller?.setAttribute("aria-activedescendant", activeId); else controller?.removeAttribute("aria-activedescendant");
@@ -5238,11 +5515,33 @@ class WritemarkEditorElement extends HTMLElement {
     const top = Number(viewport?.offsetTop) || 0;
     return { left, top, right: left + width, bottom: top + height, width, height };
   }
+  _scrollCompletionAnchorIntoView(anchor, surface) {
+    if (!anchor || !surface || surface.scrollHeight <= surface.clientHeight) return false;
+    const surfaceRect = surface.getBoundingClientRect();
+    const inset = 8;
+    const visibleTop = surfaceRect.top + inset;
+    const visibleBottom = surfaceRect.bottom - inset;
+    const delta = anchor.top < visibleTop
+      ? anchor.top - visibleTop
+      : anchor.bottom > visibleBottom
+        ? anchor.bottom - visibleBottom
+        : 0;
+    if (Math.abs(delta) < 1) return false;
+    const previousScrollTop = surface.scrollTop;
+    surface.scrollTop += delta;
+    return Math.abs(surface.scrollTop - previousScrollTop) >= 1;
+  }
   _positionCompletionPopup() {
-    const shell = this._shadow.querySelector(".editor-shell"); if (!shell || !this._completionPopup) return; const popup = this._completionPopup; const shellRect = shell.getBoundingClientRect(); let rect = null;
-    try { const sel = this._shadow.getSelection?.() || globalThis.getSelection?.(); if (sel?.rangeCount) rect = sel.getRangeAt(0).getBoundingClientRect(); } catch {}
-    if (!rect || (!rect.width && !rect.height)) { const target = this._domPositionFromSource(this._selection.start)?.editable || this._sourceTextarea; rect = target?.getBoundingClientRect?.(); }
-    const anchor = rect || shellRect;
+    const shell = this._shadow.querySelector(".editor-shell"); if (!shell || !this._completionPopup) return; const popup = this._completionPopup; const shellRect = shell.getBoundingClientRect();
+    const surface = this._isSourceActive() ? this._sourceTextarea : this._liveEditor;
+    const readAnchor = () => {
+      let rect = null;
+      try { const sel = this._shadow.getSelection?.() || globalThis.getSelection?.(); if (sel?.rangeCount) rect = sel.getRangeAt(0).getBoundingClientRect(); } catch {}
+      if (!rect || (!rect.width && !rect.height)) { const target = this._domPositionFromSource(this._selection.start)?.editable || this._sourceTextarea; rect = target?.getBoundingClientRect?.(); }
+      return rect || shellRect;
+    };
+    let anchor = readAnchor();
+    if (this._scrollCompletionAnchorIntoView(anchor, surface)) anchor = readAnchor();
     const viewport = this._completionViewportRect();
     const margin = 8;
     const gap = 6;
@@ -5254,8 +5553,19 @@ class WritemarkEditorElement extends HTMLElement {
     let popupRect = popup.getBoundingClientRect();
     popup.style.width = `${popupRect.width}px`;
     popupRect = popup.getBoundingClientRect();
-    const belowSpace = Math.max(0, viewport.bottom - margin - anchor.bottom - gap);
-    const aboveSpace = Math.max(0, anchor.top - gap - viewport.top - margin);
+    const viewportTop = viewport.top + margin;
+    const viewportBottom = viewport.bottom - margin;
+    const surfaceRect = surface?.getBoundingClientRect?.();
+    const editorTop = Math.max(viewportTop, (surfaceRect?.top ?? viewportTop) + margin);
+    const editorBottom = Math.min(viewportBottom, (surfaceRect?.bottom ?? viewportBottom) - margin);
+    const editorBelowSpace = Math.max(0, editorBottom - anchor.bottom - gap);
+    const editorAboveSpace = Math.max(0, anchor.top - gap - editorTop);
+    const useEditorBoundary = editorBottom > editorTop
+      && (editorBelowSpace >= popupRect.height || editorAboveSpace >= popupRect.height);
+    const verticalTop = useEditorBoundary ? editorTop : viewportTop;
+    const verticalBottom = useEditorBoundary ? editorBottom : viewportBottom;
+    const belowSpace = Math.max(0, verticalBottom - anchor.bottom - gap);
+    const aboveSpace = Math.max(0, anchor.top - gap - verticalTop);
     const placement = belowSpace >= popupRect.height || belowSpace >= aboveSpace ? "below" : "above";
     const availableHeight = placement === "above" ? aboveSpace : belowSpace;
     popup.style.maxHeight = `${Math.max(0, Math.min(popupRect.height, availableHeight))}px`;
@@ -5266,15 +5576,16 @@ class WritemarkEditorElement extends HTMLElement {
     const desiredTop = placement === "above"
       ? anchor.top - gap - popupRect.height
       : anchor.bottom + gap;
-    const minimumTop = viewport.top + margin;
-    const maximumTop = Math.max(minimumTop, viewport.bottom - margin - popupRect.height);
-    const viewportTop = clamp(desiredTop, minimumTop, maximumTop);
+    const minimumTop = verticalTop;
+    const maximumTop = Math.max(minimumTop, verticalBottom - popupRect.height);
+    const popupTop = clamp(desiredTop, minimumTop, maximumTop);
     popup.style.left = "0px";
     popup.style.top = "0px";
     const positioningOrigin = popup.getBoundingClientRect();
+    popup.dataset.boundary = useEditorBoundary ? "editor" : "viewport";
     popup.dataset.placement = placement;
     popup.style.left = `${viewportLeft - positioningOrigin.left}px`;
-    popup.style.top = `${viewportTop - positioningOrigin.top}px`;
+    popup.style.top = `${popupTop - positioningOrigin.top}px`;
   }
   _enabledCompletionIndex(start, direction = 1) {
     const n = this._completion.items.length;
@@ -5294,7 +5605,65 @@ class WritemarkEditorElement extends HTMLElement {
     if (index >= 0) this._setCompletionIndex(index, delta);
   }
   _setCompletionIndex(index, direction = 1) { const n = this._completion.items.length; if (!n) return; this._completion.activeIndex = this._enabledCompletionIndex(clamp(index, 0, n - 1), direction); this._renderCompletion(); }
-  _acceptCompletion(source = "action") { if (!this._completion.open || !this._completion.items.length) return fail("not-applicable"); const provider = this._providers.get(this._completion.providerId); const item = this._completion.items[this._completion.activeIndex]; if (!provider || !item || item.disabled) return fail("not-applicable"); const ctx = this._getContext(); let result; try { const currentMatch = provider.match(ctx); if (!currentMatch) { this._closeCompletion(); return fail("not-applicable"); } result = provider.apply(item, currentMatch, ctx); } catch (error) { this._emitError("completion", error, true, { providerId: provider.id }); this._closeCompletion(); return fail("provider-error", String(error?.message || error)); } this._closeCompletion(); if (result?.ok && result.transaction) { const before = this._snapshot(); this._applyTransaction({ ...result.transaction, source: source === "pointer" ? "pointer" : "keyboard", actionId: "completion.accept" }, { source: source === "pointer" ? "pointer" : "keyboard" }); const after = this._snapshot(); this._dispatch("md-completion-accept", { providerId: provider.id, item, before, after }); if (result.announcement) this._announce(result.announcement); return okNoop(result.announcement); } return result || fail("not-applicable"); }
+  _acceptCompletion(source = "action") {
+    if (!this._completion.open || !this._completion.items.length) return fail("not-applicable");
+    const provider = this._providers.get(this._completion.providerId);
+    const item = this._completion.items[this._completion.activeIndex];
+    if (!provider || !item || item.disabled) return fail("not-applicable");
+    const ctx = this._getContext();
+    let result;
+    try {
+      const currentMatch = provider.match(ctx);
+      const shownMatch = this._completion.match;
+      const exactMatch = Boolean(
+        currentMatch
+        && shownMatch
+        && currentMatch.from === shownMatch.from
+        && currentMatch.to === shownMatch.to
+        && currentMatch.query === shownMatch.query
+        && currentMatch.trigger === shownMatch.trigger
+      );
+      const currentTagQuery = normalizeTagKey(currentMatch?.query || "");
+      const shownTagQuery = normalizeTagKey(shownMatch?.query || "");
+      const itemTagKey = normalizeTagKey(String(item.value || "").replace(/^#/, ""));
+      const safeTagRefinement = Boolean(
+        provider.id === "tags"
+        && currentMatch
+        && shownMatch
+        && currentMatch.from === shownMatch.from
+        && currentMatch.trigger === shownMatch.trigger
+        && currentMatch.to >= shownMatch.to
+        && currentTagQuery.startsWith(shownTagQuery)
+        && itemTagKey.startsWith(currentTagQuery)
+      );
+      if (!exactMatch && !safeTagRefinement) {
+        this._closeCompletion();
+        this._scheduleCompletionUpdate({ immediate: true });
+        return fail("not-applicable");
+      }
+      result = provider.apply(item, currentMatch, ctx);
+    } catch (error) {
+      this._emitError("completion", error, true, { providerId: provider.id });
+      this._closeCompletion();
+      return fail("provider-error", String(error?.message || error));
+    }
+    this._closeCompletion();
+    if (result?.ok && result.transaction) {
+      const before = this._snapshot();
+      this._applyTransaction({
+        ...result.transaction,
+        source: source === "pointer" ? "pointer" : "keyboard",
+        actionId: "completion.accept"
+      }, {
+        source: source === "pointer" ? "pointer" : "keyboard"
+      });
+      const after = this._snapshot();
+      this._dispatch("md-completion-accept", { providerId: provider.id, item, before, after });
+      if (result.announcement) this._announce(result.announcement);
+      return okNoop(result.announcement);
+    }
+    return result || fail("not-applicable");
+  }
 
   _updateFormValue() { if (!this._internals) return; this.disabled ? this._internals.setFormValue(null) : this._internals.setFormValue(this._value); }
   _fallbackValidity() { const flags = this._computeValidityFlags(); return { valid: Object.keys(flags).length === 0, valueMissing: Boolean(flags.valueMissing), tooShort: Boolean(flags.tooShort), tooLong: Boolean(flags.tooLong), customError: Boolean(flags.customError) }; }
@@ -5351,6 +5720,7 @@ globalThis.WritemarkEditor = Object.freeze({
   renderMarkdown,
   renderInlineMarkdown,
   parseBlocks,
+  parseTags,
   parseListItem,
   parseHeading,
   parseBlockquote,

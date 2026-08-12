@@ -4,18 +4,60 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>&lt;writemark-editor&gt; v1.5.2 Live Inline Demo</title>
+  <title>&lt;writemark-editor&gt; v1.6.0 Live Inline Demo</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
-    body { margin: 0; padding: 32px; background: Canvas; color: CanvasText; }
-    main { max-width: 1200px; margin: 0 auto; display: grid; gap: 20px; }
-    h1 { margin-bottom: 0; }
-    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: clamp(16px, 4vw, 36px); background: Canvas; color: CanvasText; }
+    main { max-width: 1240px; margin: 0 auto; display: grid; gap: 20px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 8px; }
+    h2 { margin-bottom: 4px; font-size: 1.15rem; }
+    h3 { margin-bottom: 8px; font-size: 0.95rem; }
+    .controls, .toolbar, .tag-controls, .status-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .controls { padding: 14px; border: 1px solid color-mix(in srgb, CanvasText 14%, Canvas 86%); border-radius: 12px; background: color-mix(in srgb, CanvasText 3%, Canvas 97%); }
+    .controls label, .check-control { display: inline-flex; gap: 6px; align-items: center; }
     button, select, input { font: inherit; border-radius: 8px; border: 1px solid color-mix(in srgb, CanvasText 22%, Canvas 78%); background: Canvas; color: CanvasText; padding: 8px 10px; }
+    button { cursor: pointer; }
+    button:hover:not(:disabled) { border-color: color-mix(in srgb, Highlight 55%, Canvas 45%); }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid color-mix(in srgb, Highlight 38%, transparent); outline-offset: 2px; }
+    button:disabled { cursor: not-allowed; opacity: 0.5; }
+    button[aria-pressed="true"] { color: HighlightText; background: Highlight; border-color: Highlight; }
     input[type="number"] { width: 5.5em; }
+    input[type="checkbox"] { width: 1rem; height: 1rem; padding: 0; }
+    input[type="text"] { min-width: 12rem; }
+    .demo-card { border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas 84%); border-radius: 12px; padding: 16px; background: color-mix(in srgb, CanvasText 2%, Canvas 98%); }
+    .card-heading { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+    .card-heading p { margin-bottom: 0; color: color-mix(in srgb, CanvasText 70%, Canvas 30%); }
+    .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr); gap: 20px; align-items: start; }
+    .toolbar { padding-top: 4px; }
+    .toolbar-separator { width: 1px; height: 28px; background: color-mix(in srgb, CanvasText 18%, Canvas 82%); }
+    .status-pill { display: inline-flex; gap: 5px; align-items: center; padding: 4px 8px; border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas 84%); border-radius: 999px; font-size: 0.84rem; }
+    .status-pill strong { font-weight: 650; }
+    .tag-controls { align-items: flex-end; margin-bottom: 16px; }
+    .stacked-control { display: grid; gap: 4px; }
+    .stacked-control span { font-size: 0.82rem; color: color-mix(in srgb, CanvasText 70%, Canvas 30%); }
+    .tag-section + .tag-section { margin-top: 18px; }
+    .tag-list { display: flex; flex-wrap: wrap; gap: 8px; min-height: 36px; align-items: center; }
+    .tag-chip { display: inline-flex; gap: 6px; align-items: center; border-radius: 999px; padding: 6px 10px; color: color-mix(in srgb, Highlight 85%, CanvasText 15%); background: color-mix(in srgb, Highlight 12%, Canvas 88%); border-color: color-mix(in srgb, Highlight 32%, Canvas 68%); }
+    .tag-chip .tag-count { min-width: 1.3rem; padding: 0 5px; border-radius: 999px; color: CanvasText; background: color-mix(in srgb, CanvasText 9%, Canvas 91%); font-size: 0.78rem; }
+    .catalog-entry { display: inline-flex; align-items: center; border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas 84%); border-radius: 999px; overflow: hidden; }
+    .catalog-entry button { border: 0; border-radius: 0; }
+    .catalog-entry .remove-tag { padding-inline: 8px; color: color-mix(in srgb, #b00020 80%, CanvasText 20%); border-left: 1px solid color-mix(in srgb, CanvasText 14%, Canvas 86%); }
+    .empty-state { margin: 0; color: color-mix(in srgb, CanvasText 65%, Canvas 35%); font-style: italic; }
+    .state-list { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 14px; margin: 0; }
+    .state-list dt { color: color-mix(in srgb, CanvasText 68%, Canvas 32%); }
+    .state-list dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .help-list { margin-bottom: 0; padding-left: 20px; }
+    .activity { min-height: 1.45em; margin: 12px 0 0; color: color-mix(in srgb, CanvasText 72%, Canvas 28%); }
     .copy-status { flex-basis: 100%; min-height: 1.45em; margin: 0; }
     pre.log { white-space: pre-wrap; border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas 82%); border-radius: 8px; padding: 12px; min-height: 80px; max-height: 220px; overflow: auto; }
     writemark-editor { --md-editor-min-height: 420px; }
+    @media (max-width: 820px) {
+      .workspace-grid { grid-template-columns: 1fr; }
+      .card-heading { display: block; }
+      .status-row { margin-top: 10px; }
+    }
     /* Active-line/cell focus outline is off by default. Re-enable with:
        writemark-editor { --md-editor-active-line-ring: inset 0 0 0 2px color-mix(in srgb, Highlight 35%, transparent); }
     */
@@ -94,6 +136,14 @@
         <input id="debug-log" type="checkbox">
         Console mirror
       </label>
+      <label>
+        <input id="readonly-state" type="checkbox">
+        Readonly
+      </label>
+      <label>
+        <input id="disabled-state" type="checkbox">
+        Disabled
+      </label>
       <button type="button" id="insert-demo">Insert demo content</button>
       <button type="button" id="select-expand">Expand selection</button>
       <button type="button" id="get-html">Log HTML</button>
@@ -103,6 +153,38 @@
       <p id="debug-copy-status" class="copy-status" role="status" aria-live="polite"></p>
     </div>
 
+    <section class="demo-card" aria-labelledby="actions-title">
+      <div class="card-heading">
+        <div>
+          <h2 id="actions-title">Host action API</h2>
+          <p>This toolbar is demo host UI. Each button calls the component action API.</p>
+        </div>
+        <div class="status-row" aria-label="Editor status">
+          <span class="status-pill">Mode <strong id="status-mode">live</strong></span>
+          <span class="status-pill">Document <strong id="status-dirty">clean</strong></span>
+          <span class="status-pill">Form <strong id="status-validity">valid</strong></span>
+        </div>
+      </div>
+      <div id="host-toolbar" class="toolbar" role="toolbar" aria-label="Host editor actions">
+        <button type="button" data-action="history.undo">Undo</button>
+        <button type="button" data-action="history.redo">Redo</button>
+        <span class="toolbar-separator" aria-hidden="true"></span>
+        <button type="button" data-action="inline.bold" data-toggle="true">Bold</button>
+        <button type="button" data-action="inline.italic" data-toggle="true">Italic</button>
+        <button type="button" data-action="inline.code" data-toggle="true">Code</button>
+        <button type="button" data-action="inline.strikethrough" data-toggle="true">Strike</button>
+        <span class="toolbar-separator" aria-hidden="true"></span>
+        <button type="button" data-action="block.heading.2" data-toggle="true">Heading 2</button>
+        <button type="button" data-action="block.blockquote" data-toggle="true">Quote</button>
+        <button type="button" data-action="block.taskList" data-toggle="true">Task list</button>
+        <button type="button" data-action="block.table">Insert table</button>
+        <span class="toolbar-separator" aria-hidden="true"></span>
+        <button type="button" id="commit-document">Commit</button>
+        <button type="button" id="reset-document">Reset</button>
+      </div>
+      <p id="action-status" class="activity" role="status" aria-live="polite"></p>
+    </section>
+
     <form id="demo-form">
       <writemark-editor
         id="editor"
@@ -111,13 +193,77 @@
         mode="live"
         preview="none"
         markdown-flavor="gfm"
-        placeholder="Type / for commands. Try #, -, 1., >, or [ ] then Space. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
+        placeholder="Type / for commands or # for tags. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
         required
         maxlength="50000"
         spellcheck="true"
       ></writemark-editor>
       <p><button type="submit">Submit form</button></p>
     </form>
+
+    <div class="workspace-grid">
+      <section class="demo-card" aria-labelledby="tags-title">
+        <div class="card-heading">
+          <div>
+            <h2 id="tags-title">Tag playground</h2>
+            <p>Document tags stay derived from Markdown. The host catalog supplies completion choices.</p>
+          </div>
+          <label class="check-control">
+            <input id="allow-tag-create" type="checkbox" checked>
+            Offer new tag creation
+          </label>
+        </div>
+
+        <div class="tag-controls">
+          <form id="insert-tag-form" class="tag-controls">
+            <label class="stacked-control" for="insert-tag-input">
+              <span>Insert a tag at the selection</span>
+              <input id="insert-tag-input" type="text" placeholder="project/writemark" autocomplete="off">
+            </label>
+            <button type="submit">Insert tag</button>
+          </form>
+        </div>
+
+        <div class="tag-section">
+          <h3>Document tags <span id="document-tag-summary"></span></h3>
+          <div id="document-tags" class="tag-list" aria-live="polite"></div>
+        </div>
+
+        <div class="tag-section">
+          <h3>Host catalog</h3>
+          <form id="catalog-tag-form" class="tag-controls">
+            <label class="stacked-control" for="catalog-tag-input">
+              <span>Add a completion choice</span>
+              <input id="catalog-tag-input" type="text" placeholder="team/editor" autocomplete="off">
+            </label>
+            <button type="submit">Add catalog tag</button>
+          </form>
+          <div id="catalog-tags" class="tag-list"></div>
+        </div>
+
+        <p id="tag-activity" class="activity" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="demo-card" aria-labelledby="state-title">
+        <h2 id="state-title">Live state</h2>
+        <dl class="state-list">
+          <dt>Markdown</dt><dd id="state-length">0 characters</dd>
+          <dt>Selection</dt><dd id="state-selection">0–0</dd>
+          <dt>Tags</dt><dd id="state-tags">0 unique</dd>
+          <dt>Occurrences</dt><dd id="state-occurrences">0 total</dd>
+          <dt>Active marks</dt><dd id="state-marks">none</dd>
+          <dt>Last action</dt><dd id="state-action">none</dd>
+        </dl>
+        <h3 style="margin-top: 18px;">Try these flows</h3>
+        <ul class="help-list">
+          <li>Type <code>#doc</code> to search document and host tags.</li>
+          <li>Type a new tag and choose its explicit create item.</li>
+          <li>Select text and use the host action buttons.</li>
+          <li>Click a rendered tag to receive <code>md-tag-activate</code>.</li>
+          <li>Use Commit and Reset to inspect dirty state.</li>
+        </ul>
+      </section>
+    </div>
 
     <section aria-labelledby="log-title">
       <h2 id="log-title">Event log</h2>
@@ -140,6 +286,17 @@
     const debugLog = document.querySelector('#debug-log');
     const copyDebug = document.querySelector('#copy-debug');
     const debugCopyStatus = document.querySelector('#debug-copy-status');
+    const readonlyState = document.querySelector('#readonly-state');
+    const disabledState = document.querySelector('#disabled-state');
+    const allowTagCreate = document.querySelector('#allow-tag-create');
+    const hostToolbar = document.querySelector('#host-toolbar');
+    const actionStatus = document.querySelector('#action-status');
+    const tagActivity = document.querySelector('#tag-activity');
+    const documentTags = document.querySelector('#document-tags');
+    const documentTagSummary = document.querySelector('#document-tag-summary');
+    const catalogTags = document.querySelector('#catalog-tags');
+    const insertTagInput = document.querySelector('#insert-tag-input');
+    const catalogTagInput = document.querySelector('#catalog-tag-input');
     const debugEvents = [];
 
     function readNumberInputValue(input) {
@@ -242,6 +399,12 @@ Type \`/\` at the start of a line for slash commands. Headings are sized inside 
 
 Use **bold**, *italic*, ***bold italic***, \`inline code\`, and ~~strikethrough~~ in ordinary text.
 
+## Tags
+
+Use #editor and #demo/writemark. This second #editor shows occurrence counts.
+Type #doc to search the host catalog. Type a new tag and choose its explicit create item.
+Click a rendered tag to send an activation event to the host.
+
 ## Blockquotes
 
 > Standard blockquote
@@ -282,7 +445,7 @@ Type these at the start of a line and press Space: \`#\`, \`##\`, \`-\`, \`1.\`,
 | Live inline rendering | Works | No separate preview required |
 | Source value | Preserved | Forms submit markdown |
 | Table navigation | Fixed | Enter adds rows; Shift+Enter/Escape exits |
-| Toolbar | Removed | Use slash commands, Markdown shortcuts, and keyboard shortcuts |
+| Component toolbar | Not built in | This page shows optional host action buttons |
 
 ## Code
 
@@ -339,16 +502,271 @@ print("hello")
       };
     }
 
-    editor.value = demoMarkdown;
+    function parseDemoTag(rawValue) {
+      const candidate = String(rawValue || '').trim().replace(/^#+/, '');
+      if (!candidate) return null;
+      const markdown = `#${candidate}`;
+      const [tag] = globalThis.WritemarkEditor.parseTags(markdown);
+      const range = tag?.ranges?.[0];
+      if (!tag || tag.ranges.length !== 1 || range.from !== 0 || range.to !== markdown.length) return null;
+      return { key: tag.key, value: tag.value };
+    }
 
-    mode.addEventListener('change', () => editor.mode = mode.value);
+    const demoTags = new Map();
+    for (const value of ['docs', 'documentation', 'editor', 'release', 'demo/writemark', 'team/platform']) {
+      const tag = parseDemoTag(value);
+      if (tag) demoTags.set(tag.key, tag.value);
+    }
+
+    function renderCatalogTags() {
+      catalogTags.replaceChildren();
+      const entries = [...demoTags.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+      if (!entries.length) {
+        const empty = document.createElement('p');
+        empty.className = 'empty-state';
+        empty.textContent = 'The host catalog is empty.';
+        catalogTags.append(empty);
+        return;
+      }
+      for (const [key, value] of entries) {
+        const entry = document.createElement('span');
+        entry.className = 'catalog-entry';
+
+        const insert = document.createElement('button');
+        insert.type = 'button';
+        insert.dataset.catalogTag = value;
+        insert.textContent = `#${value}`;
+        insert.setAttribute('aria-label', `Insert #${value}`);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'remove-tag';
+        remove.dataset.removeCatalogTag = key;
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', `Remove #${value} from catalog`);
+
+        entry.append(insert, remove);
+        catalogTags.append(entry);
+      }
+    }
+
+    function addCatalogTag(rawValue) {
+      const tag = parseDemoTag(rawValue);
+      if (!tag) return null;
+      demoTags.set(tag.key, tag.value);
+      renderCatalogTags();
+      return tag;
+    }
+
+    function renderDocumentTags(tags = editor.getTags()) {
+      documentTags.replaceChildren();
+      const occurrences = tags.reduce((total, tag) => total + tag.count, 0);
+      documentTagSummary.textContent = tags.length
+        ? `(${tags.length} unique, ${occurrences} total)`
+        : '(none)';
+      if (!tags.length) {
+        const empty = document.createElement('p');
+        empty.className = 'empty-state';
+        empty.textContent = 'Type a tag to build the document index.';
+        documentTags.append(empty);
+        return;
+      }
+      for (const tag of tags) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'tag-chip';
+        button.dataset.documentTagKey = tag.key;
+        button.setAttribute(
+          'aria-label',
+          `Focus #${tag.value}, ${tag.count} occurrence${tag.count === 1 ? '' : 's'}`
+        );
+
+        const label = document.createElement('span');
+        label.textContent = `#${tag.value}`;
+        const count = document.createElement('span');
+        count.className = 'tag-count';
+        count.textContent = String(tag.count);
+        button.append(label, count);
+        documentTags.append(button);
+      }
+    }
+
+    function insertTagAtSelection(rawValue) {
+      const tag = parseDemoTag(rawValue);
+      if (!tag) {
+        tagActivity.textContent = 'Enter a valid tag with at least one nonnumeric character.';
+        return false;
+      }
+      const before = editor.value.slice(0, editor.selectionStart);
+      const after = editor.value.slice(editor.selectionEnd);
+      const leading = before && /[\p{L}\p{N}_/-]$/u.test(before) ? ' ' : '';
+      const trailing = !after || !/^[\s.,!?;:)\]}]/u.test(after) ? ' ' : '';
+      const inserted = editor.insertMarkdown(`${leading}#${tag.value}${trailing}`);
+      tagActivity.textContent = inserted
+        ? `Inserted #${tag.value} at the current selection.`
+        : `Could not insert #${tag.value} in the current editor state.`;
+      if (inserted) editor.focus();
+      return inserted;
+    }
+
+    const demoTagProvider = {
+      get allowCreate() {
+        return allowTagCreate.checked;
+      },
+      getItems({ query }) {
+        const normalized = query.normalize('NFC').toLocaleLowerCase();
+        return [...demoTags.values()]
+          .filter(tag => tag.normalize('NFC').toLocaleLowerCase().startsWith(normalized))
+          .map(tag => ({ value: tag, detail: 'host catalog' }));
+      }
+    };
+
+    let lastAction = 'none';
+
+    function syncActionToolbar() {
+      const activeMarks = new Set(editor.getActiveMarks());
+      for (const button of hostToolbar.querySelectorAll('[data-action]')) {
+        const actionId = button.dataset.action;
+        button.disabled = !editor.canExec(actionId);
+        if (button.dataset.toggle) {
+          button.setAttribute('aria-pressed', String(activeMarks.has(actionId)));
+        }
+      }
+    }
+
+    function syncDemoState() {
+      const tags = editor.getTags();
+      const occurrences = tags.reduce((total, tag) => total + tag.count, 0);
+      const activeMarks = editor.getActiveMarks();
+      const stateName = editor.disabled
+        ? `${editor.mode}, disabled`
+        : editor.readonly
+          ? `${editor.mode}, readonly`
+          : editor.mode;
+      document.querySelector('#status-mode').textContent = stateName;
+      document.querySelector('#status-dirty').textContent = editor.dirty ? 'dirty' : 'clean';
+      document.querySelector('#status-validity').textContent = editor.willValidate
+        ? editor.validity.valid ? 'valid' : 'invalid'
+        : 'not validated';
+      document.querySelector('#state-length').textContent = `${editor.value.length} characters`;
+      document.querySelector('#state-selection').textContent = `${editor.selectionStart}–${editor.selectionEnd}`;
+      document.querySelector('#state-tags').textContent = `${tags.length} unique`;
+      document.querySelector('#state-occurrences').textContent = `${occurrences} total`;
+      document.querySelector('#state-marks').textContent = activeMarks.length ? activeMarks.join(', ') : 'none';
+      document.querySelector('#state-action').textContent = lastAction;
+      syncActionToolbar();
+    }
+
+    editor.tagProvider = demoTagProvider;
+    editor.value = demoMarkdown;
+    editor.commit();
+    renderCatalogTags();
+    renderDocumentTags();
+    syncDemoState();
+
+    mode.addEventListener('change', () => {
+      editor.mode = mode.value;
+      syncDemoState();
+    });
     previewMode.addEventListener('change', () => editor.preview = previewMode.value);
     markdownFlavor.addEventListener('change', () => editor.markdownFlavor = markdownFlavor.value);
     tabBehavior.addEventListener('change', () => editor.tabBehavior = tabBehavior.value);
     debugLevel.addEventListener('change', () => editor.debug = Number(debugLevel.value));
     debugLog.addEventListener('change', () => editor.debugLog = debugLog.checked);
+    readonlyState.addEventListener('change', () => {
+      editor.readonly = readonlyState.checked;
+      actionStatus.textContent = readonlyState.checked ? 'Readonly mode is active.' : 'Readonly mode is off.';
+      syncDemoState();
+    });
+    disabledState.addEventListener('change', () => {
+      editor.disabled = disabledState.checked;
+      actionStatus.textContent = disabledState.checked ? 'The editor is disabled.' : 'The editor is enabled.';
+      syncDemoState();
+    });
+    allowTagCreate.addEventListener('change', () => {
+      tagActivity.textContent = allowTagCreate.checked
+        ? 'New tag choices are available in completion.'
+        : 'Completion now shows existing document and host tags only.';
+    });
     bindDemoControls({ editor, fontFamily, fontSize, maxHeight });
-    document.querySelector('#insert-demo').addEventListener('click', () => { editor.value = demoMarkdown; editor.focus(); });
+
+    hostToolbar.addEventListener('click', event => {
+      const button = event.target.closest('[data-action]');
+      if (!button) return;
+      const actionId = button.dataset.action;
+      const applied = editor.exec(actionId);
+      lastAction = applied ? actionId : `${actionId} was not applicable`;
+      actionStatus.textContent = applied
+        ? `Applied ${actionId}.`
+        : `${actionId} is not available at this selection.`;
+      if (applied) editor.focus();
+      syncDemoState();
+    });
+
+    document.querySelector('#commit-document').addEventListener('click', () => {
+      editor.commit();
+      lastAction = 'commit';
+      actionStatus.textContent = 'Committed the current Markdown as the reset value.';
+      syncDemoState();
+    });
+    document.querySelector('#reset-document').addEventListener('click', () => {
+      editor.reset();
+      lastAction = 'reset';
+      actionStatus.textContent = 'Restored the last committed Markdown.';
+      renderDocumentTags();
+      syncDemoState();
+      editor.focus();
+    });
+
+    document.querySelector('#insert-tag-form').addEventListener('submit', event => {
+      event.preventDefault();
+      if (insertTagAtSelection(insertTagInput.value)) insertTagInput.value = '';
+    });
+    document.querySelector('#catalog-tag-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const tag = addCatalogTag(catalogTagInput.value);
+      tagActivity.textContent = tag
+        ? `Added #${tag.value} to the host catalog.`
+        : 'Enter a valid catalog tag with at least one nonnumeric character.';
+      if (tag) catalogTagInput.value = '';
+    });
+    catalogTags.addEventListener('click', event => {
+      const insert = event.target.closest('[data-catalog-tag]');
+      if (insert) {
+        insertTagAtSelection(insert.dataset.catalogTag);
+        return;
+      }
+      const remove = event.target.closest('[data-remove-catalog-tag]');
+      if (!remove) return;
+      const value = demoTags.get(remove.dataset.removeCatalogTag);
+      demoTags.delete(remove.dataset.removeCatalogTag);
+      renderCatalogTags();
+      tagActivity.textContent = `Removed #${value} from the host catalog.`;
+    });
+    documentTags.addEventListener('click', event => {
+      const button = event.target.closest('[data-document-tag-key]');
+      if (!button) return;
+      const tag = editor.getTags().find(item => item.key === button.dataset.documentTagKey);
+      const range = tag?.ranges?.[0];
+      if (!tag || !range) return;
+      if (editor.mode === 'preview') {
+        editor.mode = 'live';
+        mode.value = 'live';
+      }
+      editor.setSelectionRange(range.from, range.to);
+      editor.focus();
+      tagActivity.textContent = `Focused the first #${tag.value} occurrence at ${range.from}–${range.to}.`;
+      syncDemoState();
+    });
+
+    document.querySelector('#insert-demo').addEventListener('click', () => {
+      editor.value = demoMarkdown;
+      editor.commit();
+      lastAction = 'insert demo content';
+      renderDocumentTags();
+      syncDemoState();
+      editor.focus();
+    });
     document.querySelector('#select-expand').addEventListener('click', () => { editor.exec('editor.selectAllExpand'); editor.focus(); });
     document.querySelector('#get-html').addEventListener('click', () => writeLog('HTML', { html: editor.getHTML() }));
     document.querySelector('#get-text').addEventListener('click', () => writeLog('Text', { text: editor.getText() }));
@@ -373,9 +791,34 @@ print("hello")
     editor.addEventListener('md-copy', event => writeLog('md-copy', { length: event.detail.markdown.length }));
     editor.addEventListener('md-cut', event => writeLog('md-cut', { length: event.detail.markdown.length }));
     editor.addEventListener('md-paste', event => writeLog('md-paste', { kind: event.detail.kind, length: event.detail.markdown.length }));
-    editor.addEventListener('md-input', event => writeLog('md-input', { length: event.detail.value.length, source: event.detail.source }));
-    editor.addEventListener('md-action', event => writeLog('md-action', { actionId: event.detail.actionId, source: event.detail.source }));
-    editor.addEventListener('md-completion-accept', event => writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label }));
+    editor.addEventListener('md-input', event => {
+      writeLog('md-input', { length: event.detail.value.length, source: event.detail.source });
+      syncDemoState();
+    });
+    editor.addEventListener('md-selection-change', syncDemoState);
+    editor.addEventListener('md-dirty-change', syncDemoState);
+    editor.addEventListener('md-change', syncDemoState);
+    editor.addEventListener('md-action', event => {
+      lastAction = event.detail.actionId;
+      writeLog('md-action', { actionId: event.detail.actionId, source: event.detail.source });
+      syncDemoState();
+    });
+    editor.addEventListener('md-completion-accept', event => {
+      if (event.detail.item.kind === 'tag-create') {
+        const tag = addCatalogTag(event.detail.item.value);
+        if (tag) tagActivity.textContent = `Created #${tag.value} and saved it in the demo host catalog.`;
+      }
+      writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label });
+    });
+    editor.addEventListener('md-tags-change', event => {
+      renderDocumentTags(event.detail.current);
+      syncDemoState();
+      writeLog('md-tags-change', { tags: event.detail.current.map(tag => tag.value) });
+    });
+    editor.addEventListener('md-tag-activate', event => {
+      tagActivity.textContent = `Activated #${event.detail.tag} in the ${event.detail.surface} surface.`;
+      writeLog('md-tag-activate', event.detail);
+    });
     editor.addEventListener('md-debug', event => {
       debugEvents.push(event.detail);
       copyDebug.disabled = false;

@@ -53,6 +53,10 @@ See the [documentation index](docs/README.md) for suggested learning paths and t
 The [public demo](https://brostoffed.github.io/writemark/demo/) runs entirely in
 the browser and does not require an account or installation.
 
+The demo includes a host tag catalog, a live document tag index, explicit tag
+creation, tag activation, action buttons, readonly and disabled controls, and a
+live inspector for selection, dirty state, validity, active marks, and counts.
+
 To run the same demo locally, open `demo/index.html` directly in a browser or
 serve it from the repository:
 
@@ -186,6 +190,7 @@ Code fences are refined in `live` mode: the opening and closing backtick markers
 | Shift+Tab in list item | Outdents the item. |
 | Enter after ```` ```python ```` | Creates a closed code fence and places cursor inside. |
 | `/` at line start | Opens slash command menu. |
+| `#` plus text | Opens tag completion from document and host tags. |
 | ` ```py ` | Opens code-language completion; `py` ranks Python. |
 | Enter in table cell | Inserts a row below the current row and moves into the first new cell. |
 | Shift+Enter or Escape in table cell | Exits the table to a blank line after it. |
@@ -266,6 +271,7 @@ console.log(editor.getPlainText());
 | `indentString` | `"\t" | "  " | "    "` |
 | `debug` | nonnegative diagnostic level; default `0` |
 | `debugLog` | optional `console.debug` mirror |
+| `tagProvider` | optional host tag catalog |
 | `selectionStart` / `selectionEnd` | source offsets |
 | `dirty` | boolean |
 
@@ -286,6 +292,7 @@ console.log(editor.getPlainText());
 | `getSelectionMarkdown()` | Return selected source Markdown. |
 | `getHTML()` | Return sanitized rendered HTML. |
 | `getText()` / `getPlainText()` | Return plain text. |
+| `getTags()` | Return the derived document tag index. |
 | `getCurrentBlock()` / `getSelectedBlocks()` | Inspect parsed source-backed blocks. |
 | `getActiveMarks()` | Return active formatting/action IDs for custom host UI. |
 | `canExec(actionId, args?)` | Check whether an action is currently available. |
@@ -349,6 +356,8 @@ Important action IDs:
 | `md-completion-open` | Completion popup opened. |
 | `md-completion-close` | Completion popup closed. |
 | `md-completion-accept` | Completion accepted. |
+| `md-tags-change` | Derived document tags changed. |
+| `md-tag-activate` | A rendered tag was activated. |
 | `md-render` | Preview/rendered HTML generated. |
 | `md-file-paste` | File pasted. Host decides upload/insertion. |
 | `md-file-drop` | File dropped. Host decides upload/insertion. |
@@ -442,6 +451,7 @@ Common parts:
 - `completion-popup`
 - `completion-item`
 - `completion-item-active`
+- `tag`
 - `table`
 - `table-cell`
 - `code-block`
@@ -457,6 +467,7 @@ Common focus/active styling variables:
 - `--md-editor-active-line-bg`: focused live block background. Defaults to `transparent`.
 - `--md-editor-active-cell-ring`: focused table-cell ring. Defaults to `--md-editor-active-line-ring`.
 - `--md-editor-active-cell-bg`, `--md-editor-transition-duration`, `--md-editor-transition-ease`: focused table-cell background. Defaults to `--md-editor-active-line-bg`.
+- `--md-editor-tag-bg`, `--md-editor-tag-fg`, `--md-editor-tag-border`: rendered tag colors.
 
 ## Security
 
