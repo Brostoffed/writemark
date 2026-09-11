@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Writemark demo capture</title>
+  <link rel="icon" href="data:,">
+  <script type="module" src="../dist/writemark-editor.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #eef4f8;
+      color: #111827;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 900px;
+      height: 540px;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at 18% 0%, rgba(130, 112, 255, 0.13), transparent 34%),
+        radial-gradient(circle at 92% 8%, rgba(28, 178, 177, 0.12), transparent 32%),
+        linear-gradient(180deg, #f8fbfd 0%, #edf4f7 100%);
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: 72px 1fr 42px;
+      width: 100%;
+      height: 100%;
+      padding: 18px 28px 14px;
+    }
+
+    .masthead,
+    .brand,
+    .story,
+    .filebar,
+    .mode-switch,
+    .footer,
+    .footer-tags,
+    .tag-list {
+      display: flex;
+      align-items: center;
+    }
+
+    .masthead { justify-content: space-between; }
+
+    .brand { gap: 12px; }
+
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      color: white;
+      font-size: 24px;
+      font-weight: 850;
+      background: linear-gradient(145deg, #6756e8, #24aeb2);
+      box-shadow: 0 8px 18px rgba(68, 67, 170, 0.2);
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 20px;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 4px;
+      color: #64748b;
+      font-size: 12px;
+    }
+
+    .story {
+      gap: 9px;
+      max-width: 390px;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 750;
+      text-align: right;
+    }
+
+    .story-dot {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: #25aeb2;
+      box-shadow: 0 0 0 6px rgba(37, 174, 178, 0.12);
+    }
+
+    .window {
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 22px 50px rgba(51, 65, 85, 0.13);
+    }
+
+    .filebar {
+      justify-content: space-between;
+      height: 42px;
+      padding: 0 16px;
+      border-bottom: 1px solid #e6edf3;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .file-name::before {
+      margin-right: 8px;
+      color: #94a3b8;
+      content: "▱";
+    }
+
+    .mode-switch {
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid #e2e8f0;
+      border-radius: 9px;
+      background: #f8fafc;
+    }
+
+    .mode-switch span {
+      padding: 3px 8px;
+      border-radius: 6px;
+      color: #94a3b8;
+      font-size: 10px;
+    }
+
+    .mode-switch .active {
+      color: #5d4bd9;
+      background: white;
+      box-shadow: 0 1px 3px rgba(51, 65, 85, 0.12);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 230px;
+      height: calc(100% - 42px);
+    }
+
+    .editor-pane {
+      min-width: 0;
+      padding: 12px;
+      background: #fbfdff;
+    }
+
+    writemark-editor {
+      display: block;
+      width: 100%;
+      height: 100%;
+      --md-editor-font: Inter, ui-sans-serif, system-ui, sans-serif;
+      --md-editor-font-size: 14px;
+      --md-editor-line-height: 1.48;
+      --md-editor-min-height: 326px;
+      --md-editor-max-height: 326px;
+      --md-editor-border: #dbe5ef;
+      --md-editor-border-focus: #7566ee;
+      --md-editor-radius: 14px;
+      --md-editor-tag-bg: #f1efff;
+      --md-editor-tag-border: #d9d2ff;
+      --md-editor-tag-fg: #6654db;
+    }
+
+    .sidebar {
+      min-width: 0;
+      padding: 16px 14px;
+      border-left: 1px solid #e6edf3;
+      background: #f8fafc;
+    }
+
+    .side-section + .side-section {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+    }
+
+    .side-section h2 {
+      margin: 0 0 9px;
+      color: #1e293b;
+      font-size: 12px;
+      letter-spacing: 0.01em;
+    }
+
+    .side-section p {
+      margin: -3px 0 10px;
+      color: #64748b;
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .tag-list {
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tag-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      padding: 5px 8px;
+      border: 1px solid #dbe4ee;
+      border-radius: 999px;
+      color: #475569;
+      background: white;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .tag-pill.document {
+      border-color: #ddd7ff;
+      color: #6654db;
+      background: #f5f3ff;
+    }
+
+    .tag-pill .count {
+      display: grid;
+      place-items: center;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 999px;
+      color: #475569;
+      background: #e9eef4;
+      font-size: 9px;
+    }
+
+    .catalog-note {
+      margin-top: 12px;
+      padding: 9px 10px;
+      border-radius: 10px;
+      color: #52616f;
+      background: #eef5f7;
+      font-size: 9px;
+      line-height: 1.35;
+    }
+
+    .footer {
+      justify-content: space-between;
+      color: #64748b;
+      font-size: 9px;
+    }
+
+    .footer-tags { gap: 7px; }
+
+    .footer-tag {
+      padding: 4px 9px;
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .runtime::before {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: #25aeb2;
+      content: "";
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="masthead">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">W</div>
+        <div>
+          <strong>Writemark</strong>
+          <span>Live inline Markdown editor</span>
+        </div>
+      </div>
+      <div class="story"><span class="story-dot"></span><span id="story">Markdown becomes structure as you type</span></div>
+    </header>
+
+    <section class="window" aria-label="Writemark demo">
+      <div class="filebar">
+        <span class="file-name">release-notes.md</span>
+        <div class="mode-switch" aria-label="Editor mode">
+          <span id="live-mode" class="active">Live</span>
+          <span id="source-mode">Source</span>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <div class="editor-pane">
+          <writemark-editor id="editor" label="Release notes"></writemark-editor>
+        </div>
+
+        <aside class="sidebar">
+          <section class="side-section">
+            <h2>Tags in this document</h2>
+            <div id="document-tags" class="tag-list"></div>
+          </section>
+
+          <section class="side-section">
+            <h2>Autocomplete catalog</h2>
+            <p>The host owns saved choices.</p>
+            <div id="catalog-tags" class="tag-list"></div>
+            <div class="catalog-note">A typed tag appears in the document first. Save it only through an explicit catalog addition.</div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="footer-tags">
+        <span class="footer-tag">Markdown editing</span>
+        <span class="footer-tag">Lists and tasks</span>
+        <span class="footer-tag">Tags and autocomplete</span>
+      </div>
+      <span class="runtime">0 runtime dependencies</span>
+    </footer>
+  </main>
+
+  <script type="module">
+    const editor = document.querySelector('#editor');
+    const story = document.querySelector('#story');
+    const documentTags = document.querySelector('#document-tags');
+    const catalogTags = document.querySelector('#catalog-tags');
+    const liveMode = document.querySelector('#live-mode');
+    const sourceMode = document.querySelector('#source-mode');
+    const catalog = new Map([
+      ['docs', 'docs'],
+      ['editor', 'editor'],
+      ['release', 'release'],
+      ['team/platform', 'team/platform']
+    ]);
+
+    const markdown = `# Release notes
+
+Write **bold ideas**, *quick notes*, and \`code\`.
+
+- Ship the editor
+- [x] Keep Markdown portable
+
+> Edit source. See structure.
+
+Plan #editor and #docs updates.`;
+
+    const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+    const key = value => value.normalize('NFC').toLocaleLowerCase();
+
+    function renderDocumentTags(tags = editor.getTags()) {
+      documentTags.replaceChildren(...tags.map(tag => {
+        const pill = document.createElement('span');
+        const label = document.createElement('span');
+        const count = document.createElement('span');
+        pill.className = 'tag-pill document';
+        label.textContent = `#${tag.value}`;
+        count.className = 'count';
+        count.textContent = String(tag.count);
+        pill.append(label, count);
+        return pill;
+      }));
+    }
+
+    function renderCatalog() {
+      catalogTags.replaceChildren(...[...catalog.values()].map(value => {
+        const pill = document.createElement('span');
+        pill.className = 'tag-pill';
+        pill.textContent = `#${value}`;
+        return pill;
+      }));
+    }
+
+    function addCatalogTag(value) {
+      const normalized = key(value);
+      if (!normalized || catalog.has(normalized)) return;
+      catalog.set(normalized, value);
+      renderCatalog();
+    }
+
+    editor.tagProvider = {
+      allowCreate: true,
+      getItems({ query }) {
+        const normalized = key(query);
+        return [...catalog.values()]
+          .filter(value => key(value).startsWith(normalized))
+          .map(value => ({ value, detail: 'autocomplete catalog' }));
+      }
+    };
+
+    editor.addEventListener('md-tags-change', event => renderDocumentTags(event.detail.current));
+    editor.addEventListener('md-completion-accept', event => {
+      if (event.detail.item.kind === 'tag-create') addCatalogTag(event.detail.item.value);
+    });
+
+    renderCatalog();
+    renderDocumentTags([]);
+
+    window.gifDemo = {
+      markdown,
+      reset() {
+        editor.mode = 'live';
+        editor.value = '';
+        editor.commit();
+        editor.setSelectionRange(0, 0);
+        liveMode.classList.add('active');
+        sourceMode.classList.remove('active');
+        renderDocumentTags([]);
+      },
+      setStory(value) {
+        story.textContent = value;
+      },
+      async typeDocument(duration = 3600) {
+        const started = performance.now();
+        while (editor.value.length < markdown.length) {
+          const elapsed = performance.now() - started;
+          const progress = Math.min(1, elapsed / duration);
+          const length = Math.max(editor.value.length + 1, Math.floor(markdown.length * progress));
+          editor.value = markdown.slice(0, length);
+          editor.setSelectionRange(length, length);
+          await wait(32);
+        }
+      },
+      prepareLine(prefix) {
+        const value = `${editor.value.replace(/\s+$/, '')}\n${prefix}`;
+        editor.value = value;
+        editor.setSelectionRange(value.length, value.length);
+        editor.focus();
+      },
+      setMode(mode) {
+        editor.mode = mode;
+        liveMode.classList.toggle('active', mode === 'live');
+        sourceMode.classList.toggle('active', mode === 'source');
+        editor.focus();
+      },
+      value() {
+        return editor.value;
+      }
+    };
+
+    await customElements.whenDefined('writemark-editor');
+    window.gifDemo.reset();
+    window.gifDemoReady = true;
+  </script>
+</body>
+</html>

@@ -1,6 +1,30 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("published demo", () => {
+  test("keeps the GIF capture page aligned with document and catalog tag states", async ({ page }) => {
+    await page.goto("/demo/gif.html");
+    await page.waitForFunction(() => window.gifDemoReady === true);
+
+    const documentSection = page.locator(".side-section").filter({
+      has: page.getByRole("heading", { name: "Tags in this document" })
+    });
+    const catalogSection = page.locator(".side-section").filter({
+      has: page.getByRole("heading", { name: "Autocomplete catalog" })
+    });
+
+    await page.evaluate(() => window.gifDemo.prepareLine("QA owner: "));
+    await page.keyboard.type("#fresh/demo");
+
+    await expect(documentSection.getByText("#fresh/demo", { exact: true })).toBeVisible();
+    await expect(catalogSection.getByText("#fresh/demo", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("option", {
+      name: "Add #fresh/demo to catalog save for autocomplete"
+    })).toBeVisible();
+
+    await page.keyboard.press("Enter");
+    await expect(catalogSection.getByText("#fresh/demo", { exact: true })).toBeVisible();
+  });
+
   test("connects controls, editor state, output, and form submission", async ({ page }) => {
     const pageErrors = [];
     page.on("pageerror", error => pageErrors.push(error.message));
@@ -114,7 +138,7 @@ test.describe("published demo", () => {
     await expect(page.locator("#tag-activity"))
       .toContainText("Focused the first #editor occurrence");
 
-    await page.getByRole("textbox", { name: "Add a completion choice" })
+    await page.getByRole("textbox", { name: "Add an autocomplete choice" })
       .fill("product/demo");
     await page.getByRole("button", { name: "Add catalog tag" }).click();
     await expect(page.getByRole("button", { name: "Insert #product/demo" }))
@@ -141,7 +165,7 @@ test.describe("published demo", () => {
     expect(pageErrors).toEqual([]);
   });
 
-  test("persists explicit tag creation and supports tag activation", async ({ page }) => {
+  test("persists explicit catalog additions and supports tag activation", async ({ page }) => {
     await page.goto("/demo/index.html");
     const editor = page.locator("#editor");
 
@@ -151,14 +175,16 @@ test.describe("published demo", () => {
       element.focus();
     });
     await page.keyboard.type("#fresh/demo");
-    await expect(editor.getByRole("option", { name: "Create #fresh/demo new tag" }))
+    await expect(editor.getByRole("option", {
+      name: "Add #fresh/demo to catalog save for autocomplete"
+    }))
       .toBeVisible();
     await page.keyboard.press("Enter");
 
     await expect(page.getByRole("button", { name: "Insert #fresh/demo" }))
       .toBeVisible();
     await expect(page.locator("#tag-activity"))
-      .toHaveText("Created #fresh/demo and saved it in the demo host catalog.");
+      .toHaveText("Added #fresh/demo to the autocomplete catalog.");
     await expect(page.getByRole("button", { name: "Focus #fresh/demo, 1 occurrence" }))
       .toBeVisible();
 
@@ -167,10 +193,10 @@ test.describe("published demo", () => {
     await expect(page.locator("#tag-activity"))
       .toHaveText("Activated #editor in the live surface.");
 
-    await page.getByRole("checkbox", { name: "Offer new tag creation" }).uncheck();
+    await page.getByRole("checkbox", { name: "Offer catalog additions" }).uncheck();
     expect(await editor.evaluate(element => element.tagProvider.allowCreate)).toBe(false);
     await expect(page.locator("#tag-activity"))
-      .toHaveText("Completion now shows existing document and host tags only.");
+      .toHaveText("Autocomplete now shows existing document and host tags only.");
   });
 
   test("runs host actions and reports dirty, readonly, and disabled state", async ({ page }) => {

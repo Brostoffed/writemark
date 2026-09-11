@@ -267,7 +267,7 @@ test.describe("tag completion integration", () => {
     await expect(editor.host.getByRole("option")).toHaveCount(24);
   });
 
-  test("does not offer creation for numeric, malformed, or exact tags", async ({ editor, page }) => {
+  test("does not offer catalog additions for numeric, malformed, or exact tags", async ({ editor, page }) => {
     await editor.reset({ attributes: { mode: "source" } });
     await editor.host.evaluate(element => {
       element.tagProvider = { allowCreate: true, getItems: () => ["alpha"] };
@@ -279,7 +279,7 @@ test.describe("tag completion integration", () => {
     await page.keyboard.press("ControlOrMeta+a");
     await page.keyboard.type("#alpha");
     await expect(editor.host.getByRole("option", { name: /#alpha/ })).toBeVisible();
-    await expect(editor.host.getByRole("option", { name: /Create #alpha/ })).toHaveCount(0);
+    await expect(editor.host.getByRole("option", { name: /Add #alpha to catalog/ })).toHaveCount(0);
     await page.keyboard.press("ControlOrMeta+a");
     await page.keyboard.type("#two//");
     await expect(editor.completion).toBeHidden();
@@ -433,21 +433,23 @@ test.describe("tag completion integration", () => {
     expect(await editor.value()).toBe("#alpha ");
   });
 
-  test("does not persist an explicit creation without host action", async ({ editor, page }) => {
+  test("does not persist a catalog addition without host action", async ({ editor, page }) => {
     await editor.reset({ attributes: { mode: "source" } });
     await editor.host.evaluate(element => {
       element.tagProvider = { allowCreate: true, getItems: () => [] };
       element.focus();
     });
     await page.keyboard.type("#new-tag");
-    await expect(editor.host.getByRole("option", { name: "Create #new-tag new tag" })).toBeVisible();
+    await expect(editor.host.getByRole("option", {
+      name: "Add #new-tag to catalog save for autocomplete"
+    })).toBeVisible();
     await page.keyboard.press("Enter");
     expect(await editor.value()).toBe("#new-tag ");
 
     await editor.setValue("");
     await editor.setSelection(0);
     await page.keyboard.type("#new");
-    await expect(editor.host.getByRole("option", { name: /Create #new/ })).toBeVisible();
+    await expect(editor.host.getByRole("option", { name: /Add #new to catalog/ })).toBeVisible();
     await expect(editor.host.getByRole("option", { name: /^#new-tag/ })).toHaveCount(0);
   });
 

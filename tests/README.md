@@ -5,10 +5,11 @@ browser lifecycle, fixture isolation, assertions, retries, reporting, traces,
 screenshots, and video. There is no page-hosted runner, wrapper spec, shared
 serial iterator, or browser-side pass/fail protocol.
 
-The current desktop suite registers 465 independent cases per browser project,
-including every one of the 230 checks migrated from the previous suite and a
-dedicated input/composition contract plus security coverage for hostile inputs,
-generated invariants, and CommonMark differential behavior.
+The Chromium and Firefox projects each register 536 independent cases.
+The suite includes the 230 checks from the previous suite, input and composition
+contracts, and tag completion coverage. Security checks cover hostile inputs,
+generated invariants, and CommonMark differences. WebKit also includes tests
+that require desktop Safari behavior.
 
 Before the browser projects, `npm test` also runs the Node-based
 `version-policy.test.mjs` checks. They prevent a release from retaining notes

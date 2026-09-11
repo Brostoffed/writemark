@@ -53,9 +53,10 @@ See the [documentation index](docs/README.md) for suggested learning paths and t
 The [public demo](https://brostoffed.github.io/writemark/demo/) runs entirely in
 the browser and does not require an account or installation.
 
-The demo includes a host tag catalog, a live document tag index, explicit tag
-creation, tag activation, action buttons, readonly and disabled controls, and a
-live inspector for selection, dirty state, validity, active marks, and counts.
+The demo includes an autocomplete catalog, a live document tag index, and
+explicit catalog additions. It also includes tag activation, action buttons,
+readonly controls, and disabled controls. A live inspector shows selection,
+dirty state, validity, active marks, and counts.
 
 To run the same demo locally, open `demo/index.html` directly in a browser or
 serve it from the repository:
@@ -356,7 +357,7 @@ Important action IDs:
 | `md-completion-open` | Completion popup opened. |
 | `md-completion-close` | Completion popup closed. |
 | `md-completion-accept` | Completion accepted. |
-| `md-tags-change` | Derived document tags changed. |
+| `md-tags-change` | The live tag index for this document changed. |
 | `md-tag-activate` | A rendered tag was activated. |
 | `md-render` | Preview/rendered HTML generated. |
 | `md-file-paste` | File pasted. Host decides upload/insertion. |
@@ -537,6 +538,9 @@ debugging workflow.
 See [RELEASING.md](RELEASING.md) for the one-time first npm publish and the automated GitHub Release workflow used for later versions.
 
 ## Current engineering caveats
+
+The [known issues](docs/known-issues.md) list the 15 open defects confirmed in
+the September 11 review.
 
 This version implements source-backed live inline editing without third-party
 runtime dependencies. Development tooling includes Playwright coverage in

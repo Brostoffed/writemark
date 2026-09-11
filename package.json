@@ -1,6 +1,6 @@
 {
   "name": "writemark-editor",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Writemark is a dependency-free live inline Markdown editor web component with slash commands, smart editing, form integration, source fallback, and no built-in toolbar.",
   "type": "module",
   "main": "./dist/writemark-editor.js",
@@ -42,6 +42,7 @@
   "sideEffects": true,
   "scripts": {
     "build": "node scripts/build.mjs",
+    "capture:demo-gif": "node scripts/capture-demo-gif.mjs",
     "start": "node scripts/dev-server.mjs --open=demo/index.html",
     "start:lan": "node scripts/dev-server.mjs --host=0.0.0.0 --open=demo/index.html",
     "serve": "node scripts/dev-server.mjs",
@@ -56,7 +57,7 @@
     "check:version": "node scripts/check-version.mjs",
     "perf": "node scripts/dev-server.mjs --open=perf/index.html",
     "prepack": "npm run build && npm run check",
-    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/check-docs.mjs && node --check scripts/check-version.mjs && npm run check:version && npm run test:version && npm run test:server && node scripts/check-docs.mjs"
+    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/capture-demo-gif.mjs && node --check scripts/check-docs.mjs && node --check scripts/check-version.mjs && npm run check:version && npm run test:version && npm run test:server && node scripts/check-docs.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 1.6.1 - 2026-09-11
+
+- Changed the tag completion label to `Add #tag to catalog` with the detail
+  `save for autocomplete`.
+- Clarified that typed tags enter the document index immediately. A separate
+  host action saves a tag in the autocomplete catalog.
+- Kept the public `allowCreate` option and `tag-create` event item kind.
+- Updated the demo controls, status messages, and tag completion tests to use
+  the catalog wording.
+- Added `demo/gif.html` and `npm run capture:demo-gif` for repeatable README
+  GIF capture. Updated the GIF and capture instructions.
+- Updated the package metadata, generated bundles, demo version, API reference,
+  and test guide.
+- Recorded the 15 confirmed [known issues](docs/known-issues.md) from the
+  September 11 review. These issues remain open in this release.
+
 ## 1.6.0 - 2026-08-09
 
 - Added dependency-free `#tag` parsing with Unicode names, nested `/` segments,

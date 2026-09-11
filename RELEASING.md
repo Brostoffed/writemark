@@ -4,6 +4,9 @@ Writemark is published to the public npm registry as `writemark-editor`. The
 version in `package.json`, the heading in `CHANGELOG.md`, the Git tag, the
 GitHub Release, and the npm version should all match.
 
+The [known issues](docs/known-issues.md) list confirmed open defects. Update
+that list when a release fixes an issue or changes its scope.
+
 ## One-time first publish
 
 The first publish establishes ownership of the unscoped npm package. Do this
@@ -118,6 +121,17 @@ After setup, every push to `main` republishes the selected source. Before
 sharing a new demo version, confirm that the Test workflow passed and open the
 public URL in a private browser window. Check that the editor loads, changing
 modes works, and the browser console has no errors.
+
+The README GIF uses the repeatable `demo/gif.html` capture page. Install
+Playwright Chromium and `ffmpeg`, then rebuild the asset after visible demo
+language or workflows change:
+
+```sh
+npx playwright install chromium
+npm run capture:demo-gif
+```
+
+The script replaces `assets/writemark-demo.gif` with a 900 by 540 capture.
 
 ## Verification
 

@@ -116,10 +116,13 @@ Writemark derives the current tag index from canonical Markdown. It does not
 store an application tag catalog. Code spans, fenced code, escaped hashes,
 link destinations, and reference definitions do not create tags.
 
+A valid tag appears in the derived index as soon as it exists in Markdown.
+Adding that tag to an application catalog is a separate host action.
+
 Current document tags provide completion without host setup. A host can set
 `tagProvider` to merge application tags into the same completion menu.
 Completion opens at the end of a tag token. A caret inside an existing tag does
-not offer a partial tag or a new tag.
+not offer a partial tag or a catalog addition.
 
 ## Slash commands and completions
 

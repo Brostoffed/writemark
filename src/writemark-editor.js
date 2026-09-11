@@ -1,5 +1,5 @@
 /*
- * <writemark-editor> v1.6.0 live inline Markdown editor.
+ * <writemark-editor> v1.6.1 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -5371,8 +5371,8 @@ class WritemarkEditorElement extends HTMLElement {
     if (provider?.allowCreate === true && isValidTagValue(match.query) && !exact) {
       output.push({
         id: `tag-create:${queryKey}`,
-        label: `Create #${match.query}`,
-        detail: "new tag",
+        label: `Add #${match.query} to catalog`,
+        detail: "save for autocomplete",
         kind: "tag-create",
         value: match.query,
         key: queryKey,
@@ -5391,7 +5391,7 @@ class WritemarkEditorElement extends HTMLElement {
       [{ from: match.from, to: match.to, insert }],
       { start: cursor, end: cursor, direction: "none" },
       "completion"
-    ), item.kind === "tag-create" ? `Created tag ${value}.` : `Tag ${value}.`);
+    ), item.kind === "tag-create" ? `Catalog addition selected for ${value}.` : `Tag ${value}.`);
   }
   _matchSlash(ctx) { if (ctx.block.kind === "fenced-code" || ctx.inline.insideInlineCode) return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)\/([\w-]*)$/.exec(before); if (!m) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: "/", query: m[2], providerId: "slash" }; }
   _getSlashItems(match) { const q = match.query.toLowerCase(); const items = []; for (const action of this._actions.values()) { if (!action.visibleInSlash) continue; const hay = [action.label, action.description, ...(action.aliases || []), ...(action.keywords || [])].filter(Boolean).join(" ").toLowerCase(); if (q && !hay.includes(q)) continue; items.push({ id: action.id, label: action.label, detail: action.group, description: action.description || displayShortcut(action.defaultShortcut), kind: "slash-command", actionId: action.id }); } return items.slice(0, 24); }

@@ -79,7 +79,7 @@ test.describe("tags", () => {
     });
   });
 
-  test("merges host tags and emits an explicit create selection", async ({ editor, page }) => {
+  test("merges host tags and emits an explicit catalog addition", async ({ editor, page }) => {
     await editor.reset({ attributes: { mode: "source" } });
     await editor.host.evaluate(element => {
       element.tagProvider = {
@@ -94,7 +94,9 @@ test.describe("tags", () => {
     await page.keyboard.type("#new-tag");
 
     await expect(editor.completion).toBeVisible();
-    await expect(editor.host.getByRole("option", { name: "Create #new-tag new tag" })).toBeVisible();
+    await expect(editor.host.getByRole("option", {
+      name: "Add #new-tag to catalog save for autocomplete"
+    })).toBeVisible();
     expect(await page.evaluate(() => globalThis.tagProviderRequest)).toMatchObject({
       documentTags: [{ count: 1, key: "new-tag", value: "new-tag" }],
       query: "new-tag",

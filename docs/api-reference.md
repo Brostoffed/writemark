@@ -1,6 +1,6 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.6.0. The default `live` mode
+This page is the lookup reference for Writemark 1.6.1. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
@@ -71,7 +71,7 @@ their text value.
 | `readonly` | `boolean` | Reflects `readonly`. |
 | `required` | `boolean` | Reflects `required`. |
 | `dirty` | `boolean`, read-only | Whether current Markdown differs from `defaultValue`. |
-| `tagProvider` | Object or `null` | Optional host tag catalog. The object requires `getItems` and can set `allowCreate`. |
+| `tagProvider` | Object or `null` | Optional host tag catalog. The object requires `getItems`. Set `allowCreate` to offer catalog additions. |
 | `selectionStart` | `number` | Start offset in canonical Markdown. May be set directly. |
 | `selectionEnd` | `number` | End offset in canonical Markdown. May be set directly. |
 | `validationMessage` | `string`, read-only | Current native/custom validation message. |
@@ -303,7 +303,7 @@ cancelable.
 | `md-completion-open` | `{ providerId, match, items }`. |
 | `md-completion-close` | `{ providerId, match }`. |
 | `md-completion-accept` | `{ providerId, item, before, after }`. |
-| `md-tags-change` | `{ current, added, removed, source, inputType }`. The current list matches `getTags()`. |
+| `md-tags-change` | `{ current, added, removed, source, inputType }`. The live list matches `getTags()` and can include the active tag. |
 | `md-tag-activate` | `{ tag, key, surface }`. Surface is `live` or `preview`. |
 | `md-render` | `{ html }`; preview output was generated. |
 | `md-file-paste` | `{ files, insertionPoint, insertMarkdown }`. |
