@@ -4,6 +4,16 @@
 
 ## 1.6.1 - 2026-09-11
 
+- Added the boolean `tagsEnabled` property and `tags-enabled` attribute.
+  Tags are now off by default. Existing tag integrations must enable them
+  explicitly.
+- Disabled tag rendering, indexing, completion, catalog requests, and activation
+  when the switch is off. Switching preserves Markdown, selection, dirty state,
+  form values, and undo history.
+- Added an unchecked `Enable tags` switch to the demo. The GIF capture page
+  explicitly enables tags for its tag examples.
+- Added tag switch tests for editor modes, pending requests, composition,
+  property upgrades, renderer options, and instance isolation.
 - Changed the tag completion label to `Add #tag to catalog` with the detail
   `save for autocomplete`.
 - Clarified that typed tags enter the document index immediately. A separate

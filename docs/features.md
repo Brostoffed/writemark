@@ -108,6 +108,27 @@ suffixes in document order.
 
 ## Tags
 
+Tags are off by default. Enable them with the `tags-enabled` boolean attribute
+or `editor.tagsEnabled = true`.
+
+```html
+<writemark-editor tags-enabled></writemark-editor>
+```
+
+```js
+editor.tagsEnabled = true;
+editor.tagsEnabled = false;
+```
+
+When tags are off, `#tag` remains ordinary Markdown text. The editor does not
+build a tag index, request catalog choices, or activate tags. `getTags()`
+returns an empty array. Normal Markdown editing and other completion providers
+remain available.
+
+The switch preserves the Markdown, selection, dirty state, form value, and
+undo history. Turning tags off closes completion and aborts pending requests.
+An active composition finishes before the live view refreshes.
+
 Type `#` and a tag name to add a tag. Tag names support Unicode letters,
 numbers, underscores, hyphens, and nested `/` segments. A tag must contain one
 nonnumeric character.

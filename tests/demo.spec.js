@@ -1,6 +1,27 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("published demo", () => {
+  test("starts with tags off and switches them without changing Markdown", async ({ page }) => {
+    await page.goto("/demo/index.html");
+    const editor = page.locator("#editor");
+    const toggle = page.getByRole("checkbox", { name: "Enable tags", exact: true });
+    const value = await editor.evaluate(element => element.value);
+    await expect(toggle).not.toBeChecked();
+    await expect(editor).toHaveJSProperty("tagsEnabled", false);
+    await expect(editor.locator(".md-tag")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Insert tag", exact: true })).toBeDisabled();
+    await expect(page.locator("#document-tag-summary")).toHaveText("(off)");
+    await toggle.check();
+    await expect(toggle).toBeFocused();
+    await expect(editor).toHaveJSProperty("tagsEnabled", true);
+    await expect(page.getByRole("button", { name: "Focus #editor, 2 occurrences" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Insert tag", exact: true })).toBeEnabled();
+    await toggle.uncheck();
+    await expect(editor.locator(".md-tag")).toHaveCount(0);
+    await expect(page.locator("#state-tags")).toHaveText("off");
+    expect(await editor.evaluate(element => ({ value: element.value, dirty: element.dirty, tags: element.getTags() })))
+      .toEqual({ value, dirty: false, tags: [] });
+  });
   test("keeps the GIF capture page aligned with document and catalog tag states", async ({ page }) => {
     await page.goto("/demo/gif.html");
     await page.waitForFunction(() => window.gifDemoReady === true);
@@ -123,6 +144,7 @@ test.describe("published demo", () => {
     const pageErrors = [];
     page.on("pageerror", error => pageErrors.push(error.message));
     await page.goto("/demo/index.html");
+    await page.getByRole("checkbox", { name: "Enable tags", exact: true }).check();
     const editor = page.locator("#editor");
 
     await expect(page.getByRole("button", { name: "Focus #editor, 2 occurrences" }))
@@ -167,6 +189,7 @@ test.describe("published demo", () => {
 
   test("persists explicit catalog additions and supports tag activation", async ({ page }) => {
     await page.goto("/demo/index.html");
+    await page.getByRole("checkbox", { name: "Enable tags", exact: true }).check();
     const editor = page.locator("#editor");
 
     await page.locator("#mode").selectOption("source");

@@ -1,5 +1,7 @@
 import { expect, test } from "./support/editor-fixture.js";
 
+test.use({ tagsEnabled: true });
+
 test.describe("tags", () => {
   test("parses tags and skips Markdown code, destinations, definitions, and escapes", async ({ editor }) => {
     const markdown = [
@@ -331,6 +333,7 @@ test.describe("tag events", () => {
   test("does not emit initial tag events for a newly connected element", async ({ editor }) => {
     const result = await editor.host.evaluate(async host => {
       const element = host.ownerDocument.createElement("writemark-editor");
+      element.tagsEnabled = true;
       element.setAttribute("value", "#initial");
       let events = 0;
       element.addEventListener("md-tags-change", () => { events += 1; });

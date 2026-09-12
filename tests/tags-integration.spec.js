@@ -1,5 +1,7 @@
 import { expect, test } from "./support/editor-fixture.js";
 
+test.use({ tagsEnabled: true });
+
 const editorModes = [
   { live: true, mode: "live", preview: false, source: false },
   { live: false, mode: "source", preview: false, source: true },
@@ -44,6 +46,7 @@ test.describe("tag component integration", () => {
       const tags = [];
       for (const name of ["writemark-editor", "md-live-editor"]) {
         const element = host.ownerDocument.createElement(name);
+        element.tagsEnabled = true;
         element.value = `#${name}`;
         host.ownerDocument.body.append(element);
         await new Promise(requestAnimationFrame);
@@ -94,6 +97,7 @@ test.describe("tag component integration", () => {
   test("keeps tag providers and indexes isolated across editor instances", async ({ editor }) => {
     const result = await editor.host.evaluate(async first => {
       const second = first.ownerDocument.createElement("writemark-editor");
+      second.tagsEnabled = true;
       first.ownerDocument.body.append(second);
       first.value = "#first";
       second.value = "#second";
@@ -167,6 +171,7 @@ test.describe("tag component integration", () => {
   test("sets a tag provider before connection without opening a popup", async ({ editor }) => {
     const result = await editor.host.evaluate(async host => {
       const element = host.ownerDocument.createElement("writemark-editor");
+      element.tagsEnabled = true;
       element.value = "#a";
       element.tagProvider = { getItems: () => ["alpha"] };
       const before = { connected: element.isConnected, open: element._completion.open };

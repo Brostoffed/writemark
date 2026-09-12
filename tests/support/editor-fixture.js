@@ -16,12 +16,14 @@ const configurableAttributes = [
   "readonly",
   "required",
   "tab-behavior",
+  "tags-enabled",
   "value"
 ];
 
 class EditorDriver {
-  constructor(page) {
+  constructor(page, tagsEnabled = false) {
     this.page = page;
+    this.tagsEnabled = tagsEnabled;
     this.host = page.locator("#editor");
     this.live = this.host.locator(".live-editor");
     this.source = this.host.locator("textarea");
@@ -40,7 +42,8 @@ class EditorDriver {
         mode: "live",
         name: "body",
         placeholder: "Write Markdown",
-        preview: "none"
+        preview: "none",
+        "tags-enabled": options.tagsEnabled
       };
       for (const [name, nextValue] of Object.entries({
         ...defaults,
@@ -55,7 +58,7 @@ class EditorDriver {
       editor.commit();
       window.testEvents.length = 0;
       document.querySelector("#submitted-value").value = "";
-    }, { configurableAttributes, attributes, value });
+    }, { configurableAttributes, attributes, value, tagsEnabled: this.tagsEnabled });
     await this.settle();
   }
 
@@ -126,7 +129,8 @@ class EditorDriver {
 }
 
 export const test = base.extend({
-  editor: async ({ page }, use) => {
+  tagsEnabled: [false, { option: true }],
+  editor: async ({ page, tagsEnabled }, use) => {
     const pageErrors = [];
     const consoleErrors = [];
 
@@ -140,7 +144,8 @@ export const test = base.extend({
     await page.goto("/tests/fixtures/editor.html");
     await expect(page.locator("body")).toHaveAttribute("data-ready", "true");
 
-    const editor = new EditorDriver(page);
+    const editor = new EditorDriver(page, tagsEnabled);
+    await editor.host.evaluate((element, enabled) => { element.tagsEnabled = enabled; }, tagsEnabled);
     await use(editor);
 
     expect.soft(

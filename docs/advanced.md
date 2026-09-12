@@ -177,12 +177,16 @@ for every custom mutation.
 
 ## Tag catalog and completion
 
+Tags are off by default. Set `tagsEnabled` to `true` before you use tag
+rendering or completion. Assigning `tagProvider` alone does not enable tags.
+
 Writemark derives document tags from canonical Markdown. The host owns the
 application tag catalog, persistence, search, routes, and global rename.
 
 Set `tagProvider` to add host tags to the built-in `#` completion:
 
 ```js
+editor.tagsEnabled = true;
 editor.tagProvider = {
   allowCreate: true,
 
@@ -211,6 +215,11 @@ catalog addition.
 while the user types it. Do not treat each typing event as a catalog addition.
 Reconcile the derived index during save or `md-change` when the host needs a
 persisted document-to-tag relation.
+
+Changing `tagsEnabled` also emits `md-tags-change` when the index changes.
+This event uses `source: 'attribute'` and `inputType: null`. Turning tags off
+reports an empty index once. Later edits emit no tag events while tags remain
+off. The switch does not emit document input, change, or dirty events.
 
 Use `getTags()` to read values, normalized keys, counts, and source ranges.
 Use `md-tag-activate` to open host search or navigation for a rendered tag.

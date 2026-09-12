@@ -58,6 +58,9 @@ explicit catalog additions. It also includes tag activation, action buttons,
 readonly controls, and disabled controls. A live inspector shows selection,
 dirty state, validity, active marks, and counts.
 
+Tags are off by default. Use the demo's `Enable tags` switch to try them.
+In an integration, add `tags-enabled` or set `editor.tagsEnabled = true`.
+
 To run the same demo locally, open `demo/index.html` directly in a browser or
 serve it from the repository:
 
@@ -191,7 +194,7 @@ Code fences are refined in `live` mode: the opening and closing backtick markers
 | Shift+Tab in list item | Outdents the item. |
 | Enter after ```` ```python ```` | Creates a closed code fence and places cursor inside. |
 | `/` at line start | Opens slash command menu. |
-| `#` plus text | Opens tag completion from document and host tags. |
+| `#` plus text | Opens tag completion from document and host tags when `tagsEnabled` is true. |
 | ` ```py ` | Opens code-language completion; `py` ranks Python. |
 | Enter in table cell | Inserts a row below the current row and moves into the first new cell. |
 | Shift+Enter or Escape in table cell | Exits the table to a blank line after it. |
@@ -272,7 +275,8 @@ console.log(editor.getPlainText());
 | `indentString` | `"\t" | "  " | "    "` |
 | `debug` | nonnegative diagnostic level; default `0` |
 | `debugLog` | optional `console.debug` mirror |
-| `tagProvider` | optional host tag catalog |
+| `tagsEnabled` | `false` by default. Set `true` to enable tags. |
+| `tagProvider` | optional host tag catalog. Requires `tagsEnabled`. |
 | `selectionStart` / `selectionEnd` | source offsets |
 | `dirty` | boolean |
 
@@ -293,7 +297,7 @@ console.log(editor.getPlainText());
 | `getSelectionMarkdown()` | Return selected source Markdown. |
 | `getHTML()` | Return sanitized rendered HTML. |
 | `getText()` / `getPlainText()` | Return plain text. |
-| `getTags()` | Return the derived document tag index. |
+| `getTags()` | Return the document tag index, or `[]` while tags are off. |
 | `getCurrentBlock()` / `getSelectedBlocks()` | Inspect parsed source-backed blocks. |
 | `getActiveMarks()` | Return active formatting/action IDs for custom host UI. |
 | `canExec(actionId, args?)` | Check whether an action is currently available. |
