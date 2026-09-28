@@ -12,7 +12,6 @@ test.describe("published demo", () => {
     await expect(page.getByRole("button", { name: "Insert tag", exact: true })).toBeDisabled();
     await expect(page.locator("#document-tag-summary")).toHaveText("(off)");
     await toggle.check();
-    await expect(toggle).toBeFocused();
     await expect(editor).toHaveJSProperty("tagsEnabled", true);
     await expect(page.getByRole("button", { name: "Focus #editor, 2 occurrences" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Insert tag", exact: true })).toBeEnabled();
@@ -22,6 +21,26 @@ test.describe("published demo", () => {
     expect(await editor.evaluate(element => ({ value: element.value, dirty: element.dirty, tags: element.getTags() })))
       .toEqual({ value, dirty: false, tags: [] });
   });
+
+  test("keeps focus on the tag switch during keyboard changes", async ({ page }) => {
+    await page.goto("/demo/index.html");
+    const editor = page.locator("#editor");
+    const toggle = page.getByRole("checkbox", { name: "Enable tags", exact: true });
+    const value = await editor.evaluate(element => element.value);
+
+    await toggle.focus();
+    await expect(toggle).toBeFocused();
+    for (const enabled of [true, false]) {
+      await page.keyboard.press("Space");
+      await expect(toggle).toBeChecked({ checked: enabled });
+      await expect(editor).toHaveJSProperty("tagsEnabled", enabled);
+      await expect(toggle).toBeFocused();
+    }
+
+    expect(await editor.evaluate(element => ({ value: element.value, dirty: element.dirty, tags: element.getTags() })))
+      .toEqual({ value, dirty: false, tags: [] });
+  });
+
   test("keeps the GIF capture page aligned with document and catalog tag states", async ({ page }) => {
     await page.goto("/demo/gif.html");
     await page.waitForFunction(() => window.gifDemoReady === true);

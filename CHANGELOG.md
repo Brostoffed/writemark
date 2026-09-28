@@ -14,6 +14,8 @@
   explicitly enables tags for its tag examples.
 - Added tag switch tests for editor modes, pending requests, composition,
   property upgrades, renderer options, and instance isolation.
+- Corrected the demo tag switch test for Safari pointer focus. Added a
+  keyboard test that checks focus after each switch.
 - Changed the tag completion label to `Add #tag to catalog` with the detail
   `save for autocomplete`.
 - Clarified that typed tags enter the document index immediately. A separate
