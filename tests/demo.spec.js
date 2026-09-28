@@ -1,6 +1,70 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("published demo", () => {
+  test("starts with tags off and switches them without changing Markdown", async ({ page }) => {
+    await page.goto("/demo/index.html");
+    const editor = page.locator("#editor");
+    const toggle = page.getByRole("checkbox", { name: "Enable tags", exact: true });
+    const value = await editor.evaluate(element => element.value);
+    await expect(toggle).not.toBeChecked();
+    await expect(editor).toHaveJSProperty("tagsEnabled", false);
+    await expect(editor.locator(".md-tag")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Insert tag", exact: true })).toBeDisabled();
+    await expect(page.locator("#document-tag-summary")).toHaveText("(off)");
+    await toggle.check();
+    await expect(editor).toHaveJSProperty("tagsEnabled", true);
+    await expect(page.getByRole("button", { name: "Focus #editor, 2 occurrences" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Insert tag", exact: true })).toBeEnabled();
+    await toggle.uncheck();
+    await expect(editor.locator(".md-tag")).toHaveCount(0);
+    await expect(page.locator("#state-tags")).toHaveText("off");
+    expect(await editor.evaluate(element => ({ value: element.value, dirty: element.dirty, tags: element.getTags() })))
+      .toEqual({ value, dirty: false, tags: [] });
+  });
+
+  test("keeps focus on the tag switch during keyboard changes", async ({ page }) => {
+    await page.goto("/demo/index.html");
+    const editor = page.locator("#editor");
+    const toggle = page.getByRole("checkbox", { name: "Enable tags", exact: true });
+    const value = await editor.evaluate(element => element.value);
+
+    await toggle.focus();
+    await expect(toggle).toBeFocused();
+    for (const enabled of [true, false]) {
+      await page.keyboard.press("Space");
+      await expect(toggle).toBeChecked({ checked: enabled });
+      await expect(editor).toHaveJSProperty("tagsEnabled", enabled);
+      await expect(toggle).toBeFocused();
+    }
+
+    expect(await editor.evaluate(element => ({ value: element.value, dirty: element.dirty, tags: element.getTags() })))
+      .toEqual({ value, dirty: false, tags: [] });
+  });
+
+  test("keeps the GIF capture page aligned with document and catalog tag states", async ({ page }) => {
+    await page.goto("/demo/gif.html");
+    await page.waitForFunction(() => window.gifDemoReady === true);
+
+    const documentSection = page.locator(".side-section").filter({
+      has: page.getByRole("heading", { name: "Tags in this document" })
+    });
+    const catalogSection = page.locator(".side-section").filter({
+      has: page.getByRole("heading", { name: "Autocomplete catalog" })
+    });
+
+    await page.evaluate(() => window.gifDemo.prepareLine("QA owner: "));
+    await page.keyboard.type("#fresh/demo");
+
+    await expect(documentSection.getByText("#fresh/demo", { exact: true })).toBeVisible();
+    await expect(catalogSection.getByText("#fresh/demo", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("option", {
+      name: "Add #fresh/demo to catalog save for autocomplete"
+    })).toBeVisible();
+
+    await page.keyboard.press("Enter");
+    await expect(catalogSection.getByText("#fresh/demo", { exact: true })).toBeVisible();
+  });
+
   test("connects controls, editor state, output, and form submission", async ({ page }) => {
     const pageErrors = [];
     page.on("pageerror", error => pageErrors.push(error.message));
@@ -99,6 +163,7 @@ test.describe("published demo", () => {
     const pageErrors = [];
     page.on("pageerror", error => pageErrors.push(error.message));
     await page.goto("/demo/index.html");
+    await page.getByRole("checkbox", { name: "Enable tags", exact: true }).check();
     const editor = page.locator("#editor");
 
     await expect(page.getByRole("button", { name: "Focus #editor, 2 occurrences" }))
@@ -114,7 +179,7 @@ test.describe("published demo", () => {
     await expect(page.locator("#tag-activity"))
       .toContainText("Focused the first #editor occurrence");
 
-    await page.getByRole("textbox", { name: "Add a completion choice" })
+    await page.getByRole("textbox", { name: "Add an autocomplete choice" })
       .fill("product/demo");
     await page.getByRole("button", { name: "Add catalog tag" }).click();
     await expect(page.getByRole("button", { name: "Insert #product/demo" }))
@@ -141,8 +206,9 @@ test.describe("published demo", () => {
     expect(pageErrors).toEqual([]);
   });
 
-  test("persists explicit tag creation and supports tag activation", async ({ page }) => {
+  test("persists explicit catalog additions and supports tag activation", async ({ page }) => {
     await page.goto("/demo/index.html");
+    await page.getByRole("checkbox", { name: "Enable tags", exact: true }).check();
     const editor = page.locator("#editor");
 
     await page.locator("#mode").selectOption("source");
@@ -151,14 +217,16 @@ test.describe("published demo", () => {
       element.focus();
     });
     await page.keyboard.type("#fresh/demo");
-    await expect(editor.getByRole("option", { name: "Create #fresh/demo new tag" }))
+    await expect(editor.getByRole("option", {
+      name: "Add #fresh/demo to catalog save for autocomplete"
+    }))
       .toBeVisible();
     await page.keyboard.press("Enter");
 
     await expect(page.getByRole("button", { name: "Insert #fresh/demo" }))
       .toBeVisible();
     await expect(page.locator("#tag-activity"))
-      .toHaveText("Created #fresh/demo and saved it in the demo host catalog.");
+      .toHaveText("Added #fresh/demo to the autocomplete catalog.");
     await expect(page.getByRole("button", { name: "Focus #fresh/demo, 1 occurrence" }))
       .toBeVisible();
 
@@ -167,10 +235,10 @@ test.describe("published demo", () => {
     await expect(page.locator("#tag-activity"))
       .toHaveText("Activated #editor in the live surface.");
 
-    await page.getByRole("checkbox", { name: "Offer new tag creation" }).uncheck();
+    await page.getByRole("checkbox", { name: "Offer catalog additions" }).uncheck();
     expect(await editor.evaluate(element => element.tagProvider.allowCreate)).toBe(false);
     await expect(page.locator("#tag-activity"))
-      .toHaveText("Completion now shows existing document and host tags only.");
+      .toHaveText("Autocomplete now shows existing document and host tags only.");
   });
 
   test("runs host actions and reports dirty, readonly, and disabled state", async ({ page }) => {

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>&lt;writemark-editor&gt; v1.6.0 Live Inline Demo</title>
+  <title>&lt;writemark-editor&gt; v1.6.1 Live Inline Demo</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
     * { box-sizing: border-box; }
@@ -29,6 +29,7 @@
     .demo-card { border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas 84%); border-radius: 12px; padding: 16px; background: color-mix(in srgb, CanvasText 2%, Canvas 98%); }
     .card-heading { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
     .card-heading p { margin-bottom: 0; color: color-mix(in srgb, CanvasText 70%, Canvas 30%); }
+    .card-heading .check-control { flex-shrink: 0; white-space: nowrap; }
     .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr); gap: 20px; align-items: start; }
     .toolbar { padding-top: 4px; }
     .toolbar-separator { width: 1px; height: 28px; background: color-mix(in srgb, CanvasText 18%, Canvas 82%); }
@@ -193,7 +194,7 @@
         mode="live"
         preview="none"
         markdown-flavor="gfm"
-        placeholder="Type / for commands or # for tags. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
+        placeholder="Type / for commands. Enable tags to use # completion. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
         required
         maxlength="50000"
         spellcheck="true"
@@ -206,11 +207,18 @@
         <div class="card-heading">
           <div>
             <h2 id="tags-title">Tag playground</h2>
-            <p>Document tags stay derived from Markdown. The host catalog supplies completion choices.</p>
+            <p>Enable tags to show tag labels and completion. The host owns the separate autocomplete catalog.</p>
           </div>
           <label class="check-control">
-            <input id="allow-tag-create" type="checkbox" checked>
-            Offer new tag creation
+            <input id="tags-enabled" type="checkbox">
+            Enable tags
+          </label>
+        </div>
+
+        <div class="tag-controls">
+          <label class="check-control">
+            <input id="allow-catalog-additions" type="checkbox" checked disabled>
+            Offer catalog additions
           </label>
         </div>
 
@@ -225,15 +233,15 @@
         </div>
 
         <div class="tag-section">
-          <h3>Document tags <span id="document-tag-summary"></span></h3>
+          <h3>Tags in this document <span id="document-tag-summary"></span></h3>
           <div id="document-tags" class="tag-list" aria-live="polite"></div>
         </div>
 
         <div class="tag-section">
-          <h3>Host catalog</h3>
+          <h3>Autocomplete catalog</h3>
           <form id="catalog-tag-form" class="tag-controls">
             <label class="stacked-control" for="catalog-tag-input">
-              <span>Add a completion choice</span>
+              <span>Add an autocomplete choice</span>
               <input id="catalog-tag-input" type="text" placeholder="team/editor" autocomplete="off">
             </label>
             <button type="submit">Add catalog tag</button>
@@ -256,8 +264,8 @@
         </dl>
         <h3 style="margin-top: 18px;">Try these flows</h3>
         <ul class="help-list">
-          <li>Type <code>#doc</code> to search document and host tags.</li>
-          <li>Type a new tag and choose its explicit create item.</li>
+          <li>When tags are enabled, type <code>#doc</code> to search document and catalog tags.</li>
+          <li>Type a tag outside the catalog and choose its catalog addition to save it for autocomplete.</li>
           <li>Select text and use the host action buttons.</li>
           <li>Click a rendered tag to receive <code>md-tag-activate</code>.</li>
           <li>Use Commit and Reset to inspect dirty state.</li>
@@ -288,7 +296,8 @@
     const debugCopyStatus = document.querySelector('#debug-copy-status');
     const readonlyState = document.querySelector('#readonly-state');
     const disabledState = document.querySelector('#disabled-state');
-    const allowTagCreate = document.querySelector('#allow-tag-create');
+    const allowCatalogAdditions = document.querySelector('#allow-catalog-additions');
+    const tagsEnabled = document.querySelector('#tags-enabled');
     const hostToolbar = document.querySelector('#host-toolbar');
     const actionStatus = document.querySelector('#action-status');
     const tagActivity = document.querySelector('#tag-activity');
@@ -402,7 +411,7 @@ Use **bold**, *italic*, ***bold italic***, \`inline code\`, and ~~strikethrough~
 ## Tags
 
 Use #editor and #demo/writemark. This second #editor shows occurrence counts.
-Type #doc to search the host catalog. Type a new tag and choose its explicit create item.
+Type #doc to search the host catalog. Add a tag to the catalog to save it for autocomplete.
 Click a rendered tag to send an activation event to the host.
 
 ## Blockquotes
@@ -561,13 +570,15 @@ print("hello")
     function renderDocumentTags(tags = editor.getTags()) {
       documentTags.replaceChildren();
       const occurrences = tags.reduce((total, tag) => total + tag.count, 0);
-      documentTagSummary.textContent = tags.length
+      documentTagSummary.textContent = !editor.tagsEnabled ? '(off)' : tags.length
         ? `(${tags.length} unique, ${occurrences} total)`
         : '(none)';
       if (!tags.length) {
         const empty = document.createElement('p');
         empty.className = 'empty-state';
-        empty.textContent = 'Type a tag to build the document index.';
+        empty.textContent = editor.tagsEnabled
+          ? 'Type a tag to build the document index.'
+          : 'Tags are off. Enable tags to build the document index.';
         documentTags.append(empty);
         return;
       }
@@ -592,6 +603,7 @@ print("hello")
     }
 
     function insertTagAtSelection(rawValue) {
+      if (!editor.tagsEnabled) return false;
       const tag = parseDemoTag(rawValue);
       if (!tag) {
         tagActivity.textContent = 'Enter a valid tag with at least one nonnumeric character.';
@@ -611,7 +623,7 @@ print("hello")
 
     const demoTagProvider = {
       get allowCreate() {
-        return allowTagCreate.checked;
+        return allowCatalogAdditions.checked;
       },
       getItems({ query }) {
         const normalized = query.normalize('NFC').toLocaleLowerCase();
@@ -635,6 +647,11 @@ print("hello")
     }
 
     function syncDemoState() {
+      tagsEnabled.checked = editor.tagsEnabled;
+      allowCatalogAdditions.disabled = !editor.tagsEnabled;
+      for (const control of document.querySelectorAll('#insert-tag-form input, #insert-tag-form button, #catalog-tag-form input, #catalog-tag-form button, #catalog-tags button')) {
+        control.disabled = !editor.tagsEnabled;
+      }
       const tags = editor.getTags();
       const occurrences = tags.reduce((total, tag) => total + tag.count, 0);
       const activeMarks = editor.getActiveMarks();
@@ -650,7 +667,7 @@ print("hello")
         : 'not validated';
       document.querySelector('#state-length').textContent = `${editor.value.length} characters`;
       document.querySelector('#state-selection').textContent = `${editor.selectionStart}–${editor.selectionEnd}`;
-      document.querySelector('#state-tags').textContent = `${tags.length} unique`;
+      document.querySelector('#state-tags').textContent = editor.tagsEnabled ? `${tags.length} unique` : 'off';
       document.querySelector('#state-occurrences').textContent = `${occurrences} total`;
       document.querySelector('#state-marks').textContent = activeMarks.length ? activeMarks.join(', ') : 'none';
       document.querySelector('#state-action').textContent = lastAction;
@@ -683,10 +700,16 @@ print("hello")
       actionStatus.textContent = disabledState.checked ? 'The editor is disabled.' : 'The editor is enabled.';
       syncDemoState();
     });
-    allowTagCreate.addEventListener('change', () => {
-      tagActivity.textContent = allowTagCreate.checked
-        ? 'New tag choices are available in completion.'
-        : 'Completion now shows existing document and host tags only.';
+    tagsEnabled.addEventListener('change', () => {
+      editor.tagsEnabled = tagsEnabled.checked;
+      tagActivity.textContent = editor.tagsEnabled ? 'Tags are enabled.' : 'Tags are off.';
+      renderDocumentTags();
+      syncDemoState();
+    });
+    allowCatalogAdditions.addEventListener('change', () => {
+      tagActivity.textContent = allowCatalogAdditions.checked
+        ? 'Catalog addition choices are available in autocomplete.'
+        : 'Autocomplete now shows existing document and host tags only.';
     });
     bindDemoControls({ editor, fontFamily, fontSize, maxHeight });
 
@@ -806,7 +829,7 @@ print("hello")
     editor.addEventListener('md-completion-accept', event => {
       if (event.detail.item.kind === 'tag-create') {
         const tag = addCatalogTag(event.detail.item.value);
-        if (tag) tagActivity.textContent = `Created #${tag.value} and saved it in the demo host catalog.`;
+        if (tag) tagActivity.textContent = `Added #${tag.value} to the autocomplete catalog.`;
       }
       writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label });
     });

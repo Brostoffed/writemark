@@ -223,6 +223,7 @@ test.describe("completion UI", () => {
       element.style.width = "640px";
       element.style.setProperty("--md-editor-min-height", "360px");
       element.style.setProperty("--md-editor-max-height", "360px");
+      element.tagsEnabled = true;
       element.tagProvider = {
         allowCreate: true,
         getItems() {

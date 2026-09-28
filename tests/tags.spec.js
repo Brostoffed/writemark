@@ -1,5 +1,7 @@
 import { expect, test } from "./support/editor-fixture.js";
 
+test.use({ tagsEnabled: true });
+
 test.describe("tags", () => {
   test("parses tags and skips Markdown code, destinations, definitions, and escapes", async ({ editor }) => {
     const markdown = [
@@ -79,7 +81,7 @@ test.describe("tags", () => {
     });
   });
 
-  test("merges host tags and emits an explicit create selection", async ({ editor, page }) => {
+  test("merges host tags and emits an explicit catalog addition", async ({ editor, page }) => {
     await editor.reset({ attributes: { mode: "source" } });
     await editor.host.evaluate(element => {
       element.tagProvider = {
@@ -94,7 +96,9 @@ test.describe("tags", () => {
     await page.keyboard.type("#new-tag");
 
     await expect(editor.completion).toBeVisible();
-    await expect(editor.host.getByRole("option", { name: "Create #new-tag new tag" })).toBeVisible();
+    await expect(editor.host.getByRole("option", {
+      name: "Add #new-tag to catalog save for autocomplete"
+    })).toBeVisible();
     expect(await page.evaluate(() => globalThis.tagProviderRequest)).toMatchObject({
       documentTags: [{ count: 1, key: "new-tag", value: "new-tag" }],
       query: "new-tag",
@@ -329,6 +333,7 @@ test.describe("tag events", () => {
   test("does not emit initial tag events for a newly connected element", async ({ editor }) => {
     const result = await editor.host.evaluate(async host => {
       const element = host.ownerDocument.createElement("writemark-editor");
+      element.tagsEnabled = true;
       element.setAttribute("value", "#initial");
       let events = 0;
       element.addEventListener("md-tags-change", () => { events += 1; });

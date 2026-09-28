@@ -1,6 +1,6 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.6.0. The default `live` mode
+This page is the lookup reference for Writemark 1.6.1. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
@@ -33,6 +33,7 @@ alias backed by `MdLiveEditorElement`.
 | `mode` | `live`, `source`, `split`, `preview` / `live` | Active editing or viewing surface. Invalid values fall back to `live`. |
 | `preview` | `none`, `below`, `side`, `inline-split` / `none` | Optional rendered preview placement. Invalid values fall back to `none`. |
 | `markdown-flavor` | `gfm`, `commonmark` / `gfm` | Subset feature profile. `commonmark` disables supported GFM-only structures; neither value claims full specification conformance. |
+| `tags-enabled` | Boolean / absent | Enable tag rendering, indexing, completion, and activation. Tags are off by default. |
 | `tab-behavior` | `accessibility-first`, `editor-first` / `accessibility-first` | Whether ordinary Tab moves focus or inserts indentation outside structural contexts. |
 | `indent-string` | `tab`, `2`, `2-spaces`, `4`, `4-spaces` / two spaces | Indentation used by list and editor actions. |
 | `debug` | Nonnegative integer / `0` | Diagnostic level. `0` emits nothing, `1` emits input decisions, and `2` also emits selection/focus details through `md-debug`. |
@@ -63,6 +64,7 @@ their text value.
 | `mode` | String enum | One of `live`, `source`, `split`, or `preview`; reflects `mode`. |
 | `preview` | String enum | One of `none`, `below`, `side`, or `inline-split`; reflects `preview`. |
 | `markdownFlavor` | String enum | `gfm` or `commonmark`; reflects `markdown-flavor`. |
+| `tagsEnabled` | `boolean` | Reflects `tags-enabled`. Defaults to `false`. Assigning a tag provider does not enable tags. |
 | `tabBehavior` | String enum | `accessibility-first` or `editor-first`; reflects `tab-behavior`. |
 | `indentString` | String | A tab, two spaces, or four spaces. Setting a tab reflects `indent-string="tab"`. |
 | `debug` | `number` | Nonnegative diagnostic level reflected to `debug`; defaults to `0`. |
@@ -71,7 +73,7 @@ their text value.
 | `readonly` | `boolean` | Reflects `readonly`. |
 | `required` | `boolean` | Reflects `required`. |
 | `dirty` | `boolean`, read-only | Whether current Markdown differs from `defaultValue`. |
-| `tagProvider` | Object or `null` | Optional host tag catalog. The object requires `getItems` and can set `allowCreate`. |
+| `tagProvider` | Object or `null` | Optional host tag catalog. The object requires `getItems`. Set `allowCreate` to offer catalog additions. |
 | `selectionStart` | `number` | Start offset in canonical Markdown. May be set directly. |
 | `selectionEnd` | `number` | End offset in canonical Markdown. May be set directly. |
 | `validationMessage` | `string`, read-only | Current native/custom validation message. |
@@ -113,7 +115,7 @@ their text value.
 | `getHTML()` | `string` | Render canonical Markdown with the built-in safe renderer. |
 | `getText()` | `string` | Extract structural plain text. |
 | `getPlainText()` | `string` | Alias of `getText()`. |
-| `getTags()` | `object[]` | Return derived tags with `value`, normalized `key`, `count`, and source `ranges`. |
+| `getTags()` | `object[]` | Return derived tags with `value`, normalized `key`, `count`, and source `ranges`. Return `[]` while tags are off. |
 
 ### Actions and structure
 
@@ -303,7 +305,7 @@ cancelable.
 | `md-completion-open` | `{ providerId, match, items }`. |
 | `md-completion-close` | `{ providerId, match }`. |
 | `md-completion-accept` | `{ providerId, item, before, after }`. |
-| `md-tags-change` | `{ current, added, removed, source, inputType }`. The current list matches `getTags()`. |
+| `md-tags-change` | `{ current, added, removed, source, inputType }`. The list matches `getTags()`. A switch change uses `source: "attribute"`. |
 | `md-tag-activate` | `{ tag, key, surface }`. Surface is `live` or `preview`. |
 | `md-render` | `{ html }`; preview output was generated. |
 | `md-file-paste` | `{ files, insertionPoint, insertMarkdown }`. |
@@ -465,6 +467,10 @@ import {
 | `parseBlockquote(line)` | Parse one blockquote line. |
 | `htmlToMarkdown(html)` | Convert supported clipboard-style HTML to Markdown. |
 | `tsvToMarkdownTable(text)` | Convert tab-separated rows to a Markdown table. |
+
+The rendering helpers leave tags as plain text by default. Pass
+`{ tagsEnabled: true }` to render tag labels. The explicit `parseTags()` helper
+always analyzes its input, independent of an editor's switch.
 
 Parser return objects are useful for inspection and tests, but host editing
 commands should use actions rather than mutating parser metadata or shadow-DOM

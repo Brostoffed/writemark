@@ -53,9 +53,13 @@ See the [documentation index](docs/README.md) for suggested learning paths and t
 The [public demo](https://brostoffed.github.io/writemark/demo/) runs entirely in
 the browser and does not require an account or installation.
 
-The demo includes a host tag catalog, a live document tag index, explicit tag
-creation, tag activation, action buttons, readonly and disabled controls, and a
-live inspector for selection, dirty state, validity, active marks, and counts.
+The demo includes an autocomplete catalog, a live document tag index, and
+explicit catalog additions. It also includes tag activation, action buttons,
+readonly controls, and disabled controls. A live inspector shows selection,
+dirty state, validity, active marks, and counts.
+
+Tags are off by default. Use the demo's `Enable tags` switch to try them.
+In an integration, add `tags-enabled` or set `editor.tagsEnabled = true`.
 
 To run the same demo locally, open `demo/index.html` directly in a browser or
 serve it from the repository:
@@ -190,7 +194,7 @@ Code fences are refined in `live` mode: the opening and closing backtick markers
 | Shift+Tab in list item | Outdents the item. |
 | Enter after ```` ```python ```` | Creates a closed code fence and places cursor inside. |
 | `/` at line start | Opens slash command menu. |
-| `#` plus text | Opens tag completion from document and host tags. |
+| `#` plus text | Opens tag completion from document and host tags when `tagsEnabled` is true. |
 | ` ```py ` | Opens code-language completion; `py` ranks Python. |
 | Enter in table cell | Inserts a row below the current row and moves into the first new cell. |
 | Shift+Enter or Escape in table cell | Exits the table to a blank line after it. |
@@ -271,7 +275,8 @@ console.log(editor.getPlainText());
 | `indentString` | `"\t" | "  " | "    "` |
 | `debug` | nonnegative diagnostic level; default `0` |
 | `debugLog` | optional `console.debug` mirror |
-| `tagProvider` | optional host tag catalog |
+| `tagsEnabled` | `false` by default. Set `true` to enable tags. |
+| `tagProvider` | optional host tag catalog. Requires `tagsEnabled`. |
 | `selectionStart` / `selectionEnd` | source offsets |
 | `dirty` | boolean |
 
@@ -292,7 +297,7 @@ console.log(editor.getPlainText());
 | `getSelectionMarkdown()` | Return selected source Markdown. |
 | `getHTML()` | Return sanitized rendered HTML. |
 | `getText()` / `getPlainText()` | Return plain text. |
-| `getTags()` | Return the derived document tag index. |
+| `getTags()` | Return the document tag index, or `[]` while tags are off. |
 | `getCurrentBlock()` / `getSelectedBlocks()` | Inspect parsed source-backed blocks. |
 | `getActiveMarks()` | Return active formatting/action IDs for custom host UI. |
 | `canExec(actionId, args?)` | Check whether an action is currently available. |
@@ -356,7 +361,7 @@ Important action IDs:
 | `md-completion-open` | Completion popup opened. |
 | `md-completion-close` | Completion popup closed. |
 | `md-completion-accept` | Completion accepted. |
-| `md-tags-change` | Derived document tags changed. |
+| `md-tags-change` | The live tag index for this document changed. |
 | `md-tag-activate` | A rendered tag was activated. |
 | `md-render` | Preview/rendered HTML generated. |
 | `md-file-paste` | File pasted. Host decides upload/insertion. |
@@ -537,6 +542,9 @@ debugging workflow.
 See [RELEASING.md](RELEASING.md) for the one-time first npm publish and the automated GitHub Release workflow used for later versions.
 
 ## Current engineering caveats
+
+The [known issues](docs/known-issues.md) list the 15 open defects confirmed in
+the September 11 review.
 
 This version implements source-backed live inline editing without third-party
 runtime dependencies. Development tooling includes Playwright coverage in

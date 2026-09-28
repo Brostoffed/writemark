@@ -1,6 +1,8 @@
 import fc from "fast-check";
 import { expect, test } from "./support/editor-fixture.js";
 
+test.use({ tagsEnabled: true });
+
 const TAG_FUZZ_SEED = 0x7a65;
 const TAG_RANGE_SEED = 0x7a66;
 const TAG_COMPLETION_SEED = 0x7a67;
@@ -139,7 +141,7 @@ test.describe("tag parser fuzzing", () => {
         }
 
         const template = document.createElement("template");
-        template.innerHTML = renderMarkdown(markdown);
+        template.innerHTML = renderMarkdown(markdown, { tagsEnabled: true });
         for (const span of template.content.querySelectorAll(".md-tag")) {
           const allowed = new Set(["class", "data-md-tag", "data-tag-key", "part"]);
           for (const attribute of span.attributes) {

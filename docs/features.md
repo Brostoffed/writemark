@@ -108,6 +108,27 @@ suffixes in document order.
 
 ## Tags
 
+Tags are off by default. Enable them with the `tags-enabled` boolean attribute
+or `editor.tagsEnabled = true`.
+
+```html
+<writemark-editor tags-enabled></writemark-editor>
+```
+
+```js
+editor.tagsEnabled = true;
+editor.tagsEnabled = false;
+```
+
+When tags are off, `#tag` remains ordinary Markdown text. The editor does not
+build a tag index, request catalog choices, or activate tags. `getTags()`
+returns an empty array. Normal Markdown editing and other completion providers
+remain available.
+
+The switch preserves the Markdown, selection, dirty state, form value, and
+undo history. Turning tags off closes completion and aborts pending requests.
+An active composition finishes before the live view refreshes.
+
 Type `#` and a tag name to add a tag. Tag names support Unicode letters,
 numbers, underscores, hyphens, and nested `/` segments. A tag must contain one
 nonnumeric character.
@@ -116,10 +137,13 @@ Writemark derives the current tag index from canonical Markdown. It does not
 store an application tag catalog. Code spans, fenced code, escaped hashes,
 link destinations, and reference definitions do not create tags.
 
+A valid tag appears in the derived index as soon as it exists in Markdown.
+Adding that tag to an application catalog is a separate host action.
+
 Current document tags provide completion without host setup. A host can set
 `tagProvider` to merge application tags into the same completion menu.
 Completion opens at the end of a tag token. A caret inside an existing tag does
-not offer a partial tag or a new tag.
+not offer a partial tag or a catalog addition.
 
 ## Slash commands and completions
 

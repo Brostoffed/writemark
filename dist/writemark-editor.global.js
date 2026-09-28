@@ -4,7 +4,7 @@
  */
 (() => {
 /*
- * <writemark-editor> v1.6.0 live inline Markdown editor.
+ * <writemark-editor> v1.6.1 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -16,6 +16,7 @@ const DEFAULTS = Object.freeze({
   mode: "live",
   preview: "none",
   markdownFlavor: "gfm",
+  tagsEnabled: false,
   tabBehavior: "accessibility-first",
   indentString: "  ",
   placeholder: "Write markdown...",
@@ -36,6 +37,7 @@ const REFLECTED_ATTRIBUTES = [
   "mode",
   "preview",
   "markdown-flavor",
+  "tags-enabled",
   "tab-behavior",
   "indent-string",
   "debug",
@@ -1137,7 +1139,7 @@ function decorateInline(raw, opts = {}) {
       i = link.to - 1;
       continue;
     }
-    const tag = parseTagAt(text, i);
+    const tag = opts.tagsEnabled === true ? parseTagAt(text, i) : null;
     if (tag) {
       prepared += reserve(tagHtml(tag));
       i = tag.to - 1;
@@ -1198,14 +1200,16 @@ function renderInlineMarkdown(source, opts = {}) {
     i = link.to - 1;
   }
   text = linked;
-  let tagged = "";
-  for (let i = 0; i < text.length; i += 1) {
-    const tag = parseTagAt(text, i);
-    if (!tag) { tagged += text[i]; continue; }
-    tagged += reserve(tagHtml(tag));
-    i = tag.to - 1;
+  if (opts.tagsEnabled === true) {
+    let tagged = "";
+    for (let i = 0; i < text.length; i += 1) {
+      const tag = parseTagAt(text, i);
+      if (!tag) { tagged += text[i]; continue; }
+      tagged += reserve(tagHtml(tag));
+      i = tag.to - 1;
+    }
+    text = tagged;
   }
-  text = tagged;
   if (usesGfm(opts)) {
     text = text.replace(/~~([^~\n]+)~~/g, (_, content) =>
       reserve(`<del>${renderInlineMarkdown(content, opts)}</del>`));
@@ -1523,6 +1527,18 @@ class WritemarkEditorElement extends HTMLElement {
       return;
     }
     if (!this._hasConnected) return;
+    if (name === "tags-enabled") {
+      const restoreFocus = this._hasComponentFocus();
+      if (!this._isComposing) this._selection = { ...this._getCurrentSelection() };
+      if (!restoreFocus) this._selectionRestoreRequest += 1;
+      this._closeCompletion();
+      const tagChange = this._refreshTagIndex();
+      this._renderAll({ restoreSelection: restoreFocus && !this.disabled, force: true });
+      if (restoreFocus && !this.disabled && !this._isComposing) this._focusEditable();
+      if (tagChange) this._dispatch("md-tags-change", { ...tagChange, source: "attribute", inputType: null });
+      if (restoreFocus) this._scheduleCompletionUpdate();
+      return;
+    }
     if (this._isComposing && ["mode", "disabled", "readonly"].includes(name)) {
       this._onCompositionEnd();
     }
@@ -1551,6 +1567,8 @@ class WritemarkEditorElement extends HTMLElement {
   set preview(v) { v == null ? this.removeAttribute("preview") : this.setAttribute("preview", String(v)); }
   get markdownFlavor() { const v = this.getAttribute("markdown-flavor") ?? DEFAULTS.markdownFlavor; return ["gfm", "commonmark"].includes(v) ? v : DEFAULTS.markdownFlavor; }
   set markdownFlavor(v) { v == null ? this.removeAttribute("markdown-flavor") : this.setAttribute("markdown-flavor", String(v)); }
+  get tagsEnabled() { return this.hasAttribute("tags-enabled"); }
+  set tagsEnabled(v) { this.toggleAttribute("tags-enabled", Boolean(v)); }
   get tabBehavior() { const v = this.getAttribute("tab-behavior") ?? DEFAULTS.tabBehavior; return ["accessibility-first", "editor-first"].includes(v) ? v : DEFAULTS.tabBehavior; }
   set tabBehavior(v) { v == null ? this.removeAttribute("tab-behavior") : this.setAttribute("tab-behavior", String(v)); }
   get indentString() { return normalizeIndentAttribute(this.getAttribute("indent-string") ?? DEFAULTS.indentString); }
@@ -1582,7 +1600,7 @@ class WritemarkEditorElement extends HTMLElement {
       throw new TypeError("tagProvider requires a getItems function.");
     }
     this._tagProvider = provider || null;
-    if (this._hasConnected) this._scheduleCompletionUpdate({ immediate: true });
+    if (this._hasConnected && this.tagsEnabled) this._scheduleCompletionUpdate({ immediate: true });
   }
   get selectionStart() { return this._getCurrentSelection().start; }
   set selectionStart(v) { this.setSelectionRange(v, this.selectionEnd); }
@@ -1638,7 +1656,7 @@ class WritemarkEditorElement extends HTMLElement {
   setCustomValidity(message) { this._customValidityMessage = String(message ?? ""); this._updateValidity(); }
 
   _upgradeProperties() {
-    for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required", "tagProvider"]) {
+    for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tagsEnabled", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required", "tagProvider"]) {
       if (Object.prototype.hasOwnProperty.call(this, prop)) { const value = this[prop]; delete this[prop]; this[prop] = value; }
     }
   }
@@ -1987,6 +2005,7 @@ class WritemarkEditorElement extends HTMLElement {
   _rendererOptions() {
     return {
       ...this._parseOptions(),
+      tagsEnabled: this.tagsEnabled,
       allowRawHtml: false,
       sanitize: true,
       linkTarget: DEFAULTS.linkTarget,
@@ -2027,7 +2046,7 @@ class WritemarkEditorElement extends HTMLElement {
   }
   _refreshTagIndex() {
     const previous = this._tagIndex;
-    const current = parseTags(this._value, this._parseOptions());
+    const current = this.tagsEnabled ? parseTags(this._value, this._parseOptions()) : [];
     this._tagIndex = current;
     if (JSON.stringify(previous) === JSON.stringify(current)) return null;
     const oldKeys = new Map(previous.map(tag => [tag.key, tag.value]));
@@ -3440,6 +3459,7 @@ class WritemarkEditorElement extends HTMLElement {
     if (this._activateTag(event, "preview")) event.preventDefault();
   }
   _activateTag(event, surface) {
+    if (!this.tagsEnabled) return false;
     const target = event.target.closest?.("[data-md-tag]");
     if (!target) return false;
     const tag = target.dataset.mdTag || "";
@@ -5099,7 +5119,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._selection = sel;
     const parseOptions = this._parseOptions();
     const value = this._value; const line = getLineRange(value, sel.start); const currentLine = makeLineInfo(line.start, line.end, line.text, parseOptions); const selectedLines = getSelectedLineRanges(value, sel.start, sel.end, parseOptions); const block = classifyLine(value, sel.start, currentLine, parseOptions); const lineBeforeCursor = currentLine.text.slice(0, sel.start - currentLine.start);
-    return { value, selectionStart: sel.start, selectionEnd: sel.end, selectionDirection: sel.direction || "none", mode: this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composing-ime" : this._completion.open ? (this._completion.providerId === "slash" ? "slash-open" : "completion-open") : "idle", currentLine, selectedLines, block, inline: { insideInlineCode: isInsideInlineCode(lineBeforeCursor) }, completion: { ...this._completion }, config: { mode: this.mode, preview: this.preview, markdownFlavor: this.markdownFlavor, tabBehavior: this.tabBehavior, indentString: this.indentString, debug: this.debug, debugLog: this.debugLog, disabled: this.disabled, readonly: this.readonly }, host: this };
+    return { value, selectionStart: sel.start, selectionEnd: sel.end, selectionDirection: sel.direction || "none", mode: this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composing-ime" : this._completion.open ? (this._completion.providerId === "slash" ? "slash-open" : "completion-open") : "idle", currentLine, selectedLines, block, inline: { insideInlineCode: isInsideInlineCode(lineBeforeCursor) }, completion: { ...this._completion }, config: { mode: this.mode, preview: this.preview, markdownFlavor: this.markdownFlavor, tagsEnabled: this.tagsEnabled, tabBehavior: this.tabBehavior, indentString: this.indentString, debug: this.debug, debugLog: this.debugLog, disabled: this.disabled, readonly: this.readonly }, host: this };
   }
   _runAction(actionId, args, options = {}) {
     const action = this._actions.get(actionId); if (!action) return fail("not-applicable", `Unknown action: ${actionId}`);
@@ -5314,6 +5334,7 @@ class WritemarkEditorElement extends HTMLElement {
   _insertImage(ctx, args = {}) { const alt = args.alt ?? ""; const src = args.src ?? ""; const insert = `![${alt}](${src})`; const cursor = alt ? ctx.selectionStart + insert.length : ctx.selectionStart + 2; return ok(tx(ctx, "inline.image", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), "Image."); }
 
   _matchTag(ctx) {
+    if (!this.tagsEnabled) return null;
     if (ctx.block.kind === "fenced-code" || ctx.inline.insideInlineCode) return null;
     const cursor = ctx.selectionStart - ctx.currentLine.start;
     const before = ctx.currentLine.text.slice(0, cursor);
@@ -5333,6 +5354,7 @@ class WritemarkEditorElement extends HTMLElement {
     };
   }
   async _getTagItems(match, ctx, signal) {
+    if (!this.tagsEnabled || signal.aborted) return [];
     const queryKey = normalizeTagKey(match.query);
     const items = new Map();
     for (const tag of this._tagIndex) {
@@ -5352,7 +5374,7 @@ class WritemarkEditorElement extends HTMLElement {
     const supplied = provider
       ? await provider.getItems({ query: match.query, documentTags: this.getTags(), context: ctx, signal })
       : [];
-    if (signal.aborted) return [];
+    if (signal.aborted || !this.tagsEnabled) return [];
     for (const suppliedItem of supplied || []) {
       const source = typeof suppliedItem === "string" ? { value: suppliedItem } : suppliedItem;
       const value = String(source?.value ?? source?.label ?? "").trim().replace(/^#/, "");
@@ -5376,8 +5398,8 @@ class WritemarkEditorElement extends HTMLElement {
     if (provider?.allowCreate === true && isValidTagValue(match.query) && !exact) {
       output.push({
         id: `tag-create:${queryKey}`,
-        label: `Create #${match.query}`,
-        detail: "new tag",
+        label: `Add #${match.query} to catalog`,
+        detail: "save for autocomplete",
         kind: "tag-create",
         value: match.query,
         key: queryKey,
@@ -5386,6 +5408,7 @@ class WritemarkEditorElement extends HTMLElement {
     return output;
   }
   _applyTagItem(item, match, ctx) {
+    if (!this.tagsEnabled) return fail("not-applicable");
     const value = String(item.value || "").replace(/^#/, "");
     if (!isValidTagValue(value)) return fail("not-applicable");
     const insert = `#${value} `;
@@ -5396,7 +5419,7 @@ class WritemarkEditorElement extends HTMLElement {
       [{ from: match.from, to: match.to, insert }],
       { start: cursor, end: cursor, direction: "none" },
       "completion"
-    ), item.kind === "tag-create" ? `Created tag ${value}.` : `Tag ${value}.`);
+    ), item.kind === "tag-create" ? `Catalog addition selected for ${value}.` : `Tag ${value}.`);
   }
   _matchSlash(ctx) { if (ctx.block.kind === "fenced-code" || ctx.inline.insideInlineCode) return null; const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start); const m = /^(\s*)\/([\w-]*)$/.exec(before); if (!m) return null; return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: "/", query: m[2], providerId: "slash" }; }
   _getSlashItems(match) { const q = match.query.toLowerCase(); const items = []; for (const action of this._actions.values()) { if (!action.visibleInSlash) continue; const hay = [action.label, action.description, ...(action.aliases || []), ...(action.keywords || [])].filter(Boolean).join(" ").toLowerCase(); if (q && !hay.includes(q)) continue; items.push({ id: action.id, label: action.label, detail: action.group, description: action.description || displayShortcut(action.defaultShortcut), kind: "slash-command", actionId: action.id }); } return items.slice(0, 24); }

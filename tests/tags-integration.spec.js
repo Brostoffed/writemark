@@ -1,5 +1,7 @@
 import { expect, test } from "./support/editor-fixture.js";
 
+test.use({ tagsEnabled: true });
+
 const editorModes = [
   { live: true, mode: "live", preview: false, source: false },
   { live: false, mode: "source", preview: false, source: true },
@@ -44,6 +46,7 @@ test.describe("tag component integration", () => {
       const tags = [];
       for (const name of ["writemark-editor", "md-live-editor"]) {
         const element = host.ownerDocument.createElement(name);
+        element.tagsEnabled = true;
         element.value = `#${name}`;
         host.ownerDocument.body.append(element);
         await new Promise(requestAnimationFrame);
@@ -94,6 +97,7 @@ test.describe("tag component integration", () => {
   test("keeps tag providers and indexes isolated across editor instances", async ({ editor }) => {
     const result = await editor.host.evaluate(async first => {
       const second = first.ownerDocument.createElement("writemark-editor");
+      second.tagsEnabled = true;
       first.ownerDocument.body.append(second);
       first.value = "#first";
       second.value = "#second";
@@ -167,6 +171,7 @@ test.describe("tag component integration", () => {
   test("sets a tag provider before connection without opening a popup", async ({ editor }) => {
     const result = await editor.host.evaluate(async host => {
       const element = host.ownerDocument.createElement("writemark-editor");
+      element.tagsEnabled = true;
       element.value = "#a";
       element.tagProvider = { getItems: () => ["alpha"] };
       const before = { connected: element.isConnected, open: element._completion.open };
@@ -267,7 +272,7 @@ test.describe("tag completion integration", () => {
     await expect(editor.host.getByRole("option")).toHaveCount(24);
   });
 
-  test("does not offer creation for numeric, malformed, or exact tags", async ({ editor, page }) => {
+  test("does not offer catalog additions for numeric, malformed, or exact tags", async ({ editor, page }) => {
     await editor.reset({ attributes: { mode: "source" } });
     await editor.host.evaluate(element => {
       element.tagProvider = { allowCreate: true, getItems: () => ["alpha"] };
@@ -279,7 +284,7 @@ test.describe("tag completion integration", () => {
     await page.keyboard.press("ControlOrMeta+a");
     await page.keyboard.type("#alpha");
     await expect(editor.host.getByRole("option", { name: /#alpha/ })).toBeVisible();
-    await expect(editor.host.getByRole("option", { name: /Create #alpha/ })).toHaveCount(0);
+    await expect(editor.host.getByRole("option", { name: /Add #alpha to catalog/ })).toHaveCount(0);
     await page.keyboard.press("ControlOrMeta+a");
     await page.keyboard.type("#two//");
     await expect(editor.completion).toBeHidden();
@@ -433,21 +438,23 @@ test.describe("tag completion integration", () => {
     expect(await editor.value()).toBe("#alpha ");
   });
 
-  test("does not persist an explicit creation without host action", async ({ editor, page }) => {
+  test("does not persist a catalog addition without host action", async ({ editor, page }) => {
     await editor.reset({ attributes: { mode: "source" } });
     await editor.host.evaluate(element => {
       element.tagProvider = { allowCreate: true, getItems: () => [] };
       element.focus();
     });
     await page.keyboard.type("#new-tag");
-    await expect(editor.host.getByRole("option", { name: "Create #new-tag new tag" })).toBeVisible();
+    await expect(editor.host.getByRole("option", {
+      name: "Add #new-tag to catalog save for autocomplete"
+    })).toBeVisible();
     await page.keyboard.press("Enter");
     expect(await editor.value()).toBe("#new-tag ");
 
     await editor.setValue("");
     await editor.setSelection(0);
     await page.keyboard.type("#new");
-    await expect(editor.host.getByRole("option", { name: /Create #new/ })).toBeVisible();
+    await expect(editor.host.getByRole("option", { name: /Add #new to catalog/ })).toBeVisible();
     await expect(editor.host.getByRole("option", { name: /^#new-tag/ })).toHaveCount(0);
   });
 
