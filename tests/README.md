@@ -53,6 +53,14 @@ Run the dedicated security suite in Chromium:
 npm run test:fuzz
 ```
 
+Run more generated Shift+Enter cases in both local browsers:
+
+```sh
+SHIFT_ENTER_FUZZ_RUNS=200 npx playwright test tests/shift-enter.spec.js --grep generated --project=chromium --project=firefox --workers=2
+```
+
+Set `SHIFT_ENTER_FUZZ_SEED` and `SHIFT_ENTER_FUZZ_PATH` to replay a failed case.
+
 The normal run checks 200 generated cases for each property. Increase the
 budget without changing the suite:
 
@@ -89,8 +97,9 @@ npx playwright show-report output/playwright/report
   disabled state, value defaults, constraints, validity, and form association.
 - `editing.spec.js` drives live and source editing through real keyboard and
   selection input.
-- `shift-enter.spec.js` checks soft breaks and smart Shift+Enter across modes,
-  lists, quotes, tables, code fences, and live input events.
+- `shift-enter.spec.js` checks default and smart Shift+Enter behavior across
+  modes, lists, quotes, tables, code fences, disabled states, undo, and live
+  input events. It also compares generated smart Shift+Enter cases with Enter.
 - `input-contract.spec.js` verifies browser `beforeinput`/`input` reconciliation,
   target ranges, replacement and deletion variants, grapheme-safe fallback
   editing, iOS-style Backspace and cross-block target ranges,

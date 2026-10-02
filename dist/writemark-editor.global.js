@@ -671,21 +671,21 @@ function usesGfm(opts = {}) { return opts.gfm ?? opts.markdownFlavor !== "common
 
 function parseListItem(line, opts = {}) {
   if (usesGfm(opts)) {
-    const task = /^(\s*)([-+*])\s+\[( |x|X)\]\s+(.*)$/.exec(line);
+    const task = /^(\s*)([-+*])(\s+)\[( |x|X)\](\s+)(.*)$/.exec(line);
     if (task) {
-      const markerText = `${task[2]} [${task[3]}] `;
-      return { kind: "task-list-item", listType: "ul", indent: task[1], marker: task[2], markerText, checked: task[3].toLowerCase() === "x", content: task[4], contentStart: task[1].length + markerText.length, fullMarkerStart: task[1].length, fullMarkerEnd: task[1].length + markerText.length };
+      const markerText = `${task[2]}${task[3]}[${task[4]}]${task[5]}`;
+      return { kind: "task-list-item", listType: "ul", indent: task[1], marker: task[2], markerText, checked: task[4].toLowerCase() === "x", content: task[6], contentStart: task[1].length + markerText.length, fullMarkerStart: task[1].length, fullMarkerEnd: task[1].length + markerText.length };
     }
   }
-  const ordered = /^(\s*)(\d+)([.)])\s+(.*)$/.exec(line);
+  const ordered = /^(\s*)(\d+)([.)])(\s+)(.*)$/.exec(line);
   if (ordered) {
-    const markerText = `${ordered[2]}${ordered[3]} `;
-    return { kind: "ordered-list-item", listType: "ol", indent: ordered[1], marker: ordered[2], number: Number(ordered[2]), delimiter: ordered[3], markerText, content: ordered[4], contentStart: ordered[1].length + markerText.length, fullMarkerStart: ordered[1].length, fullMarkerEnd: ordered[1].length + markerText.length };
+    const markerText = `${ordered[2]}${ordered[3]}${ordered[4]}`;
+    return { kind: "ordered-list-item", listType: "ol", indent: ordered[1], marker: ordered[2], number: Number(ordered[2]), delimiter: ordered[3], markerText, content: ordered[5], contentStart: ordered[1].length + markerText.length, fullMarkerStart: ordered[1].length, fullMarkerEnd: ordered[1].length + markerText.length };
   }
-  const bullet = /^(\s*)([-+*])\s+(.*)$/.exec(line);
+  const bullet = /^(\s*)([-+*])(\s+)(.*)$/.exec(line);
   if (bullet) {
-    const markerText = `${bullet[2]} `;
-    return { kind: "bullet-list-item", listType: "ul", indent: bullet[1], marker: bullet[2], markerText, content: bullet[3], contentStart: bullet[1].length + markerText.length, fullMarkerStart: bullet[1].length, fullMarkerEnd: bullet[1].length + markerText.length };
+    const markerText = `${bullet[2]}${bullet[3]}`;
+    return { kind: "bullet-list-item", listType: "ul", indent: bullet[1], marker: bullet[2], markerText, content: bullet[4], contentStart: bullet[1].length + markerText.length, fullMarkerStart: bullet[1].length, fullMarkerEnd: bullet[1].length + markerText.length };
   }
   return null;
 }

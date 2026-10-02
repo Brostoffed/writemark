@@ -11,6 +11,7 @@
   and source modes.
 - Added Chromium and Firefox tests for both values and updated the keyboard
   guides and API reference.
+- Fixed live caret offsets when list markers contain extra spaces.
 
 ## 1.6.1 - 2026-09-11
 
