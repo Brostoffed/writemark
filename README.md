@@ -190,6 +190,7 @@ Code fences are refined in `live` mode: the opening and closing backtick markers
 |---|---|
 | Enter in nonempty list item | Creates next item at same level. |
 | Enter in empty list item | Exits the list. |
+| Shift+Enter | Inserts a Markdown hard break by default. Set `shift-enter-behavior="smart-enter"` to use Enter behavior. |
 | Tab in list item | Indents the item. |
 | Shift+Tab in list item | Outdents the item. |
 | Enter after ```` ```python ```` | Creates a closed code fence and places cursor inside. |
@@ -197,7 +198,8 @@ Code fences are refined in `live` mode: the opening and closing backtick markers
 | `#` plus text | Opens tag completion from document and host tags when `tagsEnabled` is true. |
 | ` ```py ` | Opens code-language completion; `py` ranks Python. |
 | Enter in table cell | Inserts a row below the current row and moves into the first new cell. |
-| Shift+Enter or Escape in table cell | Exits the table to a blank line after it. |
+| Shift+Enter in table cell | Exits the table by default. Adds a row with `shift-enter-behavior="smart-enter"`. |
+| Escape in table cell | Exits the table to a blank line after it. |
 | Tab in table cell | Moves to the next cell; from the last nonempty row, creates a new row. |
 | Shift+Tab from first table cell | Exits before the table. |
 | Cmd/Ctrl+A in live mode | Expands selection progressively: cell/block → row/table/section → document. |
@@ -218,7 +220,7 @@ Code fences are refined in `live` mode: the opening and closing backtick markers
 | Cell 1 | Cell 2 | Cell 3 |
 ```
 
-In live mode, the table is rendered as an editable grid. The delimiter row is preserved in the Markdown source but hidden from the primary grid UI. Enter creates a row below the current row. Shift+Enter or Escape exits the table to a blank line after it. Tab moves across cells; when it reaches the last nonempty row, it creates a new row, and from an empty terminal row it exits the table.
+In live mode, the table is rendered as an editable grid. The delimiter row is preserved in the Markdown source but hidden from the primary grid UI. Enter creates a row below the current row. Shift+Enter exits the table by default, or creates a row with `shift-enter-behavior="smart-enter"`. Escape exits the table. Tab moves across cells; when it reaches the last nonempty row, it creates a new row, and from an empty terminal row it exits the table.
 
 Table row/column mutation is exposed through actions, not rendered buttons: `table.insertRowAfter`, `table.insertColumnAfter`, `table.deleteRow`, and `table.deleteColumn`.
 

@@ -192,12 +192,17 @@ language names.
 | Backspace at a line start | Join with the previous logical Markdown line. |
 | Delete at a line end | Join with the next logical Markdown line. |
 | Enter | Run structure-aware paragraph behavior. |
-| Shift+Enter | Insert a Markdown hard break, except where a structure defines an exit action. |
+| Shift+Enter | Insert a Markdown hard break by default. With `shift-enter-behavior="smart-enter"`, use Enter behavior. |
 | `Mod+Z` / `Mod+Shift+Z` | Undo / redo. |
 
 Left and right collapse a nonempty multi-row selection to its start or end
 before continuing. Up, down, home, end, and their Shift variants use rendered
 rows while storing canonical source offsets.
+
+Set `shift-enter-behavior="smart-enter"` when the host uses Enter to submit and
+Shift+Enter to add a line. Shift+Enter then continues lists and blockquotes,
+exits empty items, and adds table rows. The host must check `event.shiftKey`
+before it submits on Enter.
 
 Source mode uses the browser textarea for ordinary movement. Writemark still
 handles its actions, undo history, completion menu, and canonical value updates.
@@ -280,7 +285,8 @@ Live mode renders the table as an editable grid:
 | Enter in a body cell | Insert a row below the current row and enter its first cell. |
 | Tab from the final nonempty row | Add a row and enter it. |
 | Tab from a terminal empty row | Exit after the table without adding source. |
-| Escape or Shift+Enter | Exit after the table. |
+| Escape | Exit after the table. |
+| Shift+Enter | Exit after the table by default. Add a row with `shift-enter-behavior="smart-enter"`. |
 | ArrowDown from the terminal row | Exit after the table without changing Markdown. |
 | Backspace in an empty body row | Remove that row when the structural deletion applies. |
 

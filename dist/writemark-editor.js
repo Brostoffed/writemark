@@ -12,6 +12,7 @@ const DEFAULTS = Object.freeze({
   preview: "none",
   markdownFlavor: "gfm",
   tagsEnabled: false,
+  shiftEnterBehavior: "soft-break",
   tabBehavior: "accessibility-first",
   indentString: "  ",
   placeholder: "Write markdown...",
@@ -33,6 +34,7 @@ const REFLECTED_ATTRIBUTES = [
   "preview",
   "markdown-flavor",
   "tags-enabled",
+  "shift-enter-behavior",
   "tab-behavior",
   "indent-string",
   "debug",
@@ -1564,6 +1566,8 @@ class WritemarkEditorElement extends HTMLElement {
   set markdownFlavor(v) { v == null ? this.removeAttribute("markdown-flavor") : this.setAttribute("markdown-flavor", String(v)); }
   get tagsEnabled() { return this.hasAttribute("tags-enabled"); }
   set tagsEnabled(v) { this.toggleAttribute("tags-enabled", Boolean(v)); }
+  get shiftEnterBehavior() { const v = this.getAttribute("shift-enter-behavior") ?? DEFAULTS.shiftEnterBehavior; return ["soft-break", "smart-enter"].includes(v) ? v : DEFAULTS.shiftEnterBehavior; }
+  set shiftEnterBehavior(v) { v == null ? this.removeAttribute("shift-enter-behavior") : this.setAttribute("shift-enter-behavior", String(v)); }
   get tabBehavior() { const v = this.getAttribute("tab-behavior") ?? DEFAULTS.tabBehavior; return ["accessibility-first", "editor-first"].includes(v) ? v : DEFAULTS.tabBehavior; }
   set tabBehavior(v) { v == null ? this.removeAttribute("tab-behavior") : this.setAttribute("tab-behavior", String(v)); }
   get indentString() { return normalizeIndentAttribute(this.getAttribute("indent-string") ?? DEFAULTS.indentString); }
@@ -1651,7 +1655,7 @@ class WritemarkEditorElement extends HTMLElement {
   setCustomValidity(message) { this._customValidityMessage = String(message ?? ""); this._updateValidity(); }
 
   _upgradeProperties() {
-    for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tagsEnabled", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required", "tagProvider"]) {
+    for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tagsEnabled", "shiftEnterBehavior", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required", "tagProvider"]) {
       if (Object.prototype.hasOwnProperty.call(this, prop)) { const value = this[prop]; delete this[prop]; this[prop] = value; }
     }
   }
@@ -2700,6 +2704,7 @@ class WritemarkEditorElement extends HTMLElement {
       this._beforeInputTarget = null;
       const ctx = this._getContext();
       const actionId = inputType === "insertLineBreak"
+        && this.shiftEnterBehavior === "soft-break"
         && !this._isUnclosedFenceOpeningContext(ctx)
         ? "editor.insertSoftBreak"
         : "editor.smartEnter";
@@ -4445,7 +4450,7 @@ class WritemarkEditorElement extends HTMLElement {
       if (map[event.key]) { event.preventDefault(); this._runAction(map[event.key], undefined, { source: "keyboard", apply: true }); return; }
       if (event.key === "PageDown") { event.preventDefault(); this._moveCompletion(5); return; }
       if (event.key === "PageUp") { event.preventDefault(); this._moveCompletion(-5); return; }
-      if (event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) { event.preventDefault(); this._runAction("completion.accept", undefined, { source: "keyboard", apply: true }); return; }
+      if ((event.key === "Enter" && (!event.shiftKey || this.shiftEnterBehavior === "soft-break")) || (event.key === "Tab" && !event.shiftKey)) { event.preventDefault(); this._runAction("completion.accept", undefined, { source: "keyboard", apply: true }); return; }
     }
 
     if (opaqueDesktopSafari && (
@@ -4531,7 +4536,7 @@ class WritemarkEditorElement extends HTMLElement {
       if (!this._isSourceActive() && this._isIOSWebKitRuntime()) return;
       event.preventDefault();
       if (activeCell) {
-        if (event.shiftKey || mod || event.altKey) this._exitTable(activeCell, "after");
+        if ((event.shiftKey && this.shiftEnterBehavior === "soft-break") || mod || event.altKey) this._exitTable(activeCell, "after");
         else this._insertTableRowAfterCell(activeCell);
         return;
       }
@@ -4540,7 +4545,8 @@ class WritemarkEditorElement extends HTMLElement {
         this._runAction("editor.insertParagraph", undefined, { source: "keyboard", apply: true });
         return;
       }
-      this._runAction(event.shiftKey ? "editor.insertSoftBreak" : "editor.smartEnter", undefined, { source: "keyboard", apply: true });
+      const actionId = event.shiftKey && this.shiftEnterBehavior === "soft-break" ? "editor.insertSoftBreak" : "editor.smartEnter";
+      this._runAction(actionId, undefined, { source: "keyboard", apply: true });
       return;
     }
 
@@ -5114,7 +5120,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._selection = sel;
     const parseOptions = this._parseOptions();
     const value = this._value; const line = getLineRange(value, sel.start); const currentLine = makeLineInfo(line.start, line.end, line.text, parseOptions); const selectedLines = getSelectedLineRanges(value, sel.start, sel.end, parseOptions); const block = classifyLine(value, sel.start, currentLine, parseOptions); const lineBeforeCursor = currentLine.text.slice(0, sel.start - currentLine.start);
-    return { value, selectionStart: sel.start, selectionEnd: sel.end, selectionDirection: sel.direction || "none", mode: this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composing-ime" : this._completion.open ? (this._completion.providerId === "slash" ? "slash-open" : "completion-open") : "idle", currentLine, selectedLines, block, inline: { insideInlineCode: isInsideInlineCode(lineBeforeCursor) }, completion: { ...this._completion }, config: { mode: this.mode, preview: this.preview, markdownFlavor: this.markdownFlavor, tagsEnabled: this.tagsEnabled, tabBehavior: this.tabBehavior, indentString: this.indentString, debug: this.debug, debugLog: this.debugLog, disabled: this.disabled, readonly: this.readonly }, host: this };
+    return { value, selectionStart: sel.start, selectionEnd: sel.end, selectionDirection: sel.direction || "none", mode: this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composing-ime" : this._completion.open ? (this._completion.providerId === "slash" ? "slash-open" : "completion-open") : "idle", currentLine, selectedLines, block, inline: { insideInlineCode: isInsideInlineCode(lineBeforeCursor) }, completion: { ...this._completion }, config: { mode: this.mode, preview: this.preview, markdownFlavor: this.markdownFlavor, tagsEnabled: this.tagsEnabled, shiftEnterBehavior: this.shiftEnterBehavior, tabBehavior: this.tabBehavior, indentString: this.indentString, debug: this.debug, debugLog: this.debugLog, disabled: this.disabled, readonly: this.readonly }, host: this };
   }
   _runAction(actionId, args, options = {}) {
     const action = this._actions.get(actionId); if (!action) return fail("not-applicable", `Unknown action: ${actionId}`);

@@ -5,7 +5,7 @@ browser lifecycle, fixture isolation, assertions, retries, reporting, traces,
 screenshots, and video. There is no page-hosted runner, wrapper spec, shared
 serial iterator, or browser-side pass/fail protocol.
 
-The Chromium and Firefox projects each register 551 independent cases.
+The Chromium and Firefox projects each register independent cases.
 The suite includes the 230 checks from the previous suite, input and composition
 contracts, and tag completion coverage. Security checks cover hostile inputs,
 generated invariants, and CommonMark differences. WebKit also includes tests
@@ -89,6 +89,8 @@ npx playwright show-report output/playwright/report
   disabled state, value defaults, constraints, validity, and form association.
 - `editing.spec.js` drives live and source editing through real keyboard and
   selection input.
+- `shift-enter.spec.js` checks soft breaks and smart Shift+Enter across modes,
+  lists, quotes, tables, code fences, and live input events.
 - `input-contract.spec.js` verifies browser `beforeinput`/`input` reconciliation,
   target ranges, replacement and deletion variants, grapheme-safe fallback
   editing, iOS-style Backspace and cross-block target ranges,
