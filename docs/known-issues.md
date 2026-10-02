@@ -1,9 +1,9 @@
-# Known issues in Writemark 1.7.0
+# Issues fixed after Writemark 1.7.0
 
 The September 11, 2026 review confirmed these 15 issues through source checks
-and Chromium 149 reproductions. Version 1.7.0 does not fix these issues.
+and Chromium 149 reproductions. Version 1.7.1 addresses each issue.
 
-| # | Priority | Area | Confirmed behavior |
+| # | Priority | Area | Confirmed behavior in 1.7.0 |
 | --- | --- | --- | --- |
 | 1 | High | Find and replace | Unicode lowercase conversion can shift offsets. Replacing `x` with `Q` in `İXa` produces `İXQ` and removes `a`. |
 | 2 | High | Virtualization | The virtualizer assigns one line of height to each omitted block. Blocks with several lines can cause visible content jumps. |
@@ -20,6 +20,8 @@ and Chromium 149 reproductions. Version 1.7.0 does not fix these issues.
 | 13 | Medium | Copy | A line of unmatched opening brackets causes repeated forward scans. Copy time grows about fourfold when the line length doubles. |
 | 14 | Medium/Low | Deletion | A single character deletion can send the entire source to `Intl.Segmenter` and build all grapheme boundaries. |
 | 15 | Low/Medium | Rendering | Literal private-use characters can match internal placeholders and become duplicate rendered content. |
+
+These measurements describe 1.7.0 before the fixes.
 
 The virtualization reproduction used 2,600 code blocks with ten lines per
 block. At scrollTop 4000, a scroll event changed the first visible block from
@@ -39,9 +41,9 @@ segmenter received all 30,003 source characters for one character deletion.
 That sample took 13.1 ms. It does not establish latency across document sizes
 or devices.
 
-HTML paste also removes internal blank lines from `<pre>` content. The final
-HTML conversion step reduces each run of three or more newlines to two.
-For example, the payload `before\n\n\nafter` becomes `before\n\nafter`.
+In 1.7.0, HTML paste removed internal blank lines from `<pre>` content. The
+final conversion step reduced each run of three or more newlines to two.
+For example, the payload `before\n\n\nafter` became `before\n\nafter`.
 
-These checks establish correctness and performance defects. They do not
-establish an XSS or code-execution security result.
+The original checks established correctness and performance defects. They did
+not establish an XSS or code-execution security result.

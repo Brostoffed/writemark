@@ -125,12 +125,43 @@ test.describe("paste", () => {
     );
   });
 
+  test("explicit Markdown takes priority over tab-separated plain text", async ({ editor }) => {
+    const result = await paste(editor, "", {
+      "text/markdown": "**canonical**",
+      "text/plain": "Name\tAge\nAda\t37"
+    });
+    expect(result.value).toBe("**canonical**");
+  });
+
   test("rich HTML paste converts to Markdown when plain text is not Markdown-like", async ({ editor }) => {
     const result = await paste(editor, "", {
       "text/plain": "Bold site",
       "text/html": '<p><strong>Bold</strong> <a href="https://example.com">site</a></p>'
     });
     expect(result.value).toBe("**Bold** [site](https://example.com)");
+  });
+
+  test("HTML paste escapes literal Markdown markers", async ({ editor }) => {
+    const result = await paste(editor, "", {
+      "text/plain": "Use *literal* and [brackets]",
+      "text/html": "<p>Use *literal* and [brackets]</p>"
+    });
+    expect(result.value).toBe("Use \\*literal\\* and \\[brackets\\]");
+    const html = await editor.host.evaluate(element => element.getHTML());
+    expect(html).not.toContain("<em>");
+    expect(html).toContain("Use *literal* and [brackets]");
+  });
+
+  test("HTML paste preserves code blank lines and safe link fields", async ({ editor }) => {
+    const result = await paste(editor, "", {
+      "text/html": '<p><code>a`b</code> <a href="https://example.com/a_(b)">a]b</a></p><pre>before\n\n\nafter</pre>'
+    });
+    expect(result.value).toContain("``a`b``");
+    expect(result.value).toContain("[a\\]b](https://example.com/a_%28b%29)");
+    expect(result.value).toContain("before\n\n\nafter");
+    const html = await editor.host.evaluate(element => element.getHTML());
+    expect(html).toContain("<code>a`b</code>");
+    expect(html).toContain("before\n\n\nafter");
   });
 });
 

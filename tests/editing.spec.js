@@ -255,4 +255,22 @@ test.describe("real editing workflows", () => {
     )).toBe(2);
     expect(await editor.value()).toBe("1 three 1");
   });
+
+  test("find and replace keep source offsets after Unicode case expansion", async ({ editor }) => {
+    await editor.reset({ value: "İXa İXa" });
+    expect(await editor.host.evaluate(element => element.find("x", { from: 0 })))
+      .toEqual({ start: 1, end: 2, text: "X" });
+    expect(await editor.host.evaluate(element => element.replace("x", "Q"))).toBe(1);
+    expect(await editor.value()).toBe("İQa İXa");
+    expect(await editor.host.evaluate(element => element.replaceAll("x", "Q"))).toBe(1);
+    expect(await editor.value()).toBe("İQa İQa");
+  });
+
+  test("find and replace treat search punctuation as literal text", async ({ editor }) => {
+    await editor.reset({ value: "a.b a?b a.b" });
+    expect(await editor.host.evaluate(element => element.find("a.b", { from: 0 })))
+      .toEqual({ start: 0, end: 3, text: "a.b" });
+    expect(await editor.host.evaluate(element => element.replaceAll("a.b", "x"))).toBe(2);
+    expect(await editor.value()).toBe("x a?b x");
+  });
 });

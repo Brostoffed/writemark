@@ -72,6 +72,34 @@ test.describe("component contract", () => {
     expect(await editor.selection()).toEqual({ start: 0, end: 0 });
   });
 
+  test("heading suffixes cannot collide with heading text", async ({ editor }) => {
+    await editor.reset({ attributes: { preview: "below" }, value: "# Foo\n# Foo\n# Foo-1\n# Foo" });
+    const ids = await editor.host.locator(".live-editor .md-heading").evaluateAll(headings =>
+      headings.map(heading => heading.id));
+    expect(ids).toEqual(["foo", "foo-1", "foo-1-1", "foo-2"]);
+    const previewIds = await editor.host.locator(".preview h1").evaluateAll(headings =>
+      headings.map(heading => heading.id));
+    expect(previewIds).toEqual(ids);
+  });
+
+  test("active marks follow rendered delimiters and escapes", async ({ editor }) => {
+    const cases = [
+      { value: "\\*literal\\*", cursor: 4, marks: [] },
+      { value: "`**literal**`", cursor: 5, marks: ["inline.code"] },
+      { value: "``a`b``", cursor: 4, marks: ["inline.code"] },
+      { value: "**bold**", cursor: 4, marks: ["inline.bold"] },
+      { value: "*italic*", cursor: 4, marks: ["inline.italic"] },
+      { value: "~~strike~~", cursor: 4, marks: ["inline.strikethrough"] },
+      { value: "[link](https://example.com/**bold**)", cursor: 3, marks: ["inline.link"] },
+      { value: "[link](https://example.com/**bold**)", cursor: 31, marks: [] }
+    ];
+    for (const scenario of cases) {
+      await editor.reset({ attributes: { mode: "source" }, value: scenario.value });
+      await editor.setSelection(scenario.cursor);
+      expect(await editor.host.evaluate(element => element.getActiveMarks())).toEqual(scenario.marks);
+    }
+  });
+
   test("switches live, source, split, and preview modes without changing Markdown", async ({ editor }) => {
     const markdown = "# Title\n\nBody";
     await editor.reset({ value: markdown });

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 1.7.1 - 2026-10-02
+
+- Fixed Unicode source offsets in case-insensitive find and replace.
+- Fixed virtual scroll positions for blocks with several rendered lines.
+- Kept reference definitions inside code fences and active paragraphs as text.
+- Gave explicit Markdown clipboard data priority over tab-separated text.
+- Escaped literal Markdown syntax in HTML paste and kept code blank lines.
+- Used safe code span and fence markers around selected backticks.
+- Escaped link and image fields and rejected multiline code language input.
+- Kept tilde fence markers when the code language changes.
+- Made heading IDs unique when heading text contains numeric suffixes.
+- Parsed apostrophes inside link destinations as URL text.
+- Parsed fenced code before GFM table candidates.
+- Decoded entities in plain text and kept blank lines inside code.
+- Matched active marks to parsed code, emphasis, links, and escapes.
+- Removed repeated scans of unmatched opening brackets during copy.
+- Limited grapheme checks to text near the deletion caret.
+- Kept literal private-use marker text during live and preview rendering.
+
 ## 1.7.0 - 2026-10-01
 
 - Added the `shift-enter-behavior` attribute and `shiftEnterBehavior` property.

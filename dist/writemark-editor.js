@@ -1,5 +1,5 @@
 /*
- * <writemark-editor> v1.7.0 live inline Markdown editor.
+ * <writemark-editor> v1.7.1 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -84,6 +84,22 @@ const ESCAPABLE_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 function now() { return Date.now(); }
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function normalizeLineEndings(value) { return String(value ?? "").replace(/\r\n?/g, "\n"); }
+function codeLanguage(value) {
+  const raw = String(value ?? "").trim();
+  if (/[\r\n\u2028\u2029\u0000-\u0008\u000B-\u001F\u007F`~\\]/.test(raw)) return null;
+  const language = raw.replace(/[ \t]+/g, "-");
+  return /^[\p{L}\p{N}_+.-]*$/u.test(language) ? language : null;
+}
+function escapeMarkdownLabel(value) { return String(value ?? "").replace(/[\\\[\]]/g, "\\$&").replace(/\r\n?|\n/g, " "); }
+function markdownLinkDestination(value) {
+  const raw = String(value ?? "");
+  if (/[\r\n\u0000-\u001F\u007F]/.test(raw)) return null;
+  return raw.replace(/[\s()<>"'\\]/gu, char => encodeURIComponent(char).replace(/[!'()*]/g, nested => `%${nested.charCodeAt(0).toString(16).toUpperCase()}`));
+}
+function literalSearchPattern(query, caseSensitive = false, global = false) {
+  const escaped = String(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(escaped, `${global ? "g" : ""}${caseSensitive ? "" : "i"}u`);
+}
 function graphemeBoundaries(value) {
   const text = String(value ?? "");
   if (typeof globalThis.Intl?.Segmenter === "function") {
@@ -98,14 +114,44 @@ function graphemeBoundaries(value) {
   }
   return boundaries;
 }
+function graphemeWindowStart(text, offset) {
+  const stable = /^(?:[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{N}\p{P}]|\p{Extended_Pictographic})$/u;
+  const previous = index => {
+    if (index <= 0) return null;
+    let start = index - 1;
+    if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start]) && /[\uD800-\uDBFF]/.test(text[start - 1])) start -= 1;
+    return { start, char: text.slice(start, index) };
+  };
+  // Adjacent stable characters have a boundary between them.
+  // A long joined cluster has no such boundary, so use the source start.
+  for (let index = offset; index > 0;) {
+    const current = previous(index);
+    const before = previous(current.start);
+    if (before && stable.test(current.char) && stable.test(before.char)) return current.start;
+    index = current.start;
+  }
+  return 0;
+}
 function previousGraphemeOffset(value, offset) {
-  const safe = clamp(offset, 0, String(value ?? "").length);
-  return graphemeBoundaries(value).filter(boundary => boundary < safe).at(-1) ?? 0;
+  const text = String(value ?? "");
+  const safe = clamp(offset, 0, text.length);
+  const start = graphemeWindowStart(text, safe);
+  return start + (graphemeBoundaries(text.slice(start, safe))
+    .filter(boundary => boundary < safe - start).at(-1) ?? 0);
 }
 function nextGraphemeOffset(value, offset) {
   const text = String(value ?? "");
   const safe = clamp(offset, 0, text.length);
-  return graphemeBoundaries(text).find(boundary => boundary > safe) ?? text.length;
+  const start = graphemeWindowStart(text, safe);
+  let radius = 64;
+  while (true) {
+    let end = Math.min(text.length, safe + radius);
+    if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end += 1;
+    const next = graphemeBoundaries(text.slice(start, end))
+      .find(boundary => boundary > safe - start) ?? end - start;
+    if (next < end - start || end === text.length) return start + next;
+    radius *= 2;
+  }
 }
 function parseLengthConstraint(value) {
   if (value == null || !/^\d+$/.test(String(value).trim())) return null;
@@ -121,7 +167,11 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 function escapeAttribute(value) { return escapeHtml(value).replace(/`/g, "&#96;"); }
-function stripHtml(value) { return String(value ?? "").replace(/<[^>]*>/g, ""); }
+function stripHtml(value) {
+  const template = document.createElement("template");
+  template.innerHTML = String(value ?? "");
+  return template.content.textContent ?? "";
+}
 function isProbablyUrl(text) { return /^(https?:\/\/|mailto:|tel:|\/|#|\.\/|\.\.\/)[^\s]+$/i.test(String(text ?? "").trim()); }
 function isSafeUrl(url, { allowDataImage = false } = {}) {
   const raw = String(url ?? "").trim();
@@ -148,21 +198,43 @@ function headingSlug(value) {
   return text || "section";
 }
 function assignHeadingIds(blocks) {
-  const seen = new Map();
+  const used = new Set();
+  const nextSuffix = new Map();
   for (const block of blocks) {
     if (block.type !== "heading" || !block.heading) continue;
     const base = headingSlug(block.heading.content);
-    const count = seen.get(base) ?? 0;
-    seen.set(base, count + 1);
-    block.heading.id = count === 0 ? base : `${base}-${count}`;
+    let suffix = nextSuffix.get(base) ?? 0;
+    let id = suffix ? `${base}-${suffix}` : base;
+    while (used.has(id)) { suffix += 1; id = `${base}-${suffix}`; }
+    used.add(id);
+    nextSuffix.set(base, suffix + 1);
+    block.heading.id = id;
   }
   return blocks;
 }
 function isEscapablePunctuation(char) { return Boolean(char) && ESCAPABLE_PUNCTUATION.includes(char); }
+function placeholderPrefix(source) {
+  let longestRun = 0;
+  for (const match of String(source ?? "").matchAll(/\uE000+/g)) longestRun = Math.max(longestRun, match[0].length);
+  return "\uE000".repeat(longestRun + 1);
+}
 function isBackslashEscaped(source, index) {
   let slashes = 0;
   for (let i = index - 1; i >= 0 && source[i] === "\\"; i -= 1) slashes += 1;
   return slashes % 2 === 1;
+}
+function matchingBrackets(source) {
+  const matches = new Int32Array(source.length).fill(-1);
+  const openers = [];
+  let escaped = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\") { escaped = true; continue; }
+    if (char === "[") openers.push(i);
+    else if (char === "]" && openers.length) matches[openers.pop()] = i;
+  }
+  return matches;
 }
 function parseCodeSpanAt(source, index) {
   if (source[index] !== "`" || source[index - 1] === "`" || isBackslashEscaped(source, index)) return null;
@@ -192,6 +264,15 @@ function normalizeCodeSpanContent(content) {
   if (/^\s[\s\S]*\s$/.test(value) && /\S/.test(value)) value = value.slice(1, -1);
   return value;
 }
+function codeSpanMarkdown(content) {
+  const value = String(content ?? "");
+  let longestRun = 0;
+  for (const match of value.matchAll(/`+/g)) longestRun = Math.max(longestRun, match[0].length);
+  const marker = "`".repeat(longestRun + 1);
+  const padded = value && (value.startsWith("`") || value.endsWith("`") || (value.startsWith(" ") && value.endsWith(" ")))
+    ? ` ${value} ` : value;
+  return `${marker}${padded}${marker}`;
+}
 
 function splitLinkDestinationAndTitle(raw) {
   const value = String(raw ?? "").trim();
@@ -203,23 +284,25 @@ function splitLinkDestinationAndTitle(raw) {
   return { url: value, title: "" };
 }
 
-function parseInlineLinkAt(text, start = 0) {
+function parseInlineLinkAt(text, start = 0, brackets = null) {
   const source = String(text ?? "");
   if (isBackslashEscaped(source, start)) return null;
   const bang = source[start] === "!" ? "!" : "";
   let i = start + bang.length;
   if (source[i] !== "[" || isBackslashEscaped(source, i)) return null;
   let escaped = false;
-  let labelEnd = -1;
-  let labelDepth = 1;
-  for (let j = i + 1; j < source.length; j += 1) {
-    const ch = source[j];
-    if (escaped) { escaped = false; continue; }
-    if (ch === "\\") { escaped = true; continue; }
-    if (ch === "[") { labelDepth += 1; continue; }
-    if (ch === "]") {
-      labelDepth -= 1;
-      if (labelDepth === 0) { labelEnd = j; break; }
+  let labelEnd = brackets ? brackets[i] : -1;
+  if (!brackets) {
+    let labelDepth = 1;
+    for (let j = i + 1; j < source.length; j += 1) {
+      const ch = source[j];
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === "[") { labelDepth += 1; continue; }
+      if (ch === "]") {
+        labelDepth -= 1;
+        if (labelDepth === 0) { labelEnd = j; break; }
+      }
     }
   }
   if (labelEnd === -1 || source[labelEnd + 1] !== "(") return null;
@@ -227,16 +310,19 @@ function parseInlineLinkAt(text, start = 0) {
   const destStart = labelEnd + 2;
   let depth = 0;
   let quote = "";
+  let angle = false;
   escaped = false;
   for (let j = destStart; j < source.length; j += 1) {
     const ch = source[j];
     if (escaped) { escaped = false; continue; }
     if (ch === "\\") { escaped = true; continue; }
+    if (ch === "<" && j === destStart) { angle = true; continue; }
+    if (angle) { if (ch === ">") angle = false; continue; }
     if (quote) {
       if (ch === quote) quote = "";
       continue;
     }
-    if (ch === "\"" || ch === "'") { quote = ch; continue; }
+    if ((ch === "\"" || ch === "'") && depth === 0 && /\s/.test(source[j - 1] || "")) { quote = ch; continue; }
     if (ch === "(") { depth += 1; continue; }
     if (ch === ")") {
       if (depth > 0) { depth -= 1; continue; }
@@ -277,34 +363,40 @@ function parseReferenceDefinition(line) {
 
 function extractReferenceDefinitions(markdown, inherited = null) {
   const references = new Map(inherited instanceof Map ? inherited : []);
-  const lines = normalizeLineEndings(markdown).split("\n");
-  const output = lines.map(line => {
-    const definition = parseReferenceDefinition(line);
-    if (!definition) return line;
+  const source = normalizeLineEndings(markdown);
+  const output = source.split("\n");
+  const lineIndexes = new Map(getLines(source).map((line, index) => [line.start, index]));
+  let paragraphOpen = false;
+  for (const block of parseBlocks(source)) {
+    if (block.type !== "paragraph") { paragraphOpen = false; continue; }
+    const definition = paragraphOpen ? null : parseReferenceDefinition(block.line.text);
+    if (!definition) { paragraphOpen = true; continue; }
     if (!references.has(definition.label)) references.set(definition.label, definition);
-    return "";
-  });
+    output[lineIndexes.get(block.line.start)] = "";
+  }
   return { markdown: output.join("\n"), references };
 }
 
-function parseReferenceLinkAt(text, references, start = 0) {
+function parseReferenceLinkAt(text, references, start = 0, brackets = null) {
   if (!(references instanceof Map) || references.size === 0) return null;
   const source = String(text ?? "");
   if (isBackslashEscaped(source, start)) return null;
   const bang = source[start] === "!" ? "!" : "";
   const labelStartMarker = start + bang.length;
   if (source[labelStartMarker] !== "[" || isBackslashEscaped(source, labelStartMarker)) return null;
-  let escaped = false;
-  let depth = 1;
-  let labelEnd = -1;
-  for (let i = labelStartMarker + 1; i < source.length; i += 1) {
-    const char = source[i];
-    if (escaped) { escaped = false; continue; }
-    if (char === "\\") { escaped = true; continue; }
-    if (char === "[") { depth += 1; continue; }
-    if (char !== "]") continue;
-    depth -= 1;
-    if (depth === 0) { labelEnd = i; break; }
+  let labelEnd = brackets ? brackets[labelStartMarker] : -1;
+  if (!brackets) {
+    let escaped = false;
+    let depth = 1;
+    for (let i = labelStartMarker + 1; i < source.length; i += 1) {
+      const char = source[i];
+      if (escaped) { escaped = false; continue; }
+      if (char === "\\") { escaped = true; continue; }
+      if (char === "[") { depth += 1; continue; }
+      if (char !== "]") continue;
+      depth -= 1;
+      if (depth === 0) { labelEnd = i; break; }
+    }
   }
   if (labelEnd === -1 || source[labelEnd + 1] === "(") return null;
   const label = source.slice(labelStartMarker + 1, labelEnd);
@@ -450,28 +542,35 @@ function renderEmphasisMarkdown(source, markerHtml = () => "") {
 function htmlToMarkdown(html) {
   const template = document.createElement("template");
   template.innerHTML = String(html ?? "");
-  const escapeMd = text => String(text ?? "").replace(/\u00a0/g, " ").replace(/\n{3,}/g, "\n\n");
+  const escapeMd = text => String(text ?? "").replace(/\u00a0/g, " ").replace(/[\\`*_{}\[\]()#+\-.!>~|]/g, "\\$&");
   const walk = node => {
     if (node.nodeType === Node.TEXT_NODE) return escapeMd(node.nodeValue);
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
     const tag = node.tagName.toLowerCase();
     const children = () => Array.from(node.childNodes).map(walk).join("");
     const block = text => `\n\n${text.trim()}\n\n`;
+    if (["script", "style", "iframe", "template"].includes(tag)) return "";
     if (tag === "br") return "\n";
     if (/^h[1-6]$/.test(tag)) return block(`${"#".repeat(Number(tag[1]))} ${children().trim()}`);
     if (tag === "strong" || tag === "b") return `**${children()}**`;
     if (tag === "em" || tag === "i") return `*${children()}*`;
-    if (tag === "code" && node.parentElement?.tagName?.toLowerCase() !== "pre") return `\`${children()}\``;
-    if (tag === "pre") return block(`\`\`\`\n${node.textContent.replace(/\n+$/g, "")}\n\`\`\``);
+    if (tag === "code" && node.parentElement?.tagName?.toLowerCase() !== "pre") return codeSpanMarkdown(node.textContent);
+    if (tag === "pre") {
+      const content = normalizeLineEndings(node.textContent);
+      let longestRun = 2;
+      for (const match of content.matchAll(/`+/g)) longestRun = Math.max(longestRun, match[0].length);
+      const fence = "`".repeat(longestRun + 1);
+      return block(`${fence}\n${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
+    }
     if (tag === "blockquote") return block(children().trim().split("\n").map(line => `> ${line}`).join("\n"));
-    if (tag === "a") { const href = node.getAttribute("href") || ""; const label = children().trim() || href; return href && isSafeUrl(href) ? `[${label}](${href})` : label; }
-    if (tag === "img") { const src = node.getAttribute("src") || ""; const alt = node.getAttribute("alt") || ""; return src && isSafeUrl(src, { allowDataImage: false }) ? `![${alt}](${src})` : alt; }
+    if (tag === "a") { const href = node.getAttribute("href") || ""; const label = children().trim() || escapeMd(href); const destination = markdownLinkDestination(href); return href && destination != null && isSafeUrl(href) ? `[${label}](${destination})` : label; }
+    if (tag === "img") { const src = node.getAttribute("src") || ""; const alt = node.getAttribute("alt") || ""; const destination = markdownLinkDestination(src); return src && destination != null && isSafeUrl(src, { allowDataImage: false }) ? `![${escapeMarkdownLabel(alt)}](${destination})` : escapeMd(alt); }
     if (tag === "ul" || tag === "ol") {
       const items = Array.from(node.children).filter(el => el.tagName.toLowerCase() === "li");
       return block(items.map((li, i) => `${tag === "ol" ? `${i + 1}.` : "-"} ${Array.from(li.childNodes).map(walk).join("").trim()}`).join("\n"));
     }
     if (tag === "table") {
-      const rows = Array.from(node.querySelectorAll("tr")).map(tr => Array.from(tr.children).map(cell => Array.from(cell.childNodes).map(walk).join("").replace(/\|/g, "\\|").trim()));
+      const rows = Array.from(node.querySelectorAll("tr")).map(tr => Array.from(tr.children).map(cell => Array.from(cell.childNodes).map(walk).join("").trim()));
       if (!rows.length) return "";
       const cols = Math.max(...rows.map(r => r.length));
       const pad = r => Array.from({ length: cols }, (_, i) => r[i] || "");
@@ -482,7 +581,7 @@ function htmlToMarkdown(html) {
     if (["p", "div", "section", "article"].includes(tag)) return block(children());
     return children();
   };
-  return Array.from(template.content.childNodes).map(walk).join("").replace(/\n{3,}/g, "\n\n").trim();
+  return Array.from(template.content.childNodes).map(walk).join("").trim();
 }
 function tsvToMarkdownTable(text) {
   const rows = normalizeLineEndings(text).split("\n").filter(row => row.length > 0).map(row => row.split("\t").map(cell => cell.replace(/\|/g, "\\|").trim()));
@@ -517,8 +616,8 @@ function markdownFromClipboardData(clipboard) {
   const text = normalizeLineEndings(safeClipboardGet(clipboard, "text/plain"));
   const html = safeClipboardGet(clipboard, "text/html");
   const table = text ? tsvToMarkdownTable(text) : null;
-  if (table) return { markdown: table, kind: "table" };
   if (explicit) return { markdown: normalizeLineEndings(explicit), kind: "markdown" };
+  if (table) return { markdown: table, kind: "table" };
   if (html && (!text || !looksLikeMarkdown(text))) {
     const converted = htmlToMarkdown(html);
     if (converted) return { markdown: normalizeLineEndings(converted), kind: "html" };
@@ -558,8 +657,9 @@ function collectInlineMarkdownRanges(source) {
     ranges.push({ from: code.from, to: code.to, innerFrom: code.contentStart, innerTo: code.contentEnd });
     i = code.to - 1;
   }
+  const brackets = matchingBrackets(source);
   for (let i = 0; i < source.length; i += 1) {
-    const link = parseInlineLinkAt(source, i);
+    const link = parseInlineLinkAt(source, i, brackets);
     if (!link) continue;
     ranges.push({ from: link.from, to: link.to, innerFrom: link.labelStart, innerTo: link.labelEnd });
     i = link.to - 1;
@@ -930,6 +1030,16 @@ function parseBlocks(markdown, opts = {}) {
   const gfm = usesGfm(opts);
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
+    const fenceInfo = getFenceInfo(line.text);
+    if (fenceInfo && (line.newlineEnd > line.end || i + 1 < lines.length)) {
+      const codeLines = [];
+      let j = i + 1;
+      while (j < lines.length && !isFenceCloseLine(lines[j].text, fenceInfo)) { codeLines.push(lines[j]); j += 1; }
+      const closing = j < lines.length ? lines[j] : null;
+      blocks.push({ type: "code-fence", from: line.start, to: (closing ?? codeLines.at(-1) ?? line).end, newlineEnd: (closing ?? codeLines.at(-1) ?? line).newlineEnd, opening: line, closing, codeLines, language: fenceInfo.language, fence: fenceInfo });
+      i = closing ? j : j - 1;
+      continue;
+    }
     if (gfm && i + 1 < lines.length && isLikelyTableRow(line.text) && isTableDelimiter(lines[i + 1].text)) {
       const header = { ...lines[i], cells: parseTableLineRanges(lines[i].text, lines[i].start) };
       const delimiter = { ...lines[i + 1], cells: parseTableLineRanges(lines[i + 1].text, lines[i + 1].start) };
@@ -941,16 +1051,6 @@ function parseBlocks(markdown, opts = {}) {
       }
       blocks.push({ type: "table", from: line.start, to: (rows.at(-1) ?? delimiter).end, newlineEnd: (rows.at(-1) ?? delimiter).newlineEnd, header, delimiter, rows });
       i = j - 1;
-      continue;
-    }
-    const fenceInfo = getFenceInfo(line.text);
-    if (fenceInfo && (line.newlineEnd > line.end || i + 1 < lines.length)) {
-      const codeLines = [];
-      let j = i + 1;
-      while (j < lines.length && !isFenceCloseLine(lines[j].text, fenceInfo)) { codeLines.push(lines[j]); j += 1; }
-      const closing = j < lines.length ? lines[j] : null;
-      blocks.push({ type: "code-fence", from: line.start, to: (closing ?? codeLines.at(-1) ?? line).end, newlineEnd: (closing ?? codeLines.at(-1) ?? line).newlineEnd, opening: line, closing, codeLines, language: fenceInfo.language, fence: fenceInfo });
-      i = closing ? j : j - 1;
       continue;
     }
     const setextLevel = i + 1 < lines.length ? parseSetextHeadingLevel(lines[i + 1].text) : null;
@@ -1047,6 +1147,7 @@ function parseTags(markdown, opts = {}) {
   const found = [];
   const scan = (text, offset = 0) => {
     let excludedIndex = 0;
+    const brackets = matchingBrackets(text);
     for (let i = 0; i < text.length; i += 1) {
       const absolute = offset + i;
       while (excludedIndex < excluded.length && excluded[excludedIndex].to <= absolute) excludedIndex += 1;
@@ -1059,7 +1160,7 @@ function parseTags(markdown, opts = {}) {
         const code = parseCodeSpanAt(text, i);
         if (code) { i = code.to - 1; continue; }
       }
-      const link = parseInlineLinkAt(text, i) || parseReferenceLinkAt(text, references, i);
+      const link = parseInlineLinkAt(text, i, brackets) || parseReferenceLinkAt(text, references, i, brackets);
       if (link) {
         scan(link.label, absolute + (link.labelStart - link.from));
         i = link.to - 1;
@@ -1097,8 +1198,10 @@ function tagHtml(tag) {
 function decorateInline(raw, opts = {}) {
   const text = String(raw ?? "");
   const tokens = [];
+  const prefix = placeholderPrefix(text);
+  const brackets = matchingBrackets(text);
   const reserve = html => {
-    const placeholder = `\uE000${tokens.length}\uE001`;
+    const placeholder = `${prefix}${tokens.length}\uE001`;
     tokens.push([placeholder, html]);
     return placeholder;
   };
@@ -1119,8 +1222,8 @@ function decorateInline(raw, opts = {}) {
       i -= 1;
       continue;
     }
-    const link = parseInlineLinkAt(text, i)
-      || parseReferenceLinkAt(text, opts.references, i);
+    const link = parseInlineLinkAt(text, i, brackets)
+      || parseReferenceLinkAt(text, opts.references, i, brackets);
     if (link) {
       const safe = safeHref(link.url);
       const labelHtml = decorateInline(link.label, opts);
@@ -1150,7 +1253,7 @@ function decorateInline(raw, opts = {}) {
   }
   const html = renderEmphasisMarkdown(prepared, token);
   let restored = html;
-  for (const [placeholder, reserved] of tokens) {
+  for (const [placeholder, reserved] of tokens.reverse()) {
     restored = restored.replaceAll(escapeHtml(placeholder), reserved).replaceAll(placeholder, reserved);
   }
   return restored || "<br>";
@@ -1160,7 +1263,8 @@ function renderInlineMarkdown(source, opts = {}) {
   // Preview renderer: sanitize by construction. Unlike decorateInline, markdown delimiters are not retained.
   let text = String(source ?? "");
   const tokens = [];
-  const reserve = html => { const token = `\uE000${tokens.length}\uE001`; tokens.push([token, html]); return token; };
+  const prefix = placeholderPrefix(text);
+  const reserve = html => { const token = `${prefix}${tokens.length}\uE001`; tokens.push([token, html]); return token; };
   let codeReserved = "";
   for (let i = 0; i < text.length; i += 1) {
     const code = parseCodeSpanAt(text, i);
@@ -1178,9 +1282,10 @@ function renderInlineMarkdown(source, opts = {}) {
   }
   text = escapesReserved;
   let linked = "";
+  const brackets = matchingBrackets(text);
   for (let i = 0; i < text.length; i += 1) {
-    const link = parseInlineLinkAt(text, i)
-      || parseReferenceLinkAt(text, opts.references, i);
+    const link = parseInlineLinkAt(text, i, brackets)
+      || parseReferenceLinkAt(text, opts.references, i, brackets);
     if (!link) { linked += text[i]; continue; }
     if (link.bang) {
       const safe = safeHref(link.url, { allowDataImage: false });
@@ -1215,7 +1320,7 @@ function renderInlineMarkdown(source, opts = {}) {
     `${prefix}${reserve(`<a href="${escapeAttribute(safeHref(url))}">${escapeHtml(url)}</a>`)}`);
   text = text.replace(/(?: {2,}|\\)\n/g, () => `${reserve("<br>")}\n`);
   text = renderEmphasisMarkdown(text);
-  for (const [token, html] of tokens) text = text.replaceAll(escapeHtml(token), html).replaceAll(token, html);
+  for (const [token, html] of tokens.reverse()) text = text.replaceAll(escapeHtml(token), html).replaceAll(token, html);
   return text;
 }
 
@@ -1410,7 +1515,9 @@ function textFromMarkdown(markdown, opts = {}) {
     }
     lines.push(inlineText(block.line.text));
   }
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  while (lines[0] === "") lines.shift();
+  while (lines.at(-1) === "") lines.pop();
+  return lines.join("\n");
 }
 
 class WritemarkEditorElement extends HTMLElement {
@@ -1464,6 +1571,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._completionVisualViewport = null;
     this._boundCompletionViewportChange = () => this._scheduleCompletionPositionUpdate();
     this._virtualState = { active: false, start: 0, end: 0, total: 0, lineHeight: 24 };
+    this._virtualMetricsCache = null;
     this._virtualScrollFrame = 0;
     this._actions = new Map();
     this._providers = new Map();
@@ -1950,41 +2058,70 @@ class WritemarkEditorElement extends HTMLElement {
     if (block.kind === "blockquote") ids.push("block.blockquote");
     if (block.kind === "fenced-code") ids.push("block.codeFence");
     if (block.kind === "table") ids.push("block.table");
+    if (block.kind === "fenced-code") return ids;
     const line = ctx.currentLine?.text ?? "";
     const pos = clamp(ctx.selectionStart - (ctx.currentLine?.start ?? 0), 0, line.length);
-    const before = line.slice(0, pos); const after = line.slice(pos);
-    if ((before.match(/\*\*/g) || []).length % 2 === 1 && after.includes("**")) ids.push("inline.bold");
-    if ((before.match(/(?<!\*)\*(?!\*)/g) || []).length % 2 === 1 && /(?<!\*)\*(?!\*)/.test(after)) ids.push("inline.italic");
-    if ((before.match(/(?<!\\)`/g) || []).length % 2 === 1 && /(?<!\\)`/.test(after)) ids.push("inline.code");
-    if ((before.match(/~~/g) || []).length % 2 === 1 && after.includes("~~")) ids.push("inline.strikethrough");
-    if (/\[[^\]]*$/.test(before) && /\]\([^)]+\)/.test(after)) ids.push("inline.link");
+    const masked = line.split("");
+    const hide = (from, to) => masked.fill(" ", from, to);
+    for (let i = 0; i < line.length; i += 1) {
+      const code = parseCodeSpanAt(line, i);
+      if (!code) continue;
+      if (pos >= code.contentStart && pos <= code.contentEnd) ids.push("inline.code");
+      hide(code.from, code.to);
+      i = code.to - 1;
+    }
+    const references = this._referenceDefinitions();
+    const brackets = matchingBrackets(line);
+    for (let i = 0; i < line.length; i += 1) {
+      if (masked[i] === " " && line[i] !== " ") continue;
+      const link = parseInlineLinkAt(line, i, brackets) || parseReferenceLinkAt(line, references, i, brackets);
+      if (!link) continue;
+      if (link.bang) hide(link.from, link.to);
+      else {
+        if (pos >= link.labelStart && pos <= link.labelEnd) ids.push("inline.link");
+        hide(link.from, link.labelStart);
+        hide(link.labelEnd, link.to);
+      }
+      i = link.to - 1;
+    }
+    const visible = masked.join("");
+    for (const pair of emphasisPairs(visible)) {
+      if (pos < pair.openEnd || pos > pair.closeStart) continue;
+      ids.push(pair.tag === "strong" ? "inline.bold" : "inline.italic");
+    }
+    if (usesGfm(ctx.config)) {
+      for (const match of visible.matchAll(/~~([^~\n]+)~~/g)) {
+        if (isBackslashEscaped(visible, match.index)) continue;
+        if (pos >= match.index + 2 && pos <= match.index + match[0].length - 2) ids.push("inline.strikethrough");
+      }
+    }
     return ids;
   }
   _findText(query, options = {}) {
     const q = String(query ?? ""); if (!q) return null;
-    const hay = options.caseSensitive ? this._value : this._value.toLowerCase();
-    const needle = options.caseSensitive ? q : q.toLowerCase();
     const from = clamp(Number(options.from ?? this.selectionEnd ?? 0), 0, this._value.length);
-    let index = hay.indexOf(needle, from);
-    if (index === -1 && options.wrap !== false) index = hay.indexOf(needle, 0);
-    if (index === -1) return null;
-    this.setSelectionRange(index, index + q.length, "forward");
+    const pattern = literalSearchPattern(q, options.caseSensitive, true);
+    pattern.lastIndex = from;
+    let match = pattern.exec(this._value);
+    if (!match && options.wrap !== false) { pattern.lastIndex = 0; match = pattern.exec(this._value); }
+    if (!match) return null;
+    const index = match.index;
+    const end = index + match[0].length;
+    this.setSelectionRange(index, end, "forward");
     this._announce("Match found.");
-    return { start: index, end: index + q.length, text: this._value.slice(index, index + q.length) };
+    return { start: index, end, text: match[0] };
   }
   _replaceText(query, replacement, options = {}) {
     const q = String(query ?? ""); if (!q) return 0;
     const repl = normalizeLineEndings(replacement ?? "");
-    const source = options.caseSensitive ? this._value : this._value.toLowerCase();
-    const needle = options.caseSensitive ? q : q.toLowerCase();
     const changes = [];
     if (options.all) {
-      let i = 0;
-      while ((i = source.indexOf(needle, i)) !== -1) { changes.push({ from: i, to: i + q.length, insert: repl }); i += q.length || 1; }
+      const pattern = literalSearchPattern(q, options.caseSensitive, true);
+      for (const match of this._value.matchAll(pattern)) changes.push({ from: match.index, to: match.index + match[0].length, insert: repl });
     } else {
       const sel = this._getCurrentSelection();
       const selected = this._value.slice(Math.min(sel.start, sel.end), Math.max(sel.start, sel.end));
-      const matchSelected = (options.caseSensitive ? selected : selected.toLowerCase()) === needle;
+      const matchSelected = new RegExp(`^(?:${literalSearchPattern(q, options.caseSensitive).source})$`, options.caseSensitive ? "u" : "iu").test(selected);
       const found = matchSelected ? { start: Math.min(sel.start, sel.end), end: Math.max(sel.start, sel.end) } : this._findText(q, options);
       if (found) changes.push({ from: found.start, to: found.end, insert: repl });
     }
@@ -2409,6 +2546,41 @@ class WritemarkEditorElement extends HTMLElement {
     const viewportRows = Math.ceil((this._liveEditor.clientHeight || 600) / lineHeight);
     return clamp(viewportRows + 180, 220, 520);
   }
+  _estimatedBlockHeight(block, lineHeight, width) {
+    const margin = Math.max(2, lineHeight * 0.12);
+    if (block.type === "code-fence") {
+      return 30 + 22 + Math.max(1, block.codeLines.length) * lineHeight + lineHeight * 0.75;
+    }
+    if (block.type === "table") {
+      return (2 + block.rows.length) * (lineHeight + 14) + lineHeight * 0.7;
+    }
+    if (block.type === "horizontal-rule") return lineHeight * 2.2;
+    const charsPerLine = Math.max(12, Math.floor((width - 32) / Math.max(1, lineHeight * 0.48)));
+    const wrappedLines = Math.max(1, Math.ceil((block.line?.text?.length ?? 0) / charsPerLine));
+    const headingScale = block.type === "heading" ? Math.max(1, 2.2 - (block.heading?.level ?? 6) * 0.2) : 1;
+    return wrappedLines * lineHeight * headingScale + 2 + margin;
+  }
+  _virtualMetrics(blocks, lineHeight) {
+    const width = this._liveEditor.clientWidth || 600;
+    const cached = this._virtualMetricsCache;
+    if (cached?.blocks === blocks && cached.lineHeight === lineHeight && cached.width === width) return cached;
+    const offsets = [0];
+    for (const block of blocks) offsets.push(offsets.at(-1) + this._estimatedBlockHeight(block, lineHeight, width));
+    const metrics = { blocks, lineHeight, width, offsets };
+    this._virtualMetricsCache = metrics;
+    return metrics;
+  }
+  _virtualBlockIndexAtPixel(offsets, pixel) {
+    let low = 0;
+    let high = offsets.length - 2;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      if (offsets[mid + 1] <= pixel) low = mid + 1;
+      else if (offsets[mid] > pixel) high = mid - 1;
+      else return mid;
+    }
+    return clamp(low, 0, Math.max(0, offsets.length - 2));
+  }
   _blockIndexForOffset(blocks, offset) {
     const safe = clamp(offset, 0, this._value.length);
     let low = 0;
@@ -2429,15 +2601,18 @@ class WritemarkEditorElement extends HTMLElement {
   _renderLiveVirtual(blocks, { anchorOffset = this._selection.start, force = false, fromScroll = false } = {}) {
     const total = blocks.length;
     const lineHeight = this._virtualLineHeight();
-    const windowSize = this._virtualWindowSize(lineHeight);
-    const scrollIndex = Math.floor((this._liveEditor.scrollTop || 0) / lineHeight);
-    const anchorIndex = fromScroll ? scrollIndex : this._blockIndexForOffset(blocks, anchorOffset);
-    let start = clamp(anchorIndex - Math.floor(windowSize / 2), 0, Math.max(0, total - windowSize));
-    let end = clamp(start + windowSize, start, total);
-    if (end - start < windowSize && start > 0) start = Math.max(0, end - windowSize);
+    const { offsets } = this._virtualMetrics(blocks, lineHeight);
+    const viewport = this._liveEditor.clientHeight || 600;
+    const overscan = Math.max(viewport * 2, lineHeight * 40);
+    const anchorIndex = fromScroll
+      ? this._virtualBlockIndexAtPixel(offsets, this._liveEditor.scrollTop || 0)
+      : this._blockIndexForOffset(blocks, anchorOffset);
+    const anchorPixel = fromScroll ? (this._liveEditor.scrollTop || 0) : offsets[anchorIndex];
+    const start = this._virtualBlockIndexAtPixel(offsets, Math.max(0, anchorPixel - overscan));
+    const end = Math.min(total, this._virtualBlockIndexAtPixel(offsets, anchorPixel + viewport + overscan) + 1);
     if (!force && this._virtualState.active && start === this._virtualState.start && end === this._virtualState.end && total === this._virtualState.total) return;
-    const topHeight = Math.round(start * lineHeight);
-    const bottomHeight = Math.round((total - end) * lineHeight);
+    const topHeight = Math.round(offsets[start]);
+    const bottomHeight = Math.round(offsets[total] - offsets[end]);
     const top = `<div class="md-virtual-spacer" contenteditable="false" aria-hidden="true" style="block-size:${topHeight}px"></div>`;
     const bottom = `<div class="md-virtual-spacer" contenteditable="false" aria-hidden="true" style="block-size:${bottomHeight}px"></div>`;
     this._liveEditor.innerHTML = `${top}${blocks.slice(start, end).map(block => this._renderLiveBlock(block)).join("")}${bottom}`;
@@ -2467,9 +2642,14 @@ class WritemarkEditorElement extends HTMLElement {
       this._virtualScrollFrame = 0;
       if (!this._virtualState.active || !this._liveEditor) return;
       const blocks = this._liveBlocks?.length ? this._liveBlocks : this._getBlocks();
-      const nextStart = Math.floor((this._liveEditor.scrollTop || 0) / Math.max(1, this._virtualState.lineHeight));
-      if (Math.abs(nextStart - this._virtualState.start) < 60) return;
-      this._renderLiveVirtual(blocks, { fromScroll: true, force: true });
+      const { offsets } = this._virtualMetrics(blocks, this._virtualLineHeight());
+      const visibleStart = this._virtualBlockIndexAtPixel(offsets, this._liveEditor.scrollTop || 0);
+      const visibleEnd = this._virtualBlockIndexAtPixel(offsets, (this._liveEditor.scrollTop || 0) + this._liveEditor.clientHeight);
+      const padding = Math.min(4, Math.floor((this._virtualState.end - this._virtualState.start) / 4));
+      const aboveSafe = this._virtualState.start === 0 || visibleStart >= this._virtualState.start + padding;
+      const belowSafe = this._virtualState.end === this._virtualState.total || visibleEnd < this._virtualState.end - padding;
+      if (aboveSafe && belowSafe) return;
+      this._renderLiveVirtual(blocks, { fromScroll: true });
       this._rebuildLiveIndex();
     });
   }
@@ -5184,7 +5364,7 @@ class WritemarkEditorElement extends HTMLElement {
     r({ id: "code.setLanguage", label: "Set code language", group: "Code", run: (ctx, args = {}) => { const block = this._findBlockAtOffset(ctx.selectionStart, "code-fence"); return block ? this._setCodeLanguageResult(ctx, block, String(args.language ?? "")) : fail("not-applicable"); } });
     r({ id: "inline.bold", label: "Bold", description: "Strong emphasis", group: "Inline", aliases: ["bold", "strong"], defaultShortcut: "Mod+B", visibleInSlash: true, run: ctx => this._wrapInline(ctx, "**", "**", "Bold") });
     r({ id: "inline.italic", label: "Italic", description: "Emphasis", group: "Inline", aliases: ["italic", "em"], defaultShortcut: "Mod+I", visibleInSlash: true, run: ctx => this._wrapInline(ctx, "*", "*", "Italic") });
-    r({ id: "inline.code", label: "Inline code", description: "Inline code span", group: "Inline", aliases: ["inline-code", "codespan"], defaultShortcut: "Mod+E", visibleInSlash: true, run: ctx => this._wrapInline(ctx, "`", "`", "Inline code") });
+    r({ id: "inline.code", label: "Inline code", description: "Inline code span", group: "Inline", aliases: ["inline-code", "codespan"], defaultShortcut: "Mod+E", visibleInSlash: true, run: ctx => this._wrapCode(ctx) });
     r({ id: "inline.strikethrough", label: "Strikethrough", description: "Strikethrough text", group: "Inline", aliases: ["strike", "s"], defaultShortcut: "Mod+Shift+X", visibleInSlash: true, run: ctx => this._wrapInline(ctx, "~~", "~~", "Strikethrough") });
     r({ id: "inline.link", label: "Link", description: "Insert or wrap a link", group: "Inline", aliases: ["link", "url"], defaultShortcut: "Mod+K", visibleInSlash: true, run: (ctx, args = {}) => this._insertLink(ctx, args) });
     r({ id: "inline.image", label: "Image", description: "Insert an image", group: "Inline", aliases: ["image", "img", "picture"], visibleInSlash: true, run: (ctx, args = {}) => this._insertImage(ctx, args) });
@@ -5320,19 +5500,52 @@ class WritemarkEditorElement extends HTMLElement {
   _setCodeLanguageResult(ctx, block, language) {
     const opening = block?.opening;
     if (!opening) return fail("not-applicable");
-    const clean = String(language ?? "").replace(/[`~\\\r\n]/g, "").trim().replace(/\s+/g, "-");
-    const match = /^(\s*(?:`{3,}|~{3,}))\s*([^`~]*)$/.exec(opening.text);
-    const prefix = match?.[1] ?? "```";
-    const insert = `${prefix}${clean}`;
+    const clean = codeLanguage(language);
+    if (clean == null) return fail("invalid-language");
+    const fence = getFenceInfo(opening.text);
+    if (!fence) return fail("not-applicable");
+    const indent = /^\s{0,3}/.exec(opening.text)?.[0] ?? "";
+    const insert = `${indent}${fence.sequence}${clean}`;
     const cursor = opening.start + insert.length;
     return ok(tx(ctx, "code.setLanguage", [{ from: opening.start, to: opening.end, insert }], { start: cursor, end: cursor, direction: "none" }, "code"), clean ? `Language ${clean}.` : "Language cleared.");
   }
-  _toggleCodeFence(ctx, args = {}) { const language = String(args.language ?? "").trim(); const langPart = language ? language : ""; if (ctx.selectionStart !== ctx.selectionEnd) { const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd); const insert = `\`\`\`${langPart}\n${selected}\n\`\`\``; const cursor = ctx.selectionStart + 4 + langPart.length + selected.length; return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block."); } const insert = `\`\`\`${langPart}\n\n\`\`\``; const cursor = ctx.selectionStart + 4 + langPart.length; return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block."); }
+  _toggleCodeFence(ctx, args = {}) {
+    const language = codeLanguage(args.language);
+    if (language == null) return fail("invalid-language");
+    const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd);
+    let longestRun = 2;
+    for (const match of selected.matchAll(/`+/g)) longestRun = Math.max(longestRun, match[0].length);
+    const marker = "`".repeat(longestRun + 1);
+    const insert = `${marker}${language}\n${selected}\n${marker}`;
+    const cursor = ctx.selectionStart + marker.length + language.length + 1 + selected.length;
+    return ok(tx(ctx, "block.codeFence", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "block"), "Code block.");
+  }
   _insertHorizontalRule(ctx) { const lead = ctx.selectionStart > 0 && ctx.value[ctx.selectionStart - 1] !== "\n" ? "\n" : ""; const trail = ctx.selectionStart < ctx.value.length && ctx.value[ctx.selectionStart] !== "\n" ? "\n" : "\n"; const insert = `${lead}---${trail}`; return insertionTransaction(ctx, "block.horizontalRule", insert, insert.length, "block"); }
   _insertTable(ctx, args = {}) { const rows = clamp(Number(args.rows) || 2, 1, 20); const cols = clamp(Number(args.cols) || 3, 2, 12); const header = `| ${Array.from({ length: cols }, (_, i) => `Column ${i + 1}`).join(" | ")} |`; const delimiter = `| ${Array.from({ length: cols }, () => "---").join(" | ")} |`; const body = Array.from({ length: rows }, (_, r) => `| ${Array.from({ length: cols }, (_, c) => `Cell ${r * cols + c + 1}`).join(" | ")} |`); const insert = [header, delimiter, ...body].join("\n"); const cursor = ctx.selectionStart + header.indexOf("Column 1"); return ok(tx(ctx, "block.table", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor + "Column 1".length, direction: "none" }, "block"), "Table inserted."); }
   _wrapInline(ctx, prefix, suffix, label) { const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd); if (selected) { const insert = `${prefix}${selected}${suffix}`; const cursor = ctx.selectionStart + insert.length; return ok(tx(ctx, `inline.${label.toLowerCase().replace(/\s+/g, "")}`, [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), `${label}.`); } const insert = `${prefix}${suffix}`; const cursor = ctx.selectionStart + prefix.length; return ok(tx(ctx, `inline.${label.toLowerCase().replace(/\s+/g, "")}`, [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), `${label}.`); }
-  _insertLink(ctx, args = {}) { const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd); const url = args.url ?? ""; if (selected) { const insert = `[${selected}](${url})`; const cursor = url ? ctx.selectionStart + insert.length : ctx.selectionStart + selected.length + 3; return ok(tx(ctx, "inline.link", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), "Link."); } const insert = url ? `[](${url})` : `[]()`; return ok(tx(ctx, "inline.link", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: ctx.selectionStart + 1, end: ctx.selectionStart + 1, direction: "none" }, "inline"), "Link."); }
-  _insertImage(ctx, args = {}) { const alt = args.alt ?? ""; const src = args.src ?? ""; const insert = `![${alt}](${src})`; const cursor = alt ? ctx.selectionStart + insert.length : ctx.selectionStart + 2; return ok(tx(ctx, "inline.image", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), "Image."); }
+  _wrapCode(ctx) {
+    const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd);
+    const insert = codeSpanMarkdown(selected);
+    const cursor = selected ? ctx.selectionStart + insert.length : ctx.selectionStart + 1;
+    return ok(tx(ctx, "inline.code", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), "Inline code.");
+  }
+  _insertLink(ctx, args = {}) {
+    const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd);
+    const url = markdownLinkDestination(args.url ?? "");
+    if (url == null) return fail("invalid-url");
+    const label = escapeMarkdownLabel(selected);
+    const insert = `[${label}](${url})`;
+    const cursor = selected ? (url ? ctx.selectionStart + insert.length : ctx.selectionStart + label.length + 3) : ctx.selectionStart + 1;
+    return ok(tx(ctx, "inline.link", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), "Link.");
+  }
+  _insertImage(ctx, args = {}) {
+    const alt = escapeMarkdownLabel(args.alt ?? "");
+    const src = markdownLinkDestination(args.src ?? "");
+    if (src == null) return fail("invalid-url");
+    const insert = `![${alt}](${src})`;
+    const cursor = alt ? ctx.selectionStart + insert.length : ctx.selectionStart + 2;
+    return ok(tx(ctx, "inline.image", [{ from: ctx.selectionStart, to: ctx.selectionEnd, insert }], { start: cursor, end: cursor, direction: "none" }, "inline"), "Image.");
+  }
 
   _matchTag(ctx) {
     if (!this.tagsEnabled) return null;

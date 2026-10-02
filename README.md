@@ -545,8 +545,8 @@ See [RELEASING.md](RELEASING.md) for the one-time first npm publish and the auto
 
 ## Current engineering caveats
 
-The [known issues](docs/known-issues.md) list the 15 open defects confirmed in
-the September 11 review.
+The [fixed issues](docs/known-issues.md) document the 15 defects from the
+September 11 review. Version 1.7.1 addresses them.
 
 This version implements source-backed live inline editing without third-party
 runtime dependencies. Development tooling includes Playwright coverage in
