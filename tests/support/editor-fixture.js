@@ -142,7 +142,7 @@ export const test = base.extend({
       if (message.type() === "error") consoleErrors.push(message.text());
     });
 
-    await page.goto("/tests/fixtures/editor.html");
+    await page.goto(`/tests/fixtures/editor.html?build=${encodeURIComponent(process.env.WRITEMARK_TEST_BUILD || "minified")}`);
     await expect(page.locator("body")).toHaveAttribute("data-ready", "true");
 
     const editor = new EditorDriver(page, tagsEnabled);

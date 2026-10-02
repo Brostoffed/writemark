@@ -2,6 +2,7 @@ name: Test
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -19,7 +20,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
@@ -48,7 +49,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
@@ -67,3 +68,21 @@ jobs:
           name: playwright-report-webkit-macos
           path: output/playwright/report
           retention-days: 14
+
+  distribution-loading:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build: [module, readable]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Check the module and readable browser files
+        run: npx playwright test tests/component.spec.js tests/rendering.spec.js --project=chromium
+        env:
+          WRITEMARK_TEST_BUILD: ${{ matrix.build }}

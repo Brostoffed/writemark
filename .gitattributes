@@ -1,0 +1,4 @@
+* text=auto eol=lf
+dist/** linguist-generated=true
+# Keep literal Markdown spaces in generated template strings.
+dist/*.min.js whitespace=-blank-at-eol

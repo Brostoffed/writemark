@@ -1,0 +1,87 @@
+{
+  "version": "1.8.0",
+  "target": "es2022",
+  "tools": {
+    "node": "24.18.0",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  },
+  "inputs": {
+    "src/actions/blocks.js": "cb22bb5238d164b8e80009ec41ccd7659879c9fffd608d00a2ed083eca5d9667",
+    "src/actions/editing.js": "90790c9cdbdd0a46ce45d3e638209791e3b3428d3e3a20ccc157e141655256c5",
+    "src/actions/inline.js": "1a89d67ed3ac9c3cde7213e3c0dd02eba82e69bcb0ba64ff5885676af1d12403",
+    "src/actions/registry.js": "6c531a1781b78d59e8eaaf3b76bcec39b2de9f69e9eb72726178d325ef200944",
+    "src/actions/tables.js": "fc388021098588363ecd82a6daef815db53c3da19b2307894033ca1141603098",
+    "src/browser/clipboard.js": "190b674c25b9c694da95f2bb38032f8f78bd11910a7cdde850db421aa1ce0788",
+    "src/browser/completions.js": "547afb61b22c73a6c98fa81c32777e373910e04ca5cc7434e7b01546539386b7",
+    "src/browser/input.js": "b40d93134482ef27617745043a0024ed6ca852962c11734903a7bbfdbc555581",
+    "src/browser/runtime.js": "805fb58274a0eb1eee3f47a1da9c8ca4459fa2492b18ddfdc06567a6c4e57241",
+    "src/browser/selection.js": "1942a408eedf696b0eee2856f0af9085bfe960f964ee0bc531de3d9dcc1db584",
+    "src/browser/util.js": "9485c015e32885cb0353e6a34ff8d280448ad8219f43b4a72a7823d9dd99e3b3",
+    "src/component/element.js": "d3184b74a23740b1f626948806fb20973d8c520f51e2280d69536638bec07b62",
+    "src/component/register.js": "a0e96a5626abcc9ece8d6848be715844121c370fd010ba587148977446ac02d2",
+    "src/component/styles.css": "344f8e596aa9bcc8841a887603f5a1104257f5e7eb70447fec7e3629939e1f74",
+    "src/component/template.js": "559e1f294aae7791736b3ede6f3972fa18fbd3a225433884ad2df95be0d72877",
+    "src/config.js": "e2d780ce13c73a60a0a1d1c961547a9b8b3bf5042042e7150185fb1e6797ae8d",
+    "src/core/history.js": "54ebc2ceb410d041356e1480364f4a6743e5cfc3aece18400cc4e7f44bd738cc",
+    "src/core/state.js": "5391acce0ca23163f5bd1d65133f096842ce0763121759c952d782ea8b0eb81e",
+    "src/core/text.js": "826b678c501a8e42dcba8d5988585bd86cbcccf1807cdf5ffba90555b235312d",
+    "src/core/transactions.js": "60380c4f456b4432f245af7b5c8d933af4eaf4f617dfcd55da54bc17a48e16e0",
+    "src/markdown/block-syntax.js": "c0c0c473ab371abc72e5713e17442c9a6b856fb2251d6a96ed58a05e78c518ed",
+    "src/markdown/blocks.js": "cf47c444dfc61fe04668edc473b9a9fa6044888e63dc3014d112558319e30151",
+    "src/markdown/inline.js": "fc013d5d69774c19223910949f593af991c34c764e2ec70b4ec5f95715679803",
+    "src/markdown/references.js": "e2fa44f137bdcfb6798bf4cfe402c17c123c69d5906596eb097dc09a23ec4e7c",
+    "src/markdown/tables.js": "4a0432fa8dd5a54e675ee58b78016ea26dfd1f34e3040939a2de21076140e8a6",
+    "src/markdown/tags.js": "c8e4ee8a57a5eb2275b477334f8329c2621d261d941b4660e506869c4704c21e",
+    "src/render/html.js": "2330a0d433647841b600ab47ad498cdb1349320d95fc9126f5a704cdb85213fa",
+    "src/render/inline.js": "ed3fd23a9d7ed4ce50cb5f503b6571dfa16588a0e9e8f4713082ddfa45785549",
+    "src/render/live.js": "57d972ed996216e621777d9bf6172567e8cd6d8f114b1a7473574f0744ecd2f6",
+    "src/security.js": "10c460dafcd1368f84bdf668e62e10737d225f277e172df8039344e8308c62d5",
+    "src/types.js": "abb13f8a4280fc8bd28fe20d193bc6695a264a5a0581af9f203c958b28cf6baa",
+    "src/writemark-editor.js": "90572c26cff6e288d90bb9094a204a6d9d8d15ad204f39c5526b8eb54ce6aa10",
+    "scripts/build.mjs": "1eb883a05990e8ae65ea9c8d5ba703d1a511e34e212c08a415f2621a6f34e4f9",
+    "tsconfig.declarations.json": "b10de2a53b980d72cfe907f0977162fcbb8b2c39e8ac437b46e50b8cb27d55fe",
+    "package.json": "19ccb90be6c2e79057bc95c7ffc0ad152d633a3b06e355c338e0e05cdfff8d28",
+    "package-lock.json": "2ae3f7e9f685e9fe26a3aa8c382d70db2f204f124bfa2b94611bfa6f7ec0f86f",
+    "LICENSE": "1126322e2cc8d165adc4c792eeb195717de2bcc7b39be1ce77959d78e87ef685",
+    ".node-version": "55075b5ec4e8b31936cbbc282b8829116d1fd48f2f2f1856dee592a6650700ce"
+  },
+  "outputs": {
+    "writemark-editor.js": {
+      "bytes": 377518,
+      "sha256": "546f1432c245d9e3ed8e3a16ef9f642402bc18f814d75943b8787f6381ef0f0f"
+    },
+    "writemark-editor.global.js": {
+      "bytes": 394356,
+      "sha256": "fc499dc86cafc9c8e27aa2d1ca25aadce41c76d86f2e8bc381ea057b4449fa7f"
+    },
+    "writemark-editor.global.min.js": {
+      "bytes": 235018,
+      "sha256": "8eb13c4746ecffcefcca656a344caf4c555173c2f13203a030208ed832c67315"
+    },
+    "md-live-editor.js": {
+      "bytes": 39,
+      "sha256": "da55d7d24d7447fc4f68a213330a813b5971929aac886ef7c8c63bcbb5698d96"
+    },
+    "writemark-editor.d.ts": {
+      "bytes": 3613,
+      "sha256": "e3b610d0b1451bfda6be1dabb7a7d603e4ab88031ed98c7b3df0071b28d53990"
+    },
+    "types.d.ts": {
+      "bytes": 16086,
+      "sha256": "4d246c7a96ab4633f1e08231fbd1c83122a1ee4f075a452575475936f6d44e67"
+    },
+    "md-live-editor.d.ts": {
+      "bytes": 39,
+      "sha256": "da55d7d24d7447fc4f68a213330a813b5971929aac886ef7c8c63bcbb5698d96"
+    },
+    "writemark-editor.global.d.ts": {
+      "bytes": 188,
+      "sha256": "843c695b788e61995db2330751e5b9adef34a61b8a80fb6068b4ee6083b17d63"
+    },
+    "writemark-editor.global.min.d.ts": {
+      "bytes": 188,
+      "sha256": "843c695b788e61995db2330751e5b9adef34a61b8a80fb6068b4ee6083b17d63"
+    }
+  }
+}

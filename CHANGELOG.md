@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.8.0 - 2026-10-02
+
+- Added a standalone minified browser file with embedded styles.
+- Split source into parser, renderer, action, browser, and core modules.
+- Added generated TypeScript declarations for the public API and global script.
+- Added copied-file offline tests and package type checks.
+- Added automatic distribution generation before a pull request merges.
+- Kept byte checks for generated files and preserved the existing entry paths.
+
 ## 1.7.1 - 2026-10-02
 
 - Moved the demo tag switch beside a new Shift+Enter behavior control.

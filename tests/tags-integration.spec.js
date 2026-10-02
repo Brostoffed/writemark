@@ -39,7 +39,9 @@ test.describe("tag component integration", () => {
     });
   }
 
-  test("supports tags through both custom element names and both module builds", async ({ editor }) => {
+  test("supports tags through both custom element names and both module builds", async ({ editor, page }) => {
+    await page.goto("/tests/fixtures/editor.html?build=module");
+    await expect(page.locator("body")).toHaveAttribute("data-ready", "true");
     const result = await editor.host.evaluate(async host => {
       const main = await import("/dist/writemark-editor.js");
       const legacy = await import("/dist/md-live-editor.js");

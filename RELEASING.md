@@ -87,7 +87,10 @@ GitHub repository secret is required. npm generates provenance automatically.
    still identifies another version. This repository treats changes merged to
    `main` as release-ready, so finalize these files in the same change.
 
-3. Commit and push the release changes to `main`.
+3. Open a pull request for the release changes.
+   Let the distribution workflows generate `dist/` before the merge.
+   Wait for all required checks on the final commit.
+   Merge the pull request.
 4. In GitHub, create a new Release whose tag is exactly `v` plus the package
    version, such as `v1.3.2`, and publish it from `main`.
 
@@ -107,7 +110,7 @@ a failure locally.
 
 The public demo is hosted by GitHub Pages at
 `https://brostoffed.github.io/writemark/demo/`. It uses the committed
-`demo/index.html` and `dist/writemark-editor.global.js` files, so it does not
+`demo/index.html` and `dist/writemark-editor.global.min.js` files, so it does not
 need a separate application server or production build.
 
 Configure the repository once:

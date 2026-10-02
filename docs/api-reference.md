@@ -1,6 +1,6 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.7.1. The default `live` mode
+This page is the lookup reference for Writemark 1.8.0. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
@@ -17,10 +17,14 @@ environments should explicitly set `mode="source"`.
 | `writemark-editor` | Main ES module; registers both custom elements and exports helpers. |
 | `writemark-editor/writemark-editor.js` | Explicit main ES module path. |
 | `writemark-editor/writemark-editor.global.js` | Classic browser script. Exposes `globalThis.WritemarkEditor`. |
+| `writemark-editor/writemark-editor.global.min.js` | Minified standalone browser script with embedded styles. |
 | `writemark-editor/md-live-editor.js` | Legacy compatibility module. |
 
 The preferred element is `<writemark-editor>`. `<md-live-editor>` is a legacy
 alias backed by `MdLiveEditorElement`.
+
+The package includes generated TypeScript declarations for every public entry.
+See [Distribution](distribution.md#typescript) for typed module and global examples.
 
 ## Attributes
 

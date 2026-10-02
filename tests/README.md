@@ -91,6 +91,15 @@ npx playwright show-report output/playwright/report
 
 ## Suite structure
 
+- `distribution.spec.js` verifies copied-file offline use, entry parity, repeated loads, and public declaration property names.
+- `build.test.mjs` verifies repeatable output and rejects stale files, stale source, declarations, and stylesheet resources.
+- `unit/` tests pure modules and the generated-commit job without a browser or GitHub writes.
+- `types/` contains package consumer examples for valid and invalid TypeScript use.
+
+The normal fixture loads `writemark-editor.global.min.js`.
+Set `WRITEMARK_TEST_BUILD=module` or `WRITEMARK_TEST_BUILD=readable` to test another output.
+The CI loading checks test both outputs.
+
 - `actions.spec.js` verifies the reusable action fixtures as isolated,
   data-driven Playwright tests.
 - `clipboard.spec.js` verifies Markdown-aware paste and copy behavior.

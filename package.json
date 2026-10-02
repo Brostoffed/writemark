@@ -1,15 +1,32 @@
 {
   "name": "writemark-editor",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "Writemark is a dependency-free live inline Markdown editor web component with slash commands, smart editing, form integration, source fallback, and no built-in toolbar.",
   "type": "module",
   "main": "./dist/writemark-editor.js",
   "module": "./dist/writemark-editor.js",
   "exports": {
-    ".": "./dist/writemark-editor.js",
-    "./writemark-editor.js": "./dist/writemark-editor.js",
-    "./writemark-editor.global.js": "./dist/writemark-editor.global.js",
-    "./md-live-editor.js": "./dist/md-live-editor.js"
+    ".": {
+      "types": "./dist/writemark-editor.d.ts",
+      "default": "./dist/writemark-editor.js"
+    },
+    "./writemark-editor.js": {
+      "types": "./dist/writemark-editor.d.ts",
+      "default": "./dist/writemark-editor.js"
+    },
+    "./writemark-editor.global.js": {
+      "types": "./dist/writemark-editor.global.d.ts",
+      "default": "./dist/writemark-editor.global.js"
+    },
+    "./md-live-editor.js": {
+      "types": "./dist/md-live-editor.d.ts",
+      "default": "./dist/md-live-editor.js"
+    },
+    "./writemark-editor.global.min.js": {
+      "types": "./dist/writemark-editor.global.min.d.ts",
+      "default": "./dist/writemark-editor.global.min.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
@@ -56,12 +73,19 @@
     "test:fuzz": "npm run check && playwright test tests/security.spec.js --project=chromium",
     "check:version": "node scripts/check-version.mjs",
     "perf": "node scripts/dev-server.mjs --open=perf/index.html",
-    "prepack": "npm run build && npm run check",
-    "check": "node scripts/build.mjs --check && node --check src/writemark-editor.js && node --check dist/writemark-editor.js && node --check dist/writemark-editor.global.js && node --check scripts/dev-server.mjs && node --check scripts/build.mjs && node --check scripts/capture-demo-gif.mjs && node --check scripts/check-docs.mjs && node --check scripts/check-version.mjs && npm run check:version && npm run test:version && npm run test:server && node scripts/check-docs.mjs"
+    "prepack": "npm run check",
+    "check": "node scripts/build.mjs --check && node scripts/check-source.mjs && npm run check:version && npm run test:version && npm run test:server && npm run test:unit && npm run test:build && npm run test:types && node scripts/check-docs.mjs",
+    "check:build": "node scripts/build.mjs --check",
+    "test:unit": "node --test tests/unit/*.test.mjs",
+    "test:build": "node --test tests/build.test.mjs",
+    "test:types": "node scripts/check-types.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
     "commonmark": "0.31.2",
-    "fast-check": "4.9.0"
-  }
+    "esbuild": "0.28.2",
+    "fast-check": "4.9.0",
+    "typescript": "6.0.3"
+  },
+  "types": "./dist/writemark-editor.d.ts"
 }
