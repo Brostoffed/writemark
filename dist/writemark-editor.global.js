@@ -4,7 +4,7 @@
  */
 (() => {
 /*
- * <writemark-editor> v1.6.1 live inline Markdown editor.
+ * <writemark-editor> v1.7.0 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
@@ -17,6 +17,7 @@ const DEFAULTS = Object.freeze({
   preview: "none",
   markdownFlavor: "gfm",
   tagsEnabled: false,
+  shiftEnterBehavior: "soft-break",
   tabBehavior: "accessibility-first",
   indentString: "  ",
   placeholder: "Write markdown...",
@@ -38,6 +39,7 @@ const REFLECTED_ATTRIBUTES = [
   "preview",
   "markdown-flavor",
   "tags-enabled",
+  "shift-enter-behavior",
   "tab-behavior",
   "indent-string",
   "debug",
@@ -669,21 +671,21 @@ function usesGfm(opts = {}) { return opts.gfm ?? opts.markdownFlavor !== "common
 
 function parseListItem(line, opts = {}) {
   if (usesGfm(opts)) {
-    const task = /^(\s*)([-+*])\s+\[( |x|X)\]\s+(.*)$/.exec(line);
+    const task = /^(\s*)([-+*])(\s+)\[( |x|X)\](\s+)(.*)$/.exec(line);
     if (task) {
-      const markerText = `${task[2]} [${task[3]}] `;
-      return { kind: "task-list-item", listType: "ul", indent: task[1], marker: task[2], markerText, checked: task[3].toLowerCase() === "x", content: task[4], contentStart: task[1].length + markerText.length, fullMarkerStart: task[1].length, fullMarkerEnd: task[1].length + markerText.length };
+      const markerText = `${task[2]}${task[3]}[${task[4]}]${task[5]}`;
+      return { kind: "task-list-item", listType: "ul", indent: task[1], marker: task[2], markerText, checked: task[4].toLowerCase() === "x", content: task[6], contentStart: task[1].length + markerText.length, fullMarkerStart: task[1].length, fullMarkerEnd: task[1].length + markerText.length };
     }
   }
-  const ordered = /^(\s*)(\d+)([.)])\s+(.*)$/.exec(line);
+  const ordered = /^(\s*)(\d+)([.)])(\s+)(.*)$/.exec(line);
   if (ordered) {
-    const markerText = `${ordered[2]}${ordered[3]} `;
-    return { kind: "ordered-list-item", listType: "ol", indent: ordered[1], marker: ordered[2], number: Number(ordered[2]), delimiter: ordered[3], markerText, content: ordered[4], contentStart: ordered[1].length + markerText.length, fullMarkerStart: ordered[1].length, fullMarkerEnd: ordered[1].length + markerText.length };
+    const markerText = `${ordered[2]}${ordered[3]}${ordered[4]}`;
+    return { kind: "ordered-list-item", listType: "ol", indent: ordered[1], marker: ordered[2], number: Number(ordered[2]), delimiter: ordered[3], markerText, content: ordered[5], contentStart: ordered[1].length + markerText.length, fullMarkerStart: ordered[1].length, fullMarkerEnd: ordered[1].length + markerText.length };
   }
-  const bullet = /^(\s*)([-+*])\s+(.*)$/.exec(line);
+  const bullet = /^(\s*)([-+*])(\s+)(.*)$/.exec(line);
   if (bullet) {
-    const markerText = `${bullet[2]} `;
-    return { kind: "bullet-list-item", listType: "ul", indent: bullet[1], marker: bullet[2], markerText, content: bullet[3], contentStart: bullet[1].length + markerText.length, fullMarkerStart: bullet[1].length, fullMarkerEnd: bullet[1].length + markerText.length };
+    const markerText = `${bullet[2]}${bullet[3]}`;
+    return { kind: "bullet-list-item", listType: "ul", indent: bullet[1], marker: bullet[2], markerText, content: bullet[4], contentStart: bullet[1].length + markerText.length, fullMarkerStart: bullet[1].length, fullMarkerEnd: bullet[1].length + markerText.length };
   }
   return null;
 }
@@ -1569,6 +1571,8 @@ class WritemarkEditorElement extends HTMLElement {
   set markdownFlavor(v) { v == null ? this.removeAttribute("markdown-flavor") : this.setAttribute("markdown-flavor", String(v)); }
   get tagsEnabled() { return this.hasAttribute("tags-enabled"); }
   set tagsEnabled(v) { this.toggleAttribute("tags-enabled", Boolean(v)); }
+  get shiftEnterBehavior() { const v = this.getAttribute("shift-enter-behavior") ?? DEFAULTS.shiftEnterBehavior; return ["soft-break", "smart-enter"].includes(v) ? v : DEFAULTS.shiftEnterBehavior; }
+  set shiftEnterBehavior(v) { v == null ? this.removeAttribute("shift-enter-behavior") : this.setAttribute("shift-enter-behavior", String(v)); }
   get tabBehavior() { const v = this.getAttribute("tab-behavior") ?? DEFAULTS.tabBehavior; return ["accessibility-first", "editor-first"].includes(v) ? v : DEFAULTS.tabBehavior; }
   set tabBehavior(v) { v == null ? this.removeAttribute("tab-behavior") : this.setAttribute("tab-behavior", String(v)); }
   get indentString() { return normalizeIndentAttribute(this.getAttribute("indent-string") ?? DEFAULTS.indentString); }
@@ -1656,7 +1660,7 @@ class WritemarkEditorElement extends HTMLElement {
   setCustomValidity(message) { this._customValidityMessage = String(message ?? ""); this._updateValidity(); }
 
   _upgradeProperties() {
-    for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tagsEnabled", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required", "tagProvider"]) {
+    for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tagsEnabled", "shiftEnterBehavior", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required", "tagProvider"]) {
       if (Object.prototype.hasOwnProperty.call(this, prop)) { const value = this[prop]; delete this[prop]; this[prop] = value; }
     }
   }
@@ -2705,6 +2709,7 @@ class WritemarkEditorElement extends HTMLElement {
       this._beforeInputTarget = null;
       const ctx = this._getContext();
       const actionId = inputType === "insertLineBreak"
+        && this.shiftEnterBehavior === "soft-break"
         && !this._isUnclosedFenceOpeningContext(ctx)
         ? "editor.insertSoftBreak"
         : "editor.smartEnter";
@@ -4450,7 +4455,7 @@ class WritemarkEditorElement extends HTMLElement {
       if (map[event.key]) { event.preventDefault(); this._runAction(map[event.key], undefined, { source: "keyboard", apply: true }); return; }
       if (event.key === "PageDown") { event.preventDefault(); this._moveCompletion(5); return; }
       if (event.key === "PageUp") { event.preventDefault(); this._moveCompletion(-5); return; }
-      if (event.key === "Enter" || (event.key === "Tab" && !event.shiftKey)) { event.preventDefault(); this._runAction("completion.accept", undefined, { source: "keyboard", apply: true }); return; }
+      if ((event.key === "Enter" && (!event.shiftKey || this.shiftEnterBehavior === "soft-break")) || (event.key === "Tab" && !event.shiftKey)) { event.preventDefault(); this._runAction("completion.accept", undefined, { source: "keyboard", apply: true }); return; }
     }
 
     if (opaqueDesktopSafari && (
@@ -4536,7 +4541,7 @@ class WritemarkEditorElement extends HTMLElement {
       if (!this._isSourceActive() && this._isIOSWebKitRuntime()) return;
       event.preventDefault();
       if (activeCell) {
-        if (event.shiftKey || mod || event.altKey) this._exitTable(activeCell, "after");
+        if ((event.shiftKey && this.shiftEnterBehavior === "soft-break") || mod || event.altKey) this._exitTable(activeCell, "after");
         else this._insertTableRowAfterCell(activeCell);
         return;
       }
@@ -4545,7 +4550,8 @@ class WritemarkEditorElement extends HTMLElement {
         this._runAction("editor.insertParagraph", undefined, { source: "keyboard", apply: true });
         return;
       }
-      this._runAction(event.shiftKey ? "editor.insertSoftBreak" : "editor.smartEnter", undefined, { source: "keyboard", apply: true });
+      const actionId = event.shiftKey && this.shiftEnterBehavior === "soft-break" ? "editor.insertSoftBreak" : "editor.smartEnter";
+      this._runAction(actionId, undefined, { source: "keyboard", apply: true });
       return;
     }
 
@@ -5119,7 +5125,7 @@ class WritemarkEditorElement extends HTMLElement {
     this._selection = sel;
     const parseOptions = this._parseOptions();
     const value = this._value; const line = getLineRange(value, sel.start); const currentLine = makeLineInfo(line.start, line.end, line.text, parseOptions); const selectedLines = getSelectedLineRanges(value, sel.start, sel.end, parseOptions); const block = classifyLine(value, sel.start, currentLine, parseOptions); const lineBeforeCursor = currentLine.text.slice(0, sel.start - currentLine.start);
-    return { value, selectionStart: sel.start, selectionEnd: sel.end, selectionDirection: sel.direction || "none", mode: this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composing-ime" : this._completion.open ? (this._completion.providerId === "slash" ? "slash-open" : "completion-open") : "idle", currentLine, selectedLines, block, inline: { insideInlineCode: isInsideInlineCode(lineBeforeCursor) }, completion: { ...this._completion }, config: { mode: this.mode, preview: this.preview, markdownFlavor: this.markdownFlavor, tagsEnabled: this.tagsEnabled, tabBehavior: this.tabBehavior, indentString: this.indentString, debug: this.debug, debugLog: this.debugLog, disabled: this.disabled, readonly: this.readonly }, host: this };
+    return { value, selectionStart: sel.start, selectionEnd: sel.end, selectionDirection: sel.direction || "none", mode: this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composing-ime" : this._completion.open ? (this._completion.providerId === "slash" ? "slash-open" : "completion-open") : "idle", currentLine, selectedLines, block, inline: { insideInlineCode: isInsideInlineCode(lineBeforeCursor) }, completion: { ...this._completion }, config: { mode: this.mode, preview: this.preview, markdownFlavor: this.markdownFlavor, tagsEnabled: this.tagsEnabled, shiftEnterBehavior: this.shiftEnterBehavior, tabBehavior: this.tabBehavior, indentString: this.indentString, debug: this.debug, debugLog: this.debugLog, disabled: this.disabled, readonly: this.readonly }, host: this };
   }
   _runAction(actionId, args, options = {}) {
     const action = this._actions.get(actionId); if (!action) return fail("not-applicable", `Unknown action: ${actionId}`);

@@ -1,6 +1,6 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.6.1. The default `live` mode
+This page is the lookup reference for Writemark 1.7.0. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
@@ -34,6 +34,7 @@ alias backed by `MdLiveEditorElement`.
 | `preview` | `none`, `below`, `side`, `inline-split` / `none` | Optional rendered preview placement. Invalid values fall back to `none`. |
 | `markdown-flavor` | `gfm`, `commonmark` / `gfm` | Subset feature profile. `commonmark` disables supported GFM-only structures; neither value claims full specification conformance. |
 | `tags-enabled` | Boolean / absent | Enable tag rendering, indexing, completion, and activation. Tags are off by default. |
+| `shift-enter-behavior` | `soft-break`, `smart-enter` / `soft-break` | Choose whether Shift+Enter inserts a Markdown hard break or uses the same structure-aware action as Enter. Invalid values use `soft-break`. |
 | `tab-behavior` | `accessibility-first`, `editor-first` / `accessibility-first` | Whether ordinary Tab moves focus or inserts indentation outside structural contexts. |
 | `indent-string` | `tab`, `2`, `2-spaces`, `4`, `4-spaces` / two spaces | Indentation used by list and editor actions. |
 | `debug` | Nonnegative integer / `0` | Diagnostic level. `0` emits nothing, `1` emits input decisions, and `2` also emits selection/focus details through `md-debug`. |
@@ -65,6 +66,7 @@ their text value.
 | `preview` | String enum | One of `none`, `below`, `side`, or `inline-split`; reflects `preview`. |
 | `markdownFlavor` | String enum | `gfm` or `commonmark`; reflects `markdown-flavor`. |
 | `tagsEnabled` | `boolean` | Reflects `tags-enabled`. Defaults to `false`. Assigning a tag provider does not enable tags. |
+| `shiftEnterBehavior` | String enum | `soft-break` or `smart-enter`; reflects `shift-enter-behavior`. Defaults to `soft-break`. |
 | `tabBehavior` | String enum | `accessibility-first` or `editor-first`; reflects `tab-behavior`. |
 | `indentString` | String | A tab, two spaces, or four spaces. Setting a tab reflects `indent-string="tab"`. |
 | `debug` | `number` | Nonnegative diagnostic level reflected to `debug`; defaults to `0`. |

@@ -15,6 +15,7 @@ const configurableAttributes = [
   "preview",
   "readonly",
   "required",
+  "shift-enter-behavior",
   "tab-behavior",
   "tags-enabled",
   "value"

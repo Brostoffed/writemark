@@ -203,10 +203,12 @@ form.addEventListener('submit', event => {
 | `Mod+B` / `Mod+I` | Toggle bold / italic around the selection. |
 | `Mod+E` / `Mod+K` | Insert inline code / a link. |
 | Enter in a list | Continue the list, or exit an empty item. |
+| Shift+Enter | Insert a Markdown hard break by default. Use `shift-enter-behavior="smart-enter"` for Enter behavior. |
 | Tab / Shift+Tab in a list | Indent / outdent the item. |
 | Enter after a code fence opener | Create the closing fence and enter the block. |
 | Tab and arrow keys in a table | Move between source-backed cells. |
-| Escape or Shift+Enter in a table | Move to a line after the table. |
+| Escape in a table | Move to a line after the table. |
+| Shift+Enter in a table | Exit by default, or add a row with `shift-enter-behavior="smart-enter"`. |
 | `Mod+A` repeatedly in live mode | Expand selection from the local structure to the document. |
 
 The complete movement and structure behavior is in

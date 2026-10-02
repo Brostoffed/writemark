@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 1.7.0 - 2026-10-01
+
+- Added the `shift-enter-behavior` attribute and `shiftEnterBehavior` property.
+  The default `soft-break` value keeps the existing Shift+Enter behavior.
+- Added the opt-in `smart-enter` value. Shift+Enter then uses Enter behavior
+  for lists, blockquotes, code fences, and tables. The setting works in live
+  and source modes.
+- Added Chromium and Firefox tests for both values and updated the keyboard
+  guides and API reference.
+- Fixed live caret offsets when list markers contain extra spaces.
+
 ## 1.6.1 - 2026-09-11
 
 - Added the boolean `tagsEnabled` property and `tags-enabled` attribute.
