@@ -1,7 +1,7 @@
-# Known issues in Writemark 1.6.1
+# Known issues in Writemark 1.7.0
 
 The September 11, 2026 review confirmed these 15 issues through source checks
-and Chromium 149 reproductions. Version 1.6.1 does not fix these issues.
+and Chromium 149 reproductions. Version 1.7.0 does not fix these issues.
 
 | # | Priority | Area | Confirmed behavior |
 | --- | --- | --- | --- |

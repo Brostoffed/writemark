@@ -4,7 +4,7 @@
  */
 (() => {
 /*
- * <writemark-editor> v1.6.1 live inline Markdown editor.
+ * <writemark-editor> v1.7.0 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 
