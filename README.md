@@ -59,6 +59,7 @@ readonly controls, and disabled controls. A live inspector shows selection,
 dirty state, validity, active marks, and counts.
 
 Tags are off by default. Use the demo's `Enable tags` switch to try them.
+The demo's `Shift+Enter` control switches between a line break and Smart Enter.
 In an integration, add `tags-enabled` or set `editor.tagsEnabled = true`.
 
 To run the same demo locally, open `demo/index.html` directly in a browser or

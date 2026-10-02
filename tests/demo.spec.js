@@ -1,6 +1,41 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("published demo", () => {
+  test("places tag and Shift+Enter controls above the editor", async ({ page }) => {
+    await page.goto("/demo/index.html");
+    const controls = page.locator(".controls");
+    const editor = page.locator("#editor");
+    const tags = controls.getByRole("checkbox", { name: "Enable tags" });
+    const behavior = controls.getByRole("combobox", { name: "Shift+Enter" });
+    const initial = await editor.evaluate(element => ({ value: element.value, dirty: element.dirty }));
+
+    await expect(tags).toBeVisible();
+    await expect(behavior).toHaveValue("soft-break");
+    await behavior.selectOption("smart-enter");
+    await expect(editor).toHaveJSProperty("shiftEnterBehavior", "smart-enter");
+    expect(await editor.evaluate(element => ({ value: element.value, dirty: element.dirty }))).toEqual(initial);
+
+    await editor.evaluate(element => {
+      element.value = "- first";
+      element.commit();
+      element.setSelectionRange(7, 7);
+      element.focus();
+    });
+    await page.keyboard.press("Shift+Enter");
+    await expect(editor).toHaveJSProperty("value", "- first\n- ");
+
+    await behavior.selectOption("soft-break");
+    await expect(editor).toHaveJSProperty("shiftEnterBehavior", "soft-break");
+    await editor.evaluate(element => {
+      element.value = "- first";
+      element.commit();
+      element.setSelectionRange(7, 7);
+      element.focus();
+    });
+    await page.keyboard.press("Shift+Enter");
+    await expect(editor).toHaveJSProperty("value", "- first  \n");
+  });
+
   test("starts with tags off and switches them without changing Markdown", async ({ page }) => {
     await page.goto("/demo/index.html");
     const editor = page.locator("#editor");

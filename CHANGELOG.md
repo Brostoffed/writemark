@@ -4,6 +4,7 @@
 
 ## 1.7.1 - 2026-10-02
 
+- Moved the demo tag switch beside a new Shift+Enter behavior control.
 - Fixed Unicode source offsets in case-insensitive find and replace.
 - Fixed virtual scroll positions for blocks with several rendered lines.
 - Kept reference definitions inside code fences and active paragraphs as text.
