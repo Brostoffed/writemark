@@ -14,7 +14,7 @@ integrations.
 | Intermediate | Understand editing behavior, supported Markdown, shortcuts, tables, code blocks, selection, and paste. | [Features and editing](features.md) |
 | Advanced | Connect host UI, define custom actions and completions, handle files, validate input, and prepare a production integration. | [Advanced integration](advanced.md) |
 | Reference | Look up the exact public surface without working through a tutorial. | [API reference](api-reference.md) |
-| Known issues | Check confirmed defects and their effects in version 1.7.0. | [Known issues](known-issues.md) |
+| Fixed issues | Check the 15 issues from 1.7.0 that version 1.7.1 addresses. | [Fixed issues](known-issues.md) |
 
 The main [README](../README.md) remains the compact project overview. The
 [public live demo](https://brostoffed.github.io/writemark/demo/) exposes the

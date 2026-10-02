@@ -416,6 +416,8 @@ Paste behavior is ordered by the most useful source:
 5. A URL pasted over selected text wraps that text as a link.
 
 Block-shaped paste is separated from surrounding inline text when needed.
+HTML conversion escapes literal Markdown punctuation and keeps blank lines
+inside pasted code blocks.
 `md-paste` reports the inserted Markdown and detected kind.
 
 Pasted or dropped files emit `md-file-paste` or `md-file-drop`. Writemark does
@@ -440,6 +442,7 @@ const replacedAll = editor.replaceAll('TODO', 'Done', {
 
 `find()` returns `{ start, end, text }` or `null` and selects the match.
 `replace()` and `replaceAll()` return the number of replacements.
+Case-insensitive matches keep offsets in the original Markdown source.
 
 ## Accessibility and state
 

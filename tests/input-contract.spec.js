@@ -1640,6 +1640,8 @@ test.describe("live input contract", () => {
 
   const grapheme = "e\u0301";
   const emoji = "👩‍💻";
+  const joinedEmoji = "👩‍".repeat(200) + "👩";
+  const flags = "🇺🇸".repeat(17);
   for (const scenario of [
     {
       expected: `A${emoji}B`,
@@ -1661,6 +1663,27 @@ test.describe("live input contract", () => {
       name: "fallback deletion removes one ZWJ emoji grapheme",
       selection: 1 + grapheme.length + emoji.length,
       value: `A${grapheme}${emoji}B`
+    },
+    {
+      expected: "AB",
+      inputType: "deleteContentBackward",
+      name: "backward fallback deletion keeps a long joined emoji intact",
+      selection: 1 + joinedEmoji.length,
+      value: `A${joinedEmoji}B`
+    },
+    {
+      expected: "AB",
+      inputType: "deleteContentForward",
+      name: "forward fallback deletion keeps a long joined emoji intact",
+      selection: 1,
+      value: `A${joinedEmoji}B`
+    },
+    {
+      expected: `A${"🇺🇸".repeat(16)}B`,
+      inputType: "deleteContentBackward",
+      name: "backward fallback deletion keeps regional indicator pairs intact",
+      selection: 1 + flags.length,
+      value: `A${flags}B`
     }
   ]) {
     test(scenario.name, async ({ editor }) => {
@@ -2211,6 +2234,38 @@ test.describe("live input contract", () => {
 
     expect(await editor.value()).toBe("first  \n");
     expect(await editor.selection()).toEqual({ start: 8, end: 8 });
+  });
+
+  test("one backward deletion segments only text near the caret", async ({ editor }) => {
+    for (const character of ["z", "é", "🙂"]) {
+      await editor.reset({ value: "abc" + character.repeat(10_000) });
+      await editor.setSelection(3 + 5_000 * character.length);
+      const result = await editor.host.evaluate(element => {
+        const original = Intl.Segmenter;
+        const lengths = [];
+        Intl.Segmenter = class extends original {
+          segment(value) {
+            lengths.push(value.length);
+            return super.segment(value);
+          }
+        };
+        try {
+          const target = element._activeEditableFromSelection();
+          const event = new InputEvent("beforeinput", {
+            bubbles: true,
+            cancelable: true,
+            inputType: "deleteContentBackward"
+          });
+          target.dispatchEvent(event);
+          return { prevented: event.defaultPrevented, lengths, value: element.value };
+        } finally {
+          Intl.Segmenter = original;
+        }
+      });
+      expect(result.prevented).toBe(true);
+      expect(result.value).toBe("abc" + character.repeat(9_999));
+      expect(Math.max(...result.lengths)).toBeLessThanOrEqual(128);
+    }
   });
 
   test("new native input after undo invalidates stale redo", async ({ editor, page }) => {

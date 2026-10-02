@@ -108,3 +108,56 @@ test.describe("action fixtures", () => {
     });
   }
 });
+
+test.describe("formatting action inputs", () => {
+  test("inline code uses a delimiter longer than selected backticks", async ({ editor }) => {
+    await editor.reset({ value: "a`b" });
+    await editor.setSelection(0, 3);
+    expect(await editor.host.evaluate(element => element.exec("inline.code"))).toBe(true);
+    expect(await editor.value()).toBe("``a`b``");
+    expect(await editor.host.evaluate(element => element.getHTML())).toContain("<code>a`b</code>");
+  });
+
+  test("link and image actions escape fields that contain Markdown delimiters", async ({ editor }) => {
+    await editor.reset({ value: "a]b" });
+    await editor.setSelection(0, 3);
+    expect(await editor.host.evaluate(element =>
+      element.exec("inline.link", { url: "https://example.com/a_(b)" })
+    )).toBe(true);
+    expect(await editor.value()).toBe("[a\\]b](https://example.com/a_%28b%29)");
+    const linkHtml = await editor.host.evaluate(element => element.getHTML());
+    expect(linkHtml).toContain('href="https://example.com/a_%28b%29"');
+    expect(linkHtml).toContain(">a]b</a>");
+
+    await editor.reset();
+    expect(await editor.host.evaluate(element =>
+      element.exec("inline.image", { alt: "a]b", src: "https://example.com/a_(b)" })
+    )).toBe(true);
+    expect(await editor.value()).toBe("![a\\]b](https://example.com/a_%28b%29)");
+    expect(await editor.host.evaluate(element => element.getHTML())).toContain('alt="a]b"');
+  });
+
+  test("code language actions reject line breaks without changing Markdown", async ({ editor }) => {
+    await editor.reset({ value: "before" });
+    expect(await editor.host.evaluate(element =>
+      element.exec("block.codeFence", { language: "js\nattack" })
+    )).toBe(false);
+    expect(await editor.value()).toBe("before");
+
+    await editor.reset({ value: "~~~text\ncode\n~~~" });
+    await editor.setSelection(9);
+    expect(await editor.host.evaluate(element =>
+      element.exec("code.setLanguage", { language: "js\nattack" })
+    )).toBe(false);
+    expect(await editor.value()).toBe("~~~text\ncode\n~~~");
+  });
+
+  test("code fences use a marker longer than selected backtick runs", async ({ editor }) => {
+    await editor.reset({ value: "before\n```\ninside\n```\nafter" });
+    await editor.setSelection(0, (await editor.value()).length);
+    expect(await editor.host.evaluate(element => element.exec("block.codeFence"))).toBe(true);
+    expect(await editor.value()).toMatch(/^````\n/);
+    expect(await editor.value()).toMatch(/\n````$/);
+    expect(await editor.host.evaluate(element => element.getHTML())).toContain("<pre><code");
+  });
+});

@@ -179,6 +179,21 @@ test.describe("large-document virtualization", () => {
     expect(state.renderedRows).toBeLessThan(800);
   });
 
+  test("Small virtual scrolls keep the rendered block nodes", async ({ editor }) => {
+    const preserved = await editor.host.evaluate(async (element, markdown) => {
+      element.style.setProperty("--md-editor-max-height", "300px");
+      element.value = markdown;
+      await new Promise(requestAnimationFrame);
+      const live = element.shadowRoot.querySelector(".live-editor");
+      const first = live.querySelector("[data-editable]");
+      live.scrollTop = 20;
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      return first.isConnected;
+    }, largeDocument());
+    expect(preserved).toBe(true);
+  });
+
   test("Virtualized oversized selection restore does not throw", async ({ editor }) => {
     const markdown = largeDocument();
     const selectionEnd = markdown.split("\n").slice(0, 320).join("\n").length;
@@ -199,6 +214,45 @@ test.describe("large-document virtualization", () => {
       };
     }, { markdown, selectionEnd });
     expect(state).toEqual({ start: 0, end: selectionEnd, error: null });
+  });
+
+  test("Virtualized multiline blocks keep the visible position after a scroll", async ({ editor }) => {
+    const markdown = Array.from({ length: 2600 }, (_, index) =>
+      [`\`\`\`text`, ...Array.from({ length: 10 }, () => `block ${index}`), "\`\`\`"].join("\n")
+    ).join("\n");
+    const state = await editor.host.evaluate(async (element, value) => {
+      element.style.setProperty("--md-editor-max-height", "300px");
+      element.value = value;
+      await new Promise(requestAnimationFrame);
+      const live = element.shadowRoot.querySelector(".live-editor");
+      const firstBlocks = [...live.querySelectorAll(".md-code-block")].slice(0, 2);
+      const stride = firstBlocks[1].getBoundingClientRect().top - firstBlocks[0].getBoundingClientRect().top;
+      const samples = [];
+      for (const target of [4000, 40000, 120000]) {
+        live.scrollTop = target;
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        const top = live.getBoundingClientRect().top;
+        const visible = [...live.querySelectorAll(".md-code-block")]
+          .find(block => block.getBoundingClientRect().bottom > top);
+        samples.push({
+          target,
+          scrollTop: live.scrollTop,
+          firstVisible: visible ? element._liveBlocks.findIndex(block => block.from === Number(visible.dataset.from)) : null
+        });
+      }
+      return {
+        active: element._virtualState.active,
+        samples,
+        stride
+      };
+    }, markdown);
+    expect(state.active).toBe(true);
+    for (const sample of state.samples) {
+      expect(sample.scrollTop).toBe(sample.target);
+      expect(sample.firstVisible).not.toBeNull();
+      expect(Math.abs(sample.firstVisible - Math.floor(sample.target / state.stride))).toBeLessThanOrEqual(2);
+    }
   });
 });
 
@@ -225,5 +279,27 @@ test.describe("delimiter-heavy rendering", () => {
       unmatchedDeterministic: true,
       unmatchedLiteralMarkers: 33_333
     });
+  });
+
+  test("copy handler scales across unmatched opening brackets", async ({ editor }) => {
+    const times = [];
+    for (const length of [4000, 16000]) {
+      await editor.reset({ value: "[".repeat(length) });
+      await editor.setSelection(0, 1);
+      const samples = await editor.host.evaluate(element => {
+        const durations = [];
+        for (let i = 0; i < 5; i += 1) {
+          const start = performance.now();
+          element._onLiveCopy({
+            clipboardData: { setData() {} },
+            preventDefault() {}
+          });
+          durations.push(performance.now() - start);
+        }
+        return durations.sort((a, b) => a - b);
+      });
+      times.push(samples[2]);
+    }
+    expect(times[1]).toBeLessThan(Math.max(100, times[0] * 6));
   });
 });

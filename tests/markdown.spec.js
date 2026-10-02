@@ -108,6 +108,42 @@ test.describe("Markdown parser output", () => {
     expect(html).toContain('href="https://example.com/a_(b)"');
     expect(html).toContain("></a>");
   });
+
+  test("apostrophes in link destinations do not start a title", async ({ editor }) => {
+    const html = await renderedHtml(editor, "[name](https://example.com/o'brien) [title](https://example.com/x \"a)b\")");
+    expect(html).toContain('href="https://example.com/o&#39;brien"');
+    expect(html).toContain('href="https://example.com/x"');
+    expect(html).toContain('title="a)b"');
+  });
+
+  test("reference definitions stay literal inside fences and active paragraphs", async ({ editor }) => {
+    for (const markdown of [
+      "```\n[ref]: https://example.com\n```\n[link][ref]",
+      "intro\n[ref]: https://example.com\n[link][ref]"
+    ]) {
+      const html = await renderedHtml(editor, markdown);
+      const text = await editor.host.evaluate((_, markup) =>
+        new DOMParser().parseFromString(markup, "text/html").body.textContent, html);
+      expect(text).toContain("[ref]: https://example.com");
+      expect(text).toContain("[link][ref]");
+      expect(html).not.toContain(">link</a>");
+    }
+    const valid = await renderedHtml(editor, "[ref]: https://example.com\n\n[link][ref]");
+    expect(valid).toContain('href="https://example.com"');
+  });
+
+  test("a fence with a pipe in its info string takes priority over a table", async ({ editor }) => {
+    const markdown = "```lang|meta\n| --- | --- |\ncode\n```";
+    const html = await renderedHtml(editor, markdown);
+    expect(html).toContain("<pre><code");
+    expect(html).toContain("| --- | --- |");
+    expect(html).not.toContain("<table>");
+    const types = await editor.host.evaluate(async (_, source) => {
+      const { parseBlocks } = await import("/dist/writemark-editor.js");
+      return parseBlocks(source).map(block => block.type);
+    }, markdown);
+    expect(types).toEqual(["code-fence"]);
+  });
 });
 
 test.describe("heading editing", () => {
@@ -167,6 +203,16 @@ test.describe("code fence actions", () => {
       element.exec("code.setLanguage", { language: "javascript" })
     )).toBe(true);
     expect(await editor.value()).toBe("~~~javascript\nconst x = 1;\n~~~");
+  });
+
+  test("code.setLanguage keeps a tilde opener with tilde info", async ({ editor }) => {
+    const value = "~~~lang~meta\ncode\n~~~";
+    await editor.reset({ value });
+    await editor.setSelection(value.indexOf("code"));
+    expect(await editor.host.evaluate(element =>
+      element.exec("code.setLanguage", { language: "javascript" })
+    )).toBe(true);
+    expect(await editor.value()).toBe("~~~javascript\ncode\n~~~");
   });
 
   test("smart Enter closes tilde fence with matching marker", async ({ editor, page }) => {

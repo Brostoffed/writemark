@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>&lt;writemark-editor&gt; v1.7.0 Live Inline Demo</title>
+  <title>&lt;writemark-editor&gt; v1.7.1 Live Inline Demo</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
     * { box-sizing: border-box; }
@@ -105,6 +105,17 @@
         </select>
       </label>
       <label>
+        Shift+Enter
+        <select id="shift-enter-behavior">
+          <option value="soft-break" selected>Line break (default)</option>
+          <option value="smart-enter">Smart Enter (continue lists)</option>
+        </select>
+      </label>
+      <label>
+        <input id="tags-enabled" type="checkbox">
+        Enable tags
+      </label>
+      <label>
         Font
         <select id="font-family">
           <option value='system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' selected>System UI</option>
@@ -194,7 +205,7 @@
         mode="live"
         preview="none"
         markdown-flavor="gfm"
-        placeholder="Type / for commands. Enable tags to use # completion. Try ```python then Enter, /table, Shift+Enter/Escape in tables, Cmd/Ctrl+A."
+        placeholder="Type / for commands. Enable tags to use # completion. Switch Shift+Enter behavior above, then try a list."
         required
         maxlength="50000"
         spellcheck="true"
@@ -207,12 +218,8 @@
         <div class="card-heading">
           <div>
             <h2 id="tags-title">Tag playground</h2>
-            <p>Enable tags to show tag labels and completion. The host owns the separate autocomplete catalog.</p>
+            <p>Use the demo control above to show tag labels and completion. The host owns the separate autocomplete catalog.</p>
           </div>
-          <label class="check-control">
-            <input id="tags-enabled" type="checkbox">
-            Enable tags
-          </label>
         </div>
 
         <div class="tag-controls">
@@ -265,6 +272,7 @@
         <h3 style="margin-top: 18px;">Try these flows</h3>
         <ul class="help-list">
           <li>When tags are enabled, type <code>#doc</code> to search document and catalog tags.</li>
+          <li>Set Shift+Enter to Smart Enter, then press Shift+Enter in a list to continue it.</li>
           <li>Type a tag outside the catalog and choose its catalog addition to save it for autocomplete.</li>
           <li>Select text and use the host action buttons.</li>
           <li>Click a rendered tag to receive <code>md-tag-activate</code>.</li>
@@ -287,6 +295,7 @@
     const mode = document.querySelector('#mode');
     const markdownFlavor = document.querySelector('#markdown-flavor');
     const tabBehavior = document.querySelector('#tab-behavior');
+    const shiftEnterBehavior = document.querySelector('#shift-enter-behavior');
     const fontFamily = document.querySelector('#font-family');
     const fontSize = document.querySelector('#font-size');
     const maxHeight = document.querySelector('#max-height');
@@ -426,6 +435,7 @@ Type these at the start of a line and press Space: \`#\`, \`##\`, \`-\`, \`1.\`,
 ## Lists
 
 - Press Enter to continue
+- Select Smart Enter above, then press Shift+Enter to continue
 - Press Tab to indent
   - Press Shift+Tab to outdent
 - Press Enter on an empty item to exit
@@ -453,7 +463,7 @@ Type these at the start of a line and press Space: \`#\`, \`##\`, \`-\`, \`1.\`,
 | Slash commands | Works | Type /table |
 | Live inline rendering | Works | No separate preview required |
 | Source value | Preserved | Forms submit markdown |
-| Table navigation | Fixed | Enter adds rows; Shift+Enter/Escape exits |
+| Table navigation | Configurable | Enter adds rows; Shift+Enter exits by default or adds rows in Smart Enter mode; Escape exits |
 | Component toolbar | Not built in | This page shows optional host action buttons |
 
 ## Code
@@ -648,6 +658,7 @@ print("hello")
 
     function syncDemoState() {
       tagsEnabled.checked = editor.tagsEnabled;
+      shiftEnterBehavior.value = editor.shiftEnterBehavior;
       allowCatalogAdditions.disabled = !editor.tagsEnabled;
       for (const control of document.querySelectorAll('#insert-tag-form input, #insert-tag-form button, #catalog-tag-form input, #catalog-tag-form button, #catalog-tags button')) {
         control.disabled = !editor.tagsEnabled;
@@ -688,6 +699,10 @@ print("hello")
     previewMode.addEventListener('change', () => editor.preview = previewMode.value);
     markdownFlavor.addEventListener('change', () => editor.markdownFlavor = markdownFlavor.value);
     tabBehavior.addEventListener('change', () => editor.tabBehavior = tabBehavior.value);
+    shiftEnterBehavior.addEventListener('change', () => {
+      editor.shiftEnterBehavior = shiftEnterBehavior.value;
+      syncDemoState();
+    });
     debugLevel.addEventListener('change', () => editor.debug = Number(debugLevel.value));
     debugLog.addEventListener('change', () => editor.debugLog = debugLog.checked);
     readonlyState.addEventListener('change', () => {

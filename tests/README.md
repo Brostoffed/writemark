@@ -11,6 +11,9 @@ contracts, and tag completion coverage. Security checks cover hostile inputs,
 generated invariants, and CommonMark differences. WebKit also includes tests
 that require desktop Safari behavior.
 
+The named regressions across editing, parser, clipboard, actions, rendering,
+input, and performance specs cover the 15 [issues from 1.7.0](../docs/known-issues.md).
+
 Before the browser projects, `npm test` also runs the Node-based
 `version-policy.test.mjs` checks. They prevent a release from retaining notes
 under `Unreleased` or drifting across package metadata, the lockfile,

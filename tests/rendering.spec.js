@@ -239,6 +239,36 @@ test.describe("preview rendering semantics", () => {
       .toBe("A\tB\nC\tD");
   });
 
+  test("plain text decodes entities and keeps blank lines inside code", async ({ editor }) => {
+    await editor.reset({ value: "Tom & <Jerry>\n\n```\nbefore\n\n\nafter\n```" });
+    const text = await editor.host.evaluate(element => ({
+      getText: element.getText(),
+      getPlainText: element.getPlainText()
+    }));
+    expect(text).toEqual({
+      getText: "Tom & <Jerry>\n\nbefore\n\n\nafter",
+      getPlainText: "Tom & <Jerry>\n\nbefore\n\n\nafter"
+    });
+  });
+
+  test("literal private-use markers stay visible beside formatted text", async ({ editor }) => {
+    const marker = "\uE0000\uE001";
+    await editor.reset({ attributes: { preview: "below" }, value: `\`safe code\` ${marker} **safe strong**` });
+    const state = await editor.host.evaluate(element => {
+      const html = element.getHTML();
+      return {
+        liveText: element.shadowRoot.querySelector(".live-editor").textContent,
+        previewText: new DOMParser().parseFromString(html, "text/html").body.textContent,
+        html
+      };
+    });
+    expect(state.liveText.split(marker)).toHaveLength(2);
+    expect(state.previewText.split(marker)).toHaveLength(2);
+    expect(state.previewText).toBe(`safe code ${marker} safe strong`);
+    expect(state.html).toContain("<code>safe code</code>");
+    expect(state.html).toContain("<strong>safe strong</strong>");
+  });
+
   test("commonmark mode does not render GFM table task checkbox or strikethrough", async ({ editor }) => {
     await editor.reset({
       attributes: { "markdown-flavor": "commonmark", mode: "preview" },
