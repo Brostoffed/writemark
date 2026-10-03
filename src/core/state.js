@@ -7,3 +7,5 @@ export class DocumentState {
     this.dirty = false;
   }
 }
+
+// Distribution pipeline contract check.
