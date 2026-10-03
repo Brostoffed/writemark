@@ -118,7 +118,7 @@ scripts/  Build and local server utilities.
 For direct browser usage without a module server:
 
 ```html
-<script src="./dist/writemark-editor.global.js"></script>
+<script src="./dist/writemark-editor.global.min.js"></script>
 
 <writemark-editor
   name="body"
@@ -143,7 +143,12 @@ import 'writemark-editor';
 ></writemark-editor>
 ```
 
-`dist/` is generated from `src/writemark-editor.js` with `npm run build`; do not edit generated files directly.
+The build generates `dist/` from the modules in `src/`.
+Copy `dist/writemark-editor.global.min.js` for standalone use.
+The file includes its styles and requires no editor dependencies.
+The package also includes generated TypeScript declarations.
+See [Distribution](docs/distribution.md) for automatic commits and verification.
+See [Source architecture](docs/architecture.md) for module responsibilities.
 
 Compatibility: `md-live-editor.js` and `<md-live-editor>` are still registered as legacy aliases for existing demos or consumers.
 

@@ -1,0 +1,36 @@
+name: Generate distribution
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: generate-dist-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Install browsers for the standalone file checks
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Verify the copied standalone files before upload
+        run: npx playwright test tests/distribution.spec.js
+      - uses: actions/upload-artifact@v7
+        with:
+          name: distribution
+          path: dist/
+          retention-days: 2
+          if-no-files-found: error

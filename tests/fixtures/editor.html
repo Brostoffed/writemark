@@ -41,7 +41,20 @@
   </main>
 
   <script type="module">
-    await import("../../dist/writemark-editor.js");
+    const build = new URLSearchParams(location.search).get("build") || "minified";
+    if (build === "module") {
+      await import("../../dist/writemark-editor.js");
+    } else {
+      const script = document.createElement("script");
+      script.src = build === "readable"
+        ? "../../dist/writemark-editor.global.js"
+        : "../../dist/writemark-editor.global.min.js";
+      await new Promise((resolve, reject) => {
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.append(script);
+      });
+    }
     await customElements.whenDefined("writemark-editor");
 
     const editor = document.querySelector("#editor");

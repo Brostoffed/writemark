@@ -34,7 +34,7 @@ The global build works in a direct-open HTML page and registers the same custom
 element:
 
 ```html
-<script src="./dist/writemark-editor.global.js"></script>
+<script src="./dist/writemark-editor.global.min.js"></script>
 ```
 
 The legacy `<md-live-editor>` name remains available through
