@@ -24,7 +24,7 @@
     "src/component/template.js": "559e1f294aae7791736b3ede6f3972fa18fbd3a225433884ad2df95be0d72877",
     "src/config.js": "e2d780ce13c73a60a0a1d1c961547a9b8b3bf5042042e7150185fb1e6797ae8d",
     "src/core/history.js": "54ebc2ceb410d041356e1480364f4a6743e5cfc3aece18400cc4e7f44bd738cc",
-    "src/core/state.js": "5391acce0ca23163f5bd1d65133f096842ce0763121759c952d782ea8b0eb81e",
+    "src/core/state.js": "933d26350e9666eacfeb37ffd3aaf785b763095710f8fc96d3dc9e77130e3832",
     "src/core/text.js": "826b678c501a8e42dcba8d5988585bd86cbcccf1807cdf5ffba90555b235312d",
     "src/core/transactions.js": "60380c4f456b4432f245af7b5c8d933af4eaf4f617dfcd55da54bc17a48e16e0",
     "src/markdown/block-syntax.js": "c0c0c473ab371abc72e5713e17442c9a6b856fb2251d6a96ed58a05e78c518ed",
