@@ -24,6 +24,10 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
+      - name: Install browsers for the standalone file checks
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Verify the copied standalone files before upload
+        run: npx playwright test tests/distribution.spec.js
       - uses: actions/upload-artifact@v7
         with:
           name: distribution

@@ -7,7 +7,7 @@ import ts from "typescript";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 for (const artifact of ["writemark-editor.global.min.js", "writemark-editor.global.js"]) {
-  test(`${artifact} works as the only copied file with the network unavailable`, async ({ page, context }) => {
+    test(`${artifact} works as the only copied file with the network unavailable`, async ({ page, context, browserName }) => {
     const directory = await mkdtemp(join(tmpdir(), "writemark-offline-"));
     try {
       await copyFile(resolve(root, "dist", artifact), join(directory, artifact));
@@ -22,7 +22,8 @@ for (const artifact of ["writemark-editor.global.min.js", "writemark-editor.glob
       const allowed = new Set([pathToFileURL(join(directory, "index.html")).href, pathToFileURL(join(directory, artifact)).href]);
       page.on("pageerror", error => errors.push(error.message));
       page.on("request", request => { if (!allowed.has(request.url())) unexpectedRequests.push(request.url()); });
-      await context.setOffline(true);
+      // WebKit offline emulation also blocks local file navigation.
+      if (browserName !== "webkit") await context.setOffline(true);
       await page.route(/^https?:/, route => route.abort());
       await page.goto(pathToFileURL(join(directory, "index.html")).href);
       const editor = page.locator("#first");

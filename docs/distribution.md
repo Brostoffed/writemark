@@ -66,6 +66,7 @@ Publication does not silently replace the tested files with a new build.
 
 For a pull request from this repository, contributors can commit only source changes.
 The `Generate distribution` workflow builds those changes with read access.
+It checks the copied standalone files in Chromium, Firefox, and WebKit before upload.
 It uploads the generated files as an artifact.
 
 The `Commit distribution` workflow uses code from the default branch.
@@ -140,6 +141,10 @@ The normal browser suite uses the minified standalone file.
 Additional checks cover the readable file and ES module.
 Copied-file tests use an empty temporary directory with only the JavaScript file and a test HTML page.
 They disable network access and check editing, formatting, history, modes, forms, multiple instances, and repeated script loads.
+
+The WebKit test blocks HTTP and HTTPS requests instead of offline emulation.
+WebKit offline emulation stops local file navigation before the editor loads.
+Every test rejects unexpected resource requests.
 
 The release workflow publishes the tested package.
 It also attaches the tested minified file and manifest to the release.
