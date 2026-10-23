@@ -104,7 +104,7 @@ Maintainers can find the one-time GitHub Pages setup and publication checks in
 ## Repo layout
 
 ```text
-src/      Canonical editor source.
+src/      Canonical TypeScript editor source.
 dist/     Generated package/browser files.
 docs/     Layered usage, feature, integration, and API guides.
 demo/     Direct-open browser demo.
@@ -143,7 +143,9 @@ import 'writemark-editor';
 ></writemark-editor>
 ```
 
-The build generates `dist/` from the modules in `src/`.
+The editor source uses strict TypeScript with no explicit or inferred `any` types.
+`npm run typecheck` checks the source and its type policy.
+The build generates JavaScript files and public declarations in `dist/` from `src/`.
 Copy `dist/writemark-editor.global.min.js` for standalone use.
 The file includes its styles and requires no editor dependencies.
 The package also includes generated TypeScript declarations.

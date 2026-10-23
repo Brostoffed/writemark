@@ -1,0 +1,4 @@
+interface:
+  display_name: "Complete a Writemark change"
+  short_description: "Check versions, changelog, bundles, tests, and release status"
+  default_prompt: "Use $writemark-change-completion to complete the current change and verify its release metadata."

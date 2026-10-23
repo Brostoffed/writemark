@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { build, transform } from "esbuild";
 import ts from "typescript";
+import { checkTypePolicy } from "./check-type-policy.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
@@ -38,7 +39,7 @@ for (const variant of [
 ]) {
   const classic = variant.format === "iife";
   const result = await build({
-    absWorkingDir: root, entryPoints: ["src/writemark-editor.js"],
+    absWorkingDir: root, entryPoints: ["src/writemark-editor.ts"],
     outfile: resolve(root, "dist", variant.file),
     bundle: true, splitting: false, platform: "browser", format: variant.format,
     ...(classic ? { globalName: "__writemark", footer: { js: "globalThis.WritemarkEditor = Object.freeze(__writemark);\n})();" } } : {}),
@@ -64,11 +65,11 @@ const config = ts.readConfigFile(resolve(root, "tsconfig.declarations.json"), ts
 if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
 const program = ts.createProgram(parsed.fileNames, parsed.options);
-const diagnostics = [...parsed.errors, ...program.getOptionsDiagnostics(),
-  ...program.getGlobalDiagnostics(), ...program.getSyntacticDiagnostics()];
+checkTypePolicy(program);
+const diagnostics = [...parsed.errors, ...ts.getPreEmitDiagnostics(program)];
 const declarations = new Map();
 let emitSkipped = false;
-for (const entry of ["src/writemark-editor.js", "src/types.js"]) {
+for (const entry of ["src/writemark-editor.ts", "src/types.ts"]) {
   const sourceFile = program.getSourceFile(resolve(root, entry));
   diagnostics.push(...program.getSemanticDiagnostics(sourceFile), ...program.getDeclarationDiagnostics(sourceFile));
   const emitted = program.emit(sourceFile, (file, contents) => {
@@ -116,7 +117,7 @@ async function sourceHashes(directory) {
   return hashes;
 }
 const inputs = await sourceHashes(resolve(root, "src"));
-for (const name of ["scripts/build.mjs", "tsconfig.declarations.json", "package.json", "package-lock.json", "LICENSE", ".node-version"]) {
+for (const name of ["scripts/build.mjs", "scripts/check-type-policy.mjs", "tsconfig.json", "tsconfig.declarations.json", "package.json", "package-lock.json", "LICENSE", ".node-version"]) {
   inputs[name] = hash(await readFile(resolve(root, name)));
 }
 add("manifest.json", JSON.stringify({

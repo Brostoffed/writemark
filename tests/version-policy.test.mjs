@@ -22,6 +22,13 @@ test('accepts aligned release metadata with an empty Unreleased section', () => 
   assert.deepEqual(validateVersionPolicy(alignedRelease()), []);
 });
 
+test('rejects a version heading without release notes', () => {
+  const failures = validateVersionPolicy(alignedRelease({
+    changelog: '# Changelog\n\n## Unreleased\n\n## 1.4.0 - 2026-07-25\n\n## 1.3.1 - 2026-07-24\n\n- Older release.\n'
+  }));
+  assert.match(failures.join('\n'), /latest release needs at least one release note/);
+});
+
 test('rejects release notes left under Unreleased', () => {
   const failures = validateVersionPolicy(alignedRelease({
     changelog: '# Changelog\n\n## Unreleased\n\n- Forgotten release note.\n\n## 1.4.0 - 2026-07-25\n'
@@ -64,5 +71,5 @@ test('rejects a stale canonical source banner', () => {
     source: '/* <writemark-editor> v1.3.1 live inline Markdown editor. */'
   }));
 
-  assert.match(failures.join('\n'), /src\/writemark-editor\.js/);
+  assert.match(failures.join('\n'), /src\/writemark-editor\.ts/);
 });

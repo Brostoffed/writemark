@@ -2,7 +2,7 @@ import {
   WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown,
   parseTags, parseBlocks, parseHeading, parseBlockquote, parseListItem,
   htmlToMarkdown, tsvToMarkdownTable,
-  type Action, type CompletionProvider, type TagProvider, type SourceSelection,
+  type Action, type ActionResult, type MarkdownBlock, type CompletionState, type CompletionProvider, type TagProvider, type SourceSelection,
 } from "writemark-editor";
 import { WritemarkEditorElement as ExplicitEditor } from "writemark-editor/writemark-editor.js";
 import { MdLiveEditorElement as LegacyEditor } from "writemark-editor/md-live-editor.js";
@@ -88,3 +88,33 @@ renderMarkdown(42);
 const invalidListNumber: string | undefined = parseListItem("1. Hello")?.number;
 void tags; void found; void formValid; void legacy; void invalidListNumber;
 void tableOffset;
+
+const tableOrNull: string | null = tsvToMarkdownTable("a\tb");
+editor.addEventListener("md-tags-change", event => {
+  const added: string | undefined = event.detail.added[0];
+  const removed: string | undefined = event.detail.removed[0];
+  // @ts-expect-error Added entries are tag values.
+  event.detail.added[0]?.key;
+  void added; void removed;
+});
+const block = parseBlocks("| a | b |\n| --- | --- |")[0];
+if (block?.type === "table") {
+  const headerStart: number = block.header.start;
+  const rowCount: number = block.rows.length;
+  void headerStart; void rowCount;
+}
+// @ts-expect-error A table requires a header, delimiter, and rows.
+const incompleteTable: MarkdownBlock = { type: "table", from: 0, to: 0, newlineEnd: 0 };
+// @ts-expect-error A heading cannot contain table rows.
+const headingWithRows: MarkdownBlock = {
+  type: "heading", from: 0, to: 0, newlineEnd: 0,
+  line: { start: 0, end: 0, text: "" },
+  heading: { indent: "", level: 1, content: "", markerText: "# ", contentStart: 2 },
+  rows: [],
+};
+// @ts-expect-error A closed completion cannot name a provider.
+const invalidCompletion: CompletionState = { status: "closed", open: false, providerId: "tags", match: null, items: [], activeIndex: 0, requestId: 0, abort: null };
+const failure: ActionResult = { ok: false, reason: "not-applicable" };
+// @ts-expect-error A failed action has no transaction.
+failure.transaction;
+void tableOrNull; void incompleteTable; void headingWithRows; void invalidCompletion;

@@ -6,6 +6,15 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const sourceConfig = ts.readConfigFile(resolve(root, "tsconfig.json"), ts.sys.readFile);
+if (sourceConfig.error) throw new Error(ts.flattenDiagnosticMessageText(sourceConfig.error.messageText, "\n"));
+const sourceOptions = ts.parseJsonConfigFileContent(sourceConfig.config, ts.sys, root);
+const internalProgram = ts.createProgram([resolve(root, "tests/types/internal.ts")], sourceOptions.options);
+const internalDiagnostics = [...sourceOptions.errors, ...ts.getPreEmitDiagnostics(internalProgram)];
+if (internalDiagnostics.length) throw new Error(ts.formatDiagnosticsWithColorAndContext(internalDiagnostics, {
+  getCanonicalFileName: file => file, getCurrentDirectory: () => root, getNewLine: () => "\n",
+}));
+console.log("Internal capability and event contracts verified.");
 const directory = await mkdtemp(join(tmpdir(), "writemark-types-"));
 try {
   // Test the package users install. Ignore lifecycle scripts to avoid recursion.
@@ -25,7 +34,7 @@ try {
   for (const name of files) await writeFile(resolve(directory, name), await readFile(resolve(root, "tests/types", name)));
   for (const resolution of ["NodeNext", "Bundler"]) {
     const options = {
-      strict: true, noEmit: true, skipLibCheck: false,
+      strict: true, noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, noEmit: true, skipLibCheck: false,
       target: ts.ScriptTarget.ES2022,
       module: resolution === "NodeNext" ? ts.ModuleKind.NodeNext : ts.ModuleKind.ESNext,
       moduleResolution: resolution === "NodeNext" ? ts.ModuleResolutionKind.NodeNext : ts.ModuleResolutionKind.Bundler,

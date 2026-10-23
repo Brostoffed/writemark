@@ -14,10 +14,16 @@ that require desktop Safari behavior.
 The named regressions across editing, parser, clipboard, actions, rendering,
 input, and performance specs cover the 15 [issues from 1.7.0](../docs/known-issues.md).
 
-Before the browser projects, `npm test` also runs the Node-based
+Before the browser projects, `npm test` checks strict TypeScript and the source type policy.
+It also runs the Node-based
 `version-policy.test.mjs` checks. They prevent a release from retaining notes
 under `Unreleased` or drifting across package metadata, the lockfile,
 changelog, API reference, and demo.
+
+`release-change.test.mjs` checks the comparison with the last reachable release tag.
+It covers committed, staged, unstaged, and untracked editor changes.
+It rejects a fix that keeps the old version, even when all version files still match.
+It also checks package contracts, missing history, and reuse of an unpublished release candidate.
 
 ## Run the suite
 

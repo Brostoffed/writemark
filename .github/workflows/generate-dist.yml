@@ -17,12 +17,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run check:version
       - run: npm run build
       - name: Install browsers for the standalone file checks
         run: npx playwright install --with-deps chromium firefox webkit

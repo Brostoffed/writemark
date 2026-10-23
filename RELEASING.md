@@ -87,6 +87,28 @@ GitHub repository secret is required. npm generates provenance automatically.
    still identifies another version. This repository treats changes merged to
    `main` as release-ready, so finalize these files in the same change.
 
+   `npm run check:version` also compares changes with the latest reachable release tag.
+   It rejects editor or public package changes that reuse the released version.
+   It checks committed, staged, unstaged, and untracked files.
+   A newer version also needs changed release notes.
+   The current changelog entry must contain at least one note.
+
+   If an unpublished version already covers the change, keep that version.
+   Add the new notes to its changelog entry.
+   Do not create another version for each task in the same release candidate.
+
+   CI gets the full Git history for this check.
+   If a local clone lacks release tags, get the release tags before checks.
+   An explicit baseline is also available:
+
+   ```sh
+   npm run check:release-change -- --base <ref>
+   ```
+
+   Use a ref that represents the release baseline.
+   Do not select a newer ref to hide editor changes.
+   The check does not change files, create tags, or publish packages.
+
 3. Open a pull request for the release changes.
    Let the distribution workflows generate `dist/` before the merge.
    Wait for all required checks on the final commit.

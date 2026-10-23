@@ -11,7 +11,7 @@ const run = (cwd, args = []) => spawnSync(process.execPath, ["scripts/build.mjs"
 test("builds repeatable files and rejects stale source, artifacts, and declarations without writes", { timeout: 120_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "writemark-build-"));
   try {
-    for (const name of ["src", "scripts", "package.json", "package-lock.json", "tsconfig.declarations.json", "LICENSE", ".node-version"]) {
+    for (const name of ["src", "scripts", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.declarations.json", "LICENSE", ".node-version"]) {
       await cp(resolve(root, name), resolve(directory, name), { recursive: true });
     }
     await symlink(resolve(root, "node_modules"), resolve(directory, "node_modules"), "dir");
@@ -31,13 +31,21 @@ test("builds repeatable files and rejects stale source, artifacts, and declarati
       assert.deepEqual(await readFile(resolve(directory, "dist", name)), altered);
       await writeFile(resolve(directory, "dist", name), expected.get(name));
     }
-    const source = resolve(directory, "src/security.js");
+    const source = resolve(directory, "src/security.ts");
+    const originalSource = await readFile(source, "utf8");
+    await writeFile(source, originalSource + "\nexport const unsafe: any = 1;\n");
+    result = run(directory);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /any is forbidden|inferred any/);
+    for (const [name, bytes] of expected) assert.deepEqual(await readFile(resolve(directory, "dist", name)), bytes);
+    await writeFile(source, originalSource);
+
     await writeFile(source, (await readFile(source, "utf8")) + "\n// source changed\n");
     result = run(directory, ["--check"]);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /manifest.json is missing or stale/);
     for (const [name, bytes] of expected) assert.deepEqual(await readFile(resolve(directory, "dist", name)), bytes);
-    await writeFile(source, await readFile(resolve(root, "src/security.js")));
+    await writeFile(source, await readFile(resolve(root, "src/security.ts")));
     await writeFile(resolve(directory, "dist/unexpected.css"), "body {}\n");
     result = run(directory, ["--check"]);
     assert.notEqual(result.status, 0);

@@ -1,4 +1,15 @@
-# Issues fixed after Writemark 1.7.0
+# Known issues and issue history
+
+## Table cell input in 1.8.1
+
+The 1.8.1 source fix preserves cell spaces and keeps the cursor after each typed space.
+Backspace removes spaces before it removes a letter.
+Local Chromium checks covered pasted tables, rapid and slow Space presses, and header and body cells.
+
+The reported period insertion remains unconfirmed.
+Desktop and mobile Safari checks remain pending.
+
+## Issues fixed after Writemark 1.7.0
 
 The September 11, 2026 review confirmed these 15 issues through source checks
 and Chromium 149 reproductions. Version 1.7.1 addresses each issue.

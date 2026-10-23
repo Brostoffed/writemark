@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 1.8.1 - 2026-10-23
+
+- Fixed trailing spaces and cursor positions in live table cells.
+- Fixed Backspace so it removes cell spaces before the final letter.
+- Kept spaces when users edit other cells or change editor modes.
+- Kept a table row while Backspace removes spaces from an otherwise empty cell.
+- Added tests for cell spaces, source offsets, and unchanged preview output.
+- Converted the editor source to strict TypeScript.
+- Added checks that reject explicit or inferred `any` types and type suppressions.
+- Kept the standalone browser files and public entry paths.
+- Added a change completion skill and checks that require release metadata for editor changes.
+- Required release notes for the current version.
+
 ## 1.8.0 - 2026-10-02
 
 - Added a standalone minified browser file with embedded styles.

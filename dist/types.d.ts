@@ -1,61 +1,31 @@
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type EditorMode = "live" | "source" | "split" | "preview";
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type PreviewMode = "none" | "below" | "side" | "inline-split";
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type MarkdownFlavor = "gfm" | "commonmark";
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type SelectionDirection = "none" | "forward" | "backward";
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type SourceSelection = {
     start: number;
     end: number;
     direction?: SelectionDirection;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type Snapshot = {
     value: string;
     selection: SourceSelection;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type TextChange = {
     from: number;
     to: number;
     insert: string;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type SourceRange = {
     from: number;
     to: number;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type Tag = {
     value: string;
     key: string;
     count: number;
     ranges: SourceRange[];
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type MarkdownOptions = {
     markdownFlavor?: MarkdownFlavor;
     gfm?: boolean;
@@ -66,9 +36,6 @@ export type MarkdownOptions = {
         title: string;
     }>;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type LineInfo = {
     start: number;
     end: number;
@@ -78,9 +45,6 @@ export type LineInfo = {
     marker?: string | null;
     contentStart?: number;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type ListItem = {
     kind: "task-list-item" | "ordered-list-item" | "bullet-list-item";
     listType: "ul" | "ol";
@@ -95,9 +59,6 @@ export type ListItem = {
     fullMarkerStart: number;
     fullMarkerEnd: number;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type Heading = {
     indent: string;
     level: number;
@@ -106,9 +67,6 @@ export type Heading = {
     contentStart: number;
     id?: string;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type Blockquote = {
     depth: number;
     content: string;
@@ -116,25 +74,17 @@ export type Blockquote = {
     contentStart: number;
     fullContentStart: number;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type ActionLineInfo = LineInfo & {
     indent: string;
     marker: string | null;
     contentStart: number;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type TableLine = LineInfo & {
+    newlineEnd: number;
     cells: (SourceRange & {
         text: string;
     })[];
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type FenceInfo = {
     marker: string;
     length: number;
@@ -142,40 +92,59 @@ export type FenceInfo = {
     info: string;
     language: string;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
-export type MarkdownBlock = {
-    type: "code-fence" | "table" | "heading" | "task-list-item" | "ordered-list-item" | "bullet-list-item" | "blockquote" | "horizontal-rule" | "paragraph" | "blank";
+export interface BaseBlock {
     from: number;
     to: number;
     newlineEnd: number;
-    line?: LineInfo;
-    heading?: Heading;
-    list?: ListItem;
-    quote?: Blockquote;
-    setext?: LineInfo;
-    opening?: LineInfo;
-    closing?: LineInfo | null;
-    codeLines?: LineInfo[];
-    language?: string;
-    fence?: FenceInfo;
-    header?: TableLine;
-    delimiter?: TableLine;
-    rows?: TableLine[];
+}
+export type SourceLine = LineInfo & {
+    newlineEnd: number;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
+export interface HeadingBlock extends BaseBlock {
+    type: "heading";
+    line: LineInfo;
+    heading: Heading;
+    setext?: LineInfo;
+}
+export interface TableBlock extends BaseBlock {
+    type: "table";
+    header: TableLine;
+    delimiter: TableLine;
+    rows: TableLine[];
+}
+export interface CodeFenceBlock extends BaseBlock {
+    type: "code-fence";
+    opening: SourceLine;
+    closing: SourceLine | null;
+    codeLines: SourceLine[];
+    language: string;
+    fence: FenceInfo;
+}
+export interface ListBlock extends BaseBlock {
+    type: "task-list-item" | "ordered-list-item" | "bullet-list-item";
+    line: LineInfo;
+    list: ListItem;
+}
+export interface BlockquoteBlock extends BaseBlock {
+    type: "blockquote";
+    line: LineInfo;
+    quote: Blockquote;
+}
+export interface TextBlock extends BaseBlock {
+    type: "horizontal-rule" | "paragraph" | "blank";
+    line: LineInfo;
+}
+type BlockField = "line" | "heading" | "setext" | "header" | "delimiter" | "rows" | "opening" | "closing" | "codeLines" | "language" | "fence" | "list" | "quote";
+type BlockVariant<T> = T extends BaseBlock ? T & {
+    [K in Exclude<BlockField, keyof T>]?: never;
+} : never;
+export type MarkdownBlock = BlockVariant<HeadingBlock | TableBlock | CodeFenceBlock | ListBlock | BlockquoteBlock | TextBlock>;
 export type BlockContext = {
     kind: "fenced-code" | "task-list-item" | "ordered-list-item" | "bullet-list-item" | "heading" | "blockquote" | "horizontal-rule" | "table" | "paragraph";
     list?: ListItem;
     heading?: Heading;
     blockquote?: Blockquote;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type Transaction = {
     changes: TextChange[];
     selectionBefore?: SourceSelection;
@@ -186,23 +155,17 @@ export type Transaction = {
     timestamp?: number;
     args?: unknown;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type ActionResult = {
     ok: true;
     transaction?: Transaction;
-    announcement?: string;
+    announcement?: string | undefined;
     preventDefault?: boolean;
     actionHandled?: boolean;
 } | {
     ok: false;
     reason: string;
-    message?: string;
+    message?: string | undefined;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type EditorConfig = {
     mode: EditorMode;
     preview: PreviewMode;
@@ -216,21 +179,34 @@ export type EditorConfig = {
     disabled: boolean;
     readonly: boolean;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type CompletionState = {
-    open: boolean;
-    providerId: string | null;
-    match: CompletionMatch | null;
+    status: "closed";
+    open: false;
+    providerId: null;
+    match: null;
+    items: [];
+    activeIndex: 0;
+    requestId: number;
+    abort: null;
+} | {
+    status: "loading";
+    open: false;
+    providerId: string;
+    match: CompletionMatch;
+    items: [];
+    activeIndex: 0;
+    requestId: number;
+    abort: AbortController;
+} | {
+    status: "open";
+    open: true;
+    providerId: string;
+    match: CompletionMatch;
     items: CompletionItem[];
     activeIndex: number;
     requestId: number;
-    abort: AbortController | null;
+    abort: AbortController;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type ActionContext = {
     value: string;
     selectionStart: number;
@@ -247,9 +223,6 @@ export type ActionContext = {
     config: EditorConfig;
     host: WritemarkEditorElement;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type Action = {
     id: string;
     label?: string;
@@ -258,17 +231,20 @@ export type Action = {
     aliases?: string[];
     keywords?: string[];
     visibleInSlash?: boolean;
-    defaultShortcut?: string;
+    defaultShortcut?: string | undefined;
     structural?: boolean;
     readonlySafe?: boolean;
     viewSafe?: boolean;
     when?: (context: ActionContext, args?: Record<string, unknown>) => boolean;
-    run: (context: ActionContext, args?: Record<string, unknown>, options?: Record<string, unknown>) => ActionResult;
+    run: (context: ActionContext, args?: Record<string, unknown>, options?: {
+        source?: string;
+        inputType?: string | null | undefined;
+        apply?: boolean;
+    }) => ActionResult;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type CompletionMatch = {
+    sequence?: string;
+    indent?: string;
     from: number;
     to: number;
     query: string;
@@ -276,13 +252,10 @@ export type CompletionMatch = {
     providerId?: string;
     [key: string]: unknown;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type CompletionItem = {
     id: string;
     label: string;
-    detail?: string;
+    detail?: string | undefined;
     description?: string;
     kind?: string;
     disabled?: boolean;
@@ -290,9 +263,6 @@ export type CompletionItem = {
     actionId?: string;
     [key: string]: unknown;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type CompletionProvider = {
     id: string;
     priority?: number;
@@ -301,9 +271,6 @@ export type CompletionProvider = {
     getItems: (match: CompletionMatch, context: ActionContext, signal: AbortSignal) => CompletionItem[] | Promise<CompletionItem[]>;
     apply: (item: CompletionItem, match: CompletionMatch, context: ActionContext) => ActionResult;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type TagItem = ({
     value: string;
     label?: string;
@@ -312,13 +279,10 @@ export type TagItem = ({
     label: string;
 }) & {
     id?: string;
-    detail?: string;
+    detail?: string | undefined;
     kind?: string;
     [key: string]: unknown;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type TagProvider = {
     allowCreate?: boolean;
     getItems: (request: {
@@ -328,33 +292,21 @@ export type TagProvider = {
         signal: AbortSignal;
     }) => (string | TagItem)[] | Promise<(string | TagItem)[]>;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type FindOptions = {
     caseSensitive?: boolean;
     from?: number;
     wrap?: boolean;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type FindMatch = {
     start: number;
     end: number;
     text: string;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type FileDetails = {
     files: File[];
     insertionPoint: number;
     insertMarkdown: (markdown: string) => boolean;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type DebugDetails = {
     sequence: number;
     timestamp: number;
@@ -365,9 +317,6 @@ export type DebugDetails = {
     selection: SourceSelection;
     [key: string]: unknown;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type WritemarkEventMap = {
     "md-before-change": CustomEvent<{
         transaction: Transaction;
@@ -413,8 +362,8 @@ export type WritemarkEventMap = {
     }>;
     "md-tags-change": CustomEvent<{
         current: Tag[];
-        added: Tag[];
-        removed: Tag[];
+        added: string[];
+        removed: string[];
         source: string;
         inputType: string | null;
     }>;
@@ -453,9 +402,6 @@ export type WritemarkEventMap = {
         [key: string]: unknown;
     }>;
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type EditorAPI = {
     value: string;
     defaultValue: string;
@@ -526,20 +472,13 @@ export type EditorAPI = {
         (type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions): void;
     };
 };
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type WritemarkEditorElement = EditorAPI & HTMLElement;
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type MdLiveEditorElement = WritemarkEditorElement;
-/**
- * Public types for the editor. The build emits declarations from these comments.
- */
 export type EditorConstructor = {
     new (): WritemarkEditorElement;
     prototype: WritemarkEditorElement;
     readonly formAssociated: boolean;
     readonly observedAttributes: string[];
 };
+export type EventDetail<K extends keyof WritemarkEventMap> = WritemarkEventMap[K] extends CustomEvent<infer Detail> ? Detail : never;
+export {};
