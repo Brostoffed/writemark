@@ -108,6 +108,11 @@ The rule verifies file contents instead of the commit author name.
 
 ## TypeScript
 
+Use the exact Node.js version in `.node-version` for builds and source checks.
+Run `npm run check:runtime` to check the active runtime.
+The build rejects a different runtime before it writes files.
+The manifest records the actual runtime, so local builds and CI must use the same version.
+
 The editor source uses TypeScript.
 The build generates public declarations from the checked public entry and public contracts.
 The browser files remain JavaScript.

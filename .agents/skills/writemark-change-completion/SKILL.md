@@ -22,6 +22,10 @@ Keep the editor source in strict TypeScript.
 Keep the generated browser files independent of runtime dependencies.
 Keep unrelated changes intact.
 
+Before build or test commands, run `npm run check:runtime`.
+Use the exact Node.js version in `.node-version`.
+A green check under another runtime does not verify the pinned CI runtime.
+
 ## Complete the release metadata
 
 1. Run `npm run check:release-change` to inspect the release baseline.

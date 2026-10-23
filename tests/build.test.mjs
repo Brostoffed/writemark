@@ -22,6 +22,15 @@ test("builds repeatable files and rejects stale source, artifacts, and declarati
     for (const [name, bytes] of expected) assert.deepEqual(bytes, await readFile(resolve(root, "dist", name)), name);
     result = run(directory, ["--check"]);
     assert.equal(result.status, 0, result.stderr);
+    const runtimePin = await readFile(resolve(directory, ".node-version"));
+    await writeFile(resolve(directory, ".node-version"), "0.0.0\n");
+    for (const args of [[], ["--check"]]) {
+      result = run(directory, args);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /Node.js 0\.0\.0 is required by \.node-version/);
+      for (const [name, bytes] of expected) assert.deepEqual(await readFile(resolve(directory, "dist", name)), bytes);
+    }
+    await writeFile(resolve(directory, ".node-version"), runtimePin);
     for (const name of ["writemark-editor.global.min.js", "writemark-editor.d.ts"]) {
       const altered = Buffer.concat([expected.get(name), Buffer.from("\n// manual change\n")]);
       await writeFile(resolve(directory, "dist", name), altered);

@@ -14,6 +14,8 @@
 - Kept the standalone browser files and public entry paths.
 - Added a change completion skill and checks that require release metadata for editor changes.
 - Required release notes for the current version.
+- Added an early check for the pinned Node.js runtime before builds and source checks.
+- Regenerated the manifest with Node.js 24.19.0.
 
 ## 1.8.0 - 2026-10-02
 

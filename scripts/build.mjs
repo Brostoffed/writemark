@@ -2,12 +2,14 @@
 import { build, transform } from "esbuild";
 import ts from "typescript";
 import { checkTypePolicy } from "./check-type-policy.mjs";
+import { assertNodeRuntime } from "./check-runtime.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+assertNodeRuntime({ directory: root });
 const args = process.argv.slice(2);
 if (args.some(arg => arg !== "--check")) throw new Error("Usage: node scripts/build.mjs [--check]");
 const checkOnly = args.includes("--check");
@@ -117,7 +119,7 @@ async function sourceHashes(directory) {
   return hashes;
 }
 const inputs = await sourceHashes(resolve(root, "src"));
-for (const name of ["scripts/build.mjs", "scripts/check-type-policy.mjs", "tsconfig.json", "tsconfig.declarations.json", "package.json", "package-lock.json", "LICENSE", ".node-version"]) {
+for (const name of ["scripts/build.mjs", "scripts/check-type-policy.mjs", "scripts/check-runtime.mjs", "tsconfig.json", "tsconfig.declarations.json", "package.json", "package-lock.json", "LICENSE", ".node-version"]) {
   inputs[name] = hash(await readFile(resolve(root, name)));
 }
 add("manifest.json", JSON.stringify({

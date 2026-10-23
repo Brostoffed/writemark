@@ -15,6 +15,7 @@ The named regressions across editing, parser, clipboard, actions, rendering,
 input, and performance specs cover the 15 [issues from 1.7.0](../docs/known-issues.md).
 
 Before the browser projects, `npm test` checks strict TypeScript and the source type policy.
+The source check first verifies the exact Node.js version in `.node-version`.
 It also runs the Node-based
 `version-policy.test.mjs` checks. They prevent a release from retaining notes
 under `Unreleased` or drifting across package metadata, the lockfile,
@@ -99,6 +100,7 @@ npx playwright show-report output/playwright/report
 
 - `distribution.spec.js` verifies copied-file offline use, entry parity, repeated loads, and public declaration property names.
 - `build.test.mjs` verifies repeatable output and rejects stale files, stale source, declarations, and stylesheet resources.
+- `unit/runtime.test.mjs` rejects a Node.js runtime that differs from the pinned version.
 - `unit/` tests pure modules and the generated-commit job without a browser or GitHub writes.
 - `types/` contains package consumer examples for valid and invalid TypeScript use.
 
