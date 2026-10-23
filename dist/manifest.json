@@ -2,7 +2,7 @@
   "version": "1.8.1",
   "target": "es2022",
   "tools": {
-    "node": "22.23.1",
+    "node": "24.19.0",
     "esbuild": "0.28.2",
     "typescript": "6.0.3"
   },
