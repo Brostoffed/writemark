@@ -41,9 +41,12 @@ export function validateVersionPolicy({
   }
 
   const releases = headings
-    .map(match => {
+    .map((match, index) => {
       const release = /^(\d+\.\d+\.\d+)\s+-\s+(\d{4}-\d{2}-\d{2})$/.exec(match[1]);
-      return release ? { date: release[2], version: release[1] } : null;
+      return release ? {
+        date: release[2], version: release[1],
+        body: changelog.slice(match.index + match[0].length, headings[index + 1]?.index ?? changelog.length)
+      } : null;
     })
     .filter(Boolean);
   const latestRelease = releases[0];
@@ -51,6 +54,9 @@ export function validateVersionPolicy({
     failures.push('CHANGELOG.md does not contain a dated release heading');
   } else if (latestRelease.version !== version) {
     failures.push(`CHANGELOG.md latest release ${latestRelease.version} does not match package.json ${version}`);
+  }
+  if (latestRelease && !/^\s*[-*+]\s+\S/m.test(latestRelease.body)) {
+    failures.push('CHANGELOG.md latest release needs at least one release note');
   }
 
   if (!apiReference.includes(`Writemark ${version}`)) {
@@ -60,7 +66,7 @@ export function validateVersionPolicy({
     failures.push(`demo/index.html does not identify package version ${version}`);
   }
   if (!source.includes(`<writemark-editor> v${version}`)) {
-    failures.push(`src/writemark-editor.js does not identify package version ${version}`);
+    failures.push(`src/writemark-editor.ts does not identify package version ${version}`);
   }
 
   return failures;
@@ -73,7 +79,7 @@ function readVersionFiles() {
     demo: readFileSync(resolve(root, 'demo/index.html'), 'utf8'),
     packageJson: JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')),
     packageLock: JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8')),
-    source: readFileSync(resolve(root, 'src/writemark-editor.js'), 'utf8')
+    source: readFileSync(resolve(root, 'src/writemark-editor.ts'), 'utf8')
   };
 }
 

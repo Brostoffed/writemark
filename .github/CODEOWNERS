@@ -1,5 +1,8 @@
-/src/types.js @Brostoffed
-/src/writemark-editor.js @Brostoffed
+/src/types.ts @Brostoffed
+/src/**/types.ts @Brostoffed
+/tsconfig*.json @Brostoffed
+/scripts/check-type-policy.mjs @Brostoffed
+/src/writemark-editor.ts @Brostoffed
 /scripts/build.mjs @Brostoffed
 /scripts/commit-distribution.mjs @Brostoffed
 /tsconfig.declarations.json @Brostoffed

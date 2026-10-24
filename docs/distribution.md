@@ -108,8 +108,29 @@ The rule verifies file contents instead of the commit author name.
 
 ## TypeScript
 
-The build generates public declarations from the JSDoc contract in `src/`.
-The source remains JavaScript.
+Use the exact Node.js version in `.node-version` for builds and source checks.
+Run `npm run check:runtime` to check the active runtime.
+The build rejects a different runtime before it writes files.
+The manifest records the actual runtime, so local builds and CI must use the same version.
+
+The editor source uses TypeScript.
+The build generates public declarations from the checked public entry and public contracts.
+The browser files remain JavaScript.
+The standalone file includes the stylesheet and has no runtime dependencies.
+
+```sh
+npm run typecheck
+```
+
+This command checks every editor source file before the build and browser checks.
+It enables strict checks, index checks, exact optional property checks, and override checks.
+The source policy rejects explicit `any`, inferred `any`, and type suppression comments.
+It also rejects assertions through `unknown` that bypass a source contract.
+Use `unknown` for external data and narrow its type before use.
+
+The build also checks all source types before it writes distribution files.
+The declaration build uses the same strict configuration.
+Internal type files remain outside the public declaration files.
 The package export map supplies declarations for each public entry path.
 The declaration files cover custom element lookup, configuration, actions, completion providers, and event details.
 

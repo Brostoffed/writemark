@@ -1,6 +1,6 @@
 {
   "name": "writemark-editor",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Writemark is a dependency-free live inline Markdown editor web component with slash commands, smart editing, form integration, source fallback, and no built-in toolbar.",
   "type": "module",
   "main": "./dist/writemark-editor.js",
@@ -69,16 +69,19 @@
     "test:browser:chromium": "playwright test --project=chromium",
     "test:browser:headed": "playwright test --project=chromium --headed",
     "test:server": "node --test tests/dev-server.test.mjs",
-    "test:version": "node --test tests/version-policy.test.mjs",
+    "test:version": "node --test tests/version-policy.test.mjs tests/release-change.test.mjs",
     "test:fuzz": "npm run check && playwright test tests/security.spec.js --project=chromium",
-    "check:version": "node scripts/check-version.mjs",
+    "check:version": "node scripts/check-version.mjs && node scripts/check-release-change.mjs",
+    "check:release-change": "node scripts/check-release-change.mjs",
+    "check:runtime": "node scripts/check-runtime.mjs",
     "perf": "node scripts/dev-server.mjs --open=perf/index.html",
     "prepack": "npm run check",
-    "check": "node scripts/build.mjs --check && node scripts/check-source.mjs && npm run check:version && npm run test:version && npm run test:server && npm run test:unit && npm run test:build && npm run test:types && node scripts/check-docs.mjs",
+    "check": "npm run typecheck && node scripts/build.mjs --check && node scripts/check-source.mjs && npm run check:version && npm run test:version && npm run test:server && npm run test:unit && npm run test:build && npm run test:types && node scripts/check-docs.mjs",
     "check:build": "node scripts/build.mjs --check",
     "test:unit": "node --test tests/unit/*.test.mjs",
     "test:build": "node --test tests/build.test.mjs",
-    "test:types": "node scripts/check-types.mjs"
+    "test:types": "node scripts/check-types.mjs",
+    "typecheck": "npm run check:runtime && tsc -p tsconfig.json --noEmit && node scripts/check-type-policy.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",

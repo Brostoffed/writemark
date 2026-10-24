@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyTextChanges, diffTextChange, makeSnapshot } from "../../src/core/transactions.js";
-import { previousGraphemeOffset, nextGraphemeOffset } from "../../src/core/text.js";
-import { UndoHistory } from "../../src/core/history.js";
-import { parseBlocks } from "../../src/markdown/blocks.js";
-import { parseTags } from "../../src/markdown/tags.js";
-import { wrapCode, insertLink } from "../../src/actions/inline.js";
+import { applyTextChanges, diffTextChange, makeSnapshot } from "../../src/core/transactions.ts";
+import { previousGraphemeOffset, nextGraphemeOffset } from "../../src/core/text.ts";
+import { UndoHistory } from "../../src/core/history.ts";
+import { parseBlocks } from "../../src/markdown/blocks.ts";
+import { parseTags } from "../../src/markdown/tags.ts";
+import { wrapCode, insertLink } from "../../src/actions/inline.ts";
 
 test("pure modules load without a browser or element registration", () => {
   assert.equal(typeof globalThis.HTMLElement, "undefined");

@@ -11,7 +11,7 @@ const run = (cwd, args = []) => spawnSync(process.execPath, ["scripts/build.mjs"
 test("builds repeatable files and rejects stale source, artifacts, and declarations without writes", { timeout: 120_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "writemark-build-"));
   try {
-    for (const name of ["src", "scripts", "package.json", "package-lock.json", "tsconfig.declarations.json", "LICENSE", ".node-version"]) {
+    for (const name of ["src", "scripts", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.declarations.json", "LICENSE", ".node-version"]) {
       await cp(resolve(root, name), resolve(directory, name), { recursive: true });
     }
     await symlink(resolve(root, "node_modules"), resolve(directory, "node_modules"), "dir");
@@ -22,6 +22,15 @@ test("builds repeatable files and rejects stale source, artifacts, and declarati
     for (const [name, bytes] of expected) assert.deepEqual(bytes, await readFile(resolve(root, "dist", name)), name);
     result = run(directory, ["--check"]);
     assert.equal(result.status, 0, result.stderr);
+    const runtimePin = await readFile(resolve(directory, ".node-version"));
+    await writeFile(resolve(directory, ".node-version"), "0.0.0\n");
+    for (const args of [[], ["--check"]]) {
+      result = run(directory, args);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /Node.js 0\.0\.0 is required by \.node-version/);
+      for (const [name, bytes] of expected) assert.deepEqual(await readFile(resolve(directory, "dist", name)), bytes);
+    }
+    await writeFile(resolve(directory, ".node-version"), runtimePin);
     for (const name of ["writemark-editor.global.min.js", "writemark-editor.d.ts"]) {
       const altered = Buffer.concat([expected.get(name), Buffer.from("\n// manual change\n")]);
       await writeFile(resolve(directory, "dist", name), altered);
@@ -31,13 +40,21 @@ test("builds repeatable files and rejects stale source, artifacts, and declarati
       assert.deepEqual(await readFile(resolve(directory, "dist", name)), altered);
       await writeFile(resolve(directory, "dist", name), expected.get(name));
     }
-    const source = resolve(directory, "src/security.js");
+    const source = resolve(directory, "src/security.ts");
+    const originalSource = await readFile(source, "utf8");
+    await writeFile(source, originalSource + "\nexport const unsafe: any = 1;\n");
+    result = run(directory);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /any is forbidden|inferred any/);
+    for (const [name, bytes] of expected) assert.deepEqual(await readFile(resolve(directory, "dist", name)), bytes);
+    await writeFile(source, originalSource);
+
     await writeFile(source, (await readFile(source, "utf8")) + "\n// source changed\n");
     result = run(directory, ["--check"]);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /manifest.json is missing or stale/);
     for (const [name, bytes] of expected) assert.deepEqual(await readFile(resolve(directory, "dist", name)), bytes);
-    await writeFile(source, await readFile(resolve(root, "src/security.js")));
+    await writeFile(source, await readFile(resolve(root, "src/security.ts")));
     await writeFile(resolve(directory, "dist/unexpected.css"), "body {}\n");
     result = run(directory, ["--check"]);
     assert.notEqual(result.status, 0);

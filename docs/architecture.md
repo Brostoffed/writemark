@@ -5,16 +5,30 @@ Internal modules do not create separate packages or public entry paths.
 
 | Area | Responsibility |
 |---|---|
-| `src/writemark-editor.js` | Public exports and JSDoc signatures. |
-| `src/types.js` | Public configuration, action, provider, and event type contracts. |
-| `src/config.js` | Defaults and supported configuration names. |
-| `src/security.js` | HTML escaping and URL policy. |
+| `src/writemark-editor.ts` | Public exports with checked TypeScript signatures. |
+| `src/types.ts` | Public configuration, action, provider, and event type contracts. |
+| `src/config.ts` | Defaults and supported configuration names. |
+| `src/security.ts` | HTML escaping and URL policy. |
 | `src/core/` | Text offsets, document state, transactions, and history. |
 | `src/markdown/` | Block, inline, table, reference, and tag syntax. |
 | `src/render/` | HTML output, live DOM updates, render caches, and viewport state. |
 | `src/browser/` | Input, composition, DOM selection, source mapping, clipboard conversion, and completion requests. |
 | `src/actions/` | Source edits and built-in action registration. |
 | `src/component/` | Public element API, lifecycle, forms, events, registration, template, and styles. |
+
+## Type contracts
+
+The editor source uses strict TypeScript.
+The compiler checks controller callbacks against explicit capability interfaces.
+Each subsystem stores its internal contracts in its own `types.ts` file.
+`src/types.ts` defines the public contracts.
+The public entry exposes these contracts and checked implementations.
+
+`MarkdownBlock` requires the fields for each block type.
+It rejects fields from a different block type.
+`CompletionState` separates closed, loading, and open states.
+`ActionResult` separates success from failure.
+The event dispatcher checks each event payload against its event name.
 
 ## State
 

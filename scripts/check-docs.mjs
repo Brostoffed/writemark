@@ -97,7 +97,7 @@ for (const [file, document] of parsed) {
 }
 
 const apiReference = readFileSync(join(root, 'docs/api-reference.md'), 'utf8');
-const source = readFileSync(join(root, 'src/writemark-editor.js'), 'utf8');
+const source = readFileSync(join(root, 'src/writemark-editor.ts'), 'utf8');
 const testGuide = readFileSync(join(root, 'tests/README.md'), 'utf8');
 
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -137,7 +137,7 @@ const publicExports = exportStatements.at(-1)?.[1]
   .filter(Boolean) ?? [];
 
 if (!publicExports.length) {
-  failures.push('src/writemark-editor.js has no discoverable public export statement');
+  failures.push('src/writemark-editor.ts has no discoverable public export statement');
 } else {
   for (const name of publicExports) {
     if (!apiReference.includes(name)) {

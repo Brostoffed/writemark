@@ -1,4 +1,4 @@
-/*! Writemark v1.8.0
+/*! Writemark v1.8.1
 MIT License
 
 Copyright (c) 2026
@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 (() => {
+"use strict";
 var __writemark = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -42,15 +43,15 @@ var __writemark = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // src/writemark-editor.js
+  // src/writemark-editor.ts
   var writemark_editor_exports = {};
   __export(writemark_editor_exports, {
     MdLiveEditorElement: () => MdLiveEditorElement3,
     WritemarkEditorElement: () => WritemarkEditorElement3,
     htmlToMarkdown: () => htmlToMarkdown2,
-    parseBlockquote: () => parseBlockquote2,
-    parseBlocks: () => parseBlocks2,
-    parseHeading: () => parseHeading2,
+    parseBlockquote: () => parseBlockquote3,
+    parseBlocks: () => parseBlocks3,
+    parseHeading: () => parseHeading3,
     parseListItem: () => parseListItem2,
     parseTags: () => parseTags2,
     renderInlineMarkdown: () => renderInlineMarkdown2,
@@ -58,7 +59,15 @@ var __writemark = (() => {
     tsvToMarkdownTable: () => tsvToMarkdownTable2
   });
 
-  // src/browser/runtime.js
+  // src/core/collections.ts
+  function requireItem(items, index) {
+    const item = items[index];
+    if (item === void 0) throw new RangeError(`Missing array entry at ${index}.`);
+    return item;
+  }
+  __name(requireItem, "requireItem");
+
+  // src/browser/runtime.ts
   function isAppleWebKitRuntime(navigator = globalThis.navigator) {
     const userAgent = navigator?.userAgent || "";
     if (!/AppleWebKit/.test(userAgent)) return false;
@@ -80,9 +89,8 @@ var __writemark = (() => {
       candidates.push({ channel, selection });
     }, "add");
     try {
-      if (typeof shadowRoot?.getSelection === "function") {
-        add("shadow", shadowRoot.getSelection());
-      }
+      const root = shadowRoot;
+      if (typeof root?.getSelection === "function") add("shadow", root.getSelection());
     } catch {
     }
     try {
@@ -93,7 +101,7 @@ var __writemark = (() => {
   }
   __name(readSelectionCandidates, "readSelectionCandidates");
 
-  // src/config.js
+  // src/config.ts
   var TAG_NAME = "writemark-editor";
   var LEGACY_TAG_NAME = "md-live-editor";
   var DEFAULTS = Object.freeze({
@@ -204,7 +212,7 @@ var __writemark = (() => {
   }
   __name(normalizeIndentAttribute, "normalizeIndentAttribute");
 
-  // src/core/text.js
+  // src/core/text.ts
   function now() {
     return Date.now();
   }
@@ -242,11 +250,12 @@ var __writemark = (() => {
     const previous = /* @__PURE__ */ __name((index) => {
       if (index <= 0) return null;
       let start = index - 1;
-      if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start]) && /[\uD800-\uDBFF]/.test(text[start - 1])) start -= 1;
+      if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start] || "") && /[\uD800-\uDBFF]/.test(text[start - 1] || "")) start -= 1;
       return { start, char: text.slice(start, index) };
     }, "previous");
     for (let index = offset; index > 0; ) {
       const current = previous(index);
+      if (!current) break;
       const before = previous(current.start);
       if (before && stable.test(current.char) && stable.test(before.char)) return current.start;
       index = current.start;
@@ -268,7 +277,7 @@ var __writemark = (() => {
     let radius = 64;
     while (true) {
       let end = Math.min(text.length, safe + radius);
-      if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end += 1;
+      if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1] || "")) end += 1;
       const next = graphemeBoundaries(text.slice(start, end)).find((boundary) => boundary > safe - start) ?? end - start;
       if (next < end - start || end === text.length) return start + next;
       radius *= 2;
@@ -306,7 +315,7 @@ var __writemark = (() => {
   }
   __name(getLineRange, "getLineRange");
 
-  // src/browser/selection.js
+  // src/browser/selection.ts
   var SelectionController = class {
     static {
       __name(this, "SelectionController");
@@ -383,13 +392,13 @@ var __writemark = (() => {
     }
     disconnect() {
       const doc = this.ownerDocument || document;
-      doc.removeEventListener("mousemove", this._boundLiveMouseMove, true);
-      doc.removeEventListener("mouseup", this._boundLiveMouseEnd, true);
+      if (this._boundLiveMouseMove) doc.removeEventListener("mousemove", this._boundLiveMouseMove, true);
+      if (this._boundLiveMouseEnd) doc.removeEventListener("mouseup", this._boundLiveMouseEnd, true);
       this._pointerSelection = null;
     }
     _onLiveMouseDown(event) {
       if (this.disabled || this.readonly || this.mode === "source" || event.button !== 0 || event.detail > 1) return;
-      if (event.target.closest?.("[data-task-checkbox]")) return;
+      if (event.target instanceof Element && event.target.closest("[data-task-checkbox]")) return;
       const anchor = this._sourceOffsetForClientPoint(event.clientX, event.clientY);
       if (anchor == null) return;
       const editable = this._liveEditableFromPoint(event.clientX, event.clientY);
@@ -451,8 +460,8 @@ var __writemark = (() => {
       }, 0);
       this._pointerSelection = null;
       const doc = this.ownerDocument || document;
-      doc.removeEventListener("mousemove", this._boundLiveMouseMove, true);
-      doc.removeEventListener("mouseup", this._boundLiveMouseEnd, true);
+      if (this._boundLiveMouseMove) doc.removeEventListener("mousemove", this._boundLiveMouseMove, true);
+      if (this._boundLiveMouseEnd) doc.removeEventListener("mouseup", this._boundLiveMouseEnd, true);
       if (!state.native) event.preventDefault();
       else {
         this.api._emitSelectionChange();
@@ -488,7 +497,7 @@ var __writemark = (() => {
       const focus = selection.direction === "backward" ? selection.start : selection.end;
       const anchor = selection.direction === "backward" ? selection.end : selection.start;
       const line = getLineRange(this._value, focus);
-      const editableRange = !this._isSourceActive() ? this._editableSourceRange(activeEditable) : null;
+      const editableRange = !this._isSourceActive() ? activeEditable ? this._editableSourceRange(activeEditable) : null : null;
       const target = boundary === "start" ? editableRange?.from ?? line.start : editableRange?.to ?? line.end;
       event.preventDefault();
       if (event.shiftKey) this._setSourceBackedSelection(anchor, target);
@@ -984,7 +993,7 @@ var __writemark = (() => {
       }
       const candidates = this.api.readSelectionCandidates();
       const strictDocumentRestore = options.strictDocumentRestore ?? Boolean(
-        candidates.length === 1 && candidates[0].channel === "document" && this.api.isAppleWebKitRuntime()
+        candidates.length === 1 && candidates[0]?.channel === "document" && this.api.isAppleWebKitRuntime()
       );
       let actual = null;
       let observed = null;
@@ -1168,7 +1177,7 @@ var __writemark = (() => {
         if (safe >= from && safe <= to) return this._textPositionInElement(el, this._displayOffsetFromSourceOffset(el, safe));
         previous = el;
       }
-      return this._textPositionInElement(previous, this._plainText(previous).length);
+      return previous ? this._textPositionInElement(previous, this._plainText(previous).length) : null;
     }
     _rebuildLiveIndex() {
       const editables = [...this._liveEditor.querySelectorAll("[data-editable]")].filter((el) => Number.isFinite(Number(el.dataset.from)) && Number.isFinite(Number(el.dataset.to))).sort((a, b) => Number(a.dataset.from) - Number(b.dataset.from));
@@ -1193,12 +1202,12 @@ var __writemark = (() => {
       let lastText = null;
       while (walker.nextNode()) {
         const node = walker.currentNode;
-        const len = node.nodeValue.length;
+        const len = (node.nodeValue || "").length;
         lastText = node;
         if (remaining <= len) return { node, offset: remaining, editable: el };
         remaining -= len;
       }
-      if (lastText) return { node: lastText, offset: lastText.nodeValue.length, editable: el };
+      if (lastText) return { node: lastText, offset: (lastText.nodeValue || "").length, editable: el };
       const text = document.createTextNode("");
       el.appendChild(text);
       return { node: text, offset: 0, editable: el };
@@ -1247,7 +1256,7 @@ var __writemark = (() => {
       return range && editable?.dataset?.editable === "cell" ? this._value.slice(range.from, range.to) : null;
     }
     _closestEditable(target) {
-      return target?.closest?.("[data-editable]") ?? null;
+      return target instanceof Element ? target.closest("[data-editable]") : null;
     }
     _editableSourceRange(editable) {
       const from = Number(editable?.dataset?.from);
@@ -1260,7 +1269,7 @@ var __writemark = (() => {
     }
   };
 
-  // src/markdown/tables.js
+  // src/markdown/tables.ts
   function splitTableRow(line) {
     let row = String(line ?? "").trim();
     if (row.startsWith("|")) row = row.slice(1);
@@ -1302,7 +1311,7 @@ var __writemark = (() => {
     return t.includes("|") && splitTableRow(t).length >= 2;
   }
   __name(isLikelyTableRow, "isLikelyTableRow");
-  function parseTableLineRanges(line, absoluteStart) {
+  function parseTableLineRanges(line, absoluteStart, preserveWhitespace = false) {
     const raw = String(line ?? "");
     const cells = [];
     let start = 0;
@@ -1327,8 +1336,14 @@ var __writemark = (() => {
         const rawCellEnd = i;
         let from = cellStart;
         let to = i;
-        while (from < to && raw[from] === " ") from += 1;
-        while (to > from && raw[to - 1] === " ") to -= 1;
+        while (from < to && raw[from] === " ") {
+          from += 1;
+          if (preserveWhitespace) break;
+        }
+        while (to > from && raw[to - 1] === " ") {
+          to -= 1;
+          if (preserveWhitespace) break;
+        }
         if (from === to && rawCellEnd > rawCellStart && raw[rawCellStart] === " ") {
           from = Math.min(rawCellStart + 1, rawCellEnd);
           to = from;
@@ -1359,7 +1374,7 @@ var __writemark = (() => {
   }
   __name(unescapeTableCellText, "unescapeTableCellText");
 
-  // src/markdown/block-syntax.js
+  // src/markdown/block-syntax.ts
   function getSelectedLineRanges(value, selectionStart, selectionEnd, opts = {}) {
     const startLine = getLineRange(value, selectionStart);
     const endProbe = selectionEnd > selectionStart && value[selectionEnd - 1] === "\n" ? selectionEnd - 1 : selectionEnd;
@@ -1390,19 +1405,19 @@ var __writemark = (() => {
     if (usesGfm(opts)) {
       const task = /^(\s*)([-+*])(\s+)\[( |x|X)\](\s+)(.*)$/.exec(line);
       if (task) {
-        const markerText = `${task[2]}${task[3]}[${task[4]}]${task[5]}`;
-        return { kind: "task-list-item", listType: "ul", indent: task[1], marker: task[2], markerText, checked: task[4].toLowerCase() === "x", content: task[6], contentStart: task[1].length + markerText.length, fullMarkerStart: task[1].length, fullMarkerEnd: task[1].length + markerText.length };
+        const markerText = `${task[2] ?? ""}${task[3] ?? ""}[${task[4] ?? ""}]${task[5] ?? ""}`;
+        return { kind: "task-list-item", listType: "ul", indent: task[1] ?? "", marker: task[2] ?? "", markerText, checked: (task[4] ?? "").toLowerCase() === "x", content: task[6] ?? "", contentStart: (task[1] ?? "").length + markerText.length, fullMarkerStart: (task[1] ?? "").length, fullMarkerEnd: (task[1] ?? "").length + markerText.length };
       }
     }
     const ordered = /^(\s*)(\d+)([.)])(\s+)(.*)$/.exec(line);
     if (ordered) {
-      const markerText = `${ordered[2]}${ordered[3]}${ordered[4]}`;
-      return { kind: "ordered-list-item", listType: "ol", indent: ordered[1], marker: ordered[2], number: Number(ordered[2]), delimiter: ordered[3], markerText, content: ordered[5], contentStart: ordered[1].length + markerText.length, fullMarkerStart: ordered[1].length, fullMarkerEnd: ordered[1].length + markerText.length };
+      const markerText = `${ordered[2] ?? ""}${ordered[3] ?? ""}${ordered[4] ?? ""}`;
+      return { kind: "ordered-list-item", listType: "ol", indent: ordered[1] ?? "", marker: ordered[2] ?? "", number: Number(ordered[2] ?? ""), delimiter: ordered[3] ?? "", markerText, content: ordered[5] ?? "", contentStart: (ordered[1] ?? "").length + markerText.length, fullMarkerStart: (ordered[1] ?? "").length, fullMarkerEnd: (ordered[1] ?? "").length + markerText.length };
     }
     const bullet = /^(\s*)([-+*])(\s+)(.*)$/.exec(line);
     if (bullet) {
-      const markerText = `${bullet[2]}${bullet[3]}`;
-      return { kind: "bullet-list-item", listType: "ul", indent: bullet[1], marker: bullet[2], markerText, content: bullet[4], contentStart: bullet[1].length + markerText.length, fullMarkerStart: bullet[1].length, fullMarkerEnd: bullet[1].length + markerText.length };
+      const markerText = `${bullet[2] ?? ""}${bullet[3] ?? ""}`;
+      return { kind: "bullet-list-item", listType: "ul", indent: bullet[1] ?? "", marker: bullet[2] ?? "", markerText, content: bullet[4] ?? "", contentStart: (bullet[1] ?? "").length + markerText.length, fullMarkerStart: (bullet[1] ?? "").length, fullMarkerEnd: (bullet[1] ?? "").length + markerText.length };
     }
     return null;
   }
@@ -1410,19 +1425,19 @@ var __writemark = (() => {
   function parseHeading(line) {
     const m = /^(\s{0,3})(#{1,6})([ \t]+)(.*)$/.exec(line);
     if (!m) return null;
-    let content = m[4];
+    let content = m[4] ?? "";
     if (/^#+[ \t]*$/.test(content)) content = "";
     else {
       const closing = /^(.*?)[ \t]+#+[ \t]*$/.exec(content);
-      content = closing ? closing[1] : content.replace(/[ \t]+$/, "");
+      content = closing ? closing[1] ?? "" : content.replace(/[ \t]+$/, "");
     }
-    const separator = m[3];
+    const separator = m[3] ?? "";
     return {
-      indent: m[1],
-      level: m[2].length,
-      markerText: `${m[2]}${separator}`,
+      indent: m[1] ?? "",
+      level: (m[2] ?? "").length,
+      markerText: `${m[2] ?? ""}${separator}`,
       content,
-      contentStart: m[1].length + m[2].length + separator.length
+      contentStart: (m[1] ?? "").length + (m[2] ?? "").length + separator.length
     };
   }
   __name(parseHeading, "parseHeading");
@@ -1430,19 +1445,19 @@ var __writemark = (() => {
     const m = /^(\s*>\s?)(.*)$/.exec(line);
     if (!m) return null;
     let depth = 1;
-    let fullContentStart = m[1].length;
-    let nestedContent = m[2];
+    let fullContentStart = (m[1] ?? "").length;
+    let nestedContent = m[2] ?? "";
     while (true) {
       const nested = /^(\s*>\s?)(.*)$/.exec(nestedContent);
       if (!nested) break;
       depth += 1;
-      fullContentStart += nested[1].length;
-      nestedContent = nested[2];
+      fullContentStart += (nested[1] ?? "").length;
+      nestedContent = nested[2] ?? "";
     }
     return {
-      markerText: m[1],
-      content: m[2],
-      contentStart: m[1].length,
+      markerText: m[1] ?? "",
+      content: m[2] ?? "",
+      contentStart: (m[1] ?? "").length,
       depth,
       fullContentStart
     };
@@ -1456,10 +1471,10 @@ var __writemark = (() => {
   function getFenceInfo(line) {
     const m = /^(\s{0,3})(`{3,}|~{3,})[ \t]*(.*)$/.exec(line);
     if (!m) return null;
-    const marker = m[2][0];
-    const info = m[3].trim();
+    const marker = (m[2] ?? "")[0] || "`";
+    const info = (m[3] ?? "").trim();
     if (marker === "`" && info.includes("`")) return null;
-    return { marker, length: m[2].length, sequence: m[2], info, language: info.split(/[ \t]+/, 1)[0] || "" };
+    return { marker, length: (m[2] ?? "").length, sequence: m[2] ?? "", info, language: info.split(/[ \t]+/, 1)[0] || "" };
   }
   __name(getFenceInfo, "getFenceInfo");
   function isFenceLine(line) {
@@ -1474,7 +1489,7 @@ var __writemark = (() => {
   function parseSetextHeadingLevel(line) {
     const m = /^\s{0,3}(=+|-+)\s*$/.exec(line);
     if (!m) return null;
-    return m[1][0] === "=" ? 1 : 2;
+    return (m[1] ?? "")[0] === "=" ? 1 : 2;
   }
   __name(parseSetextHeadingLevel, "parseSetextHeadingLevel");
   function isInsideInlineCode(lineBeforeCursor) {
@@ -1521,7 +1536,7 @@ var __writemark = (() => {
   }
   __name(hasClosingFenceAfter, "hasClosingFenceAfter");
 
-  // src/markdown/blocks.js
+  // src/markdown/blocks.ts
   function headingSlug(value) {
     const text = String(value ?? "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/\\([\\`*_[\]{}()#+\-.!])/g, "$1").replace(/[`*_~]/g, "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").trim().replace(/\s+/g, "-");
     return text || "section";
@@ -1552,37 +1567,37 @@ var __writemark = (() => {
     const blocks = [];
     const gfm = usesGfm(opts);
     for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
+      const line = requireItem(lines, i);
       const fenceInfo = getFenceInfo(line.text);
       if (fenceInfo && (line.newlineEnd > line.end || i + 1 < lines.length)) {
         const codeLines = [];
         let j = i + 1;
-        while (j < lines.length && !isFenceCloseLine(lines[j].text, fenceInfo)) {
-          codeLines.push(lines[j]);
+        while (j < lines.length && !isFenceCloseLine(requireItem(lines, j).text, fenceInfo)) {
+          codeLines.push(requireItem(lines, j));
           j += 1;
         }
-        const closing = j < lines.length ? lines[j] : null;
+        const closing = j < lines.length ? requireItem(lines, j) : null;
         blocks.push({ type: "code-fence", from: line.start, to: (closing ?? codeLines.at(-1) ?? line).end, newlineEnd: (closing ?? codeLines.at(-1) ?? line).newlineEnd, opening: line, closing, codeLines, language: fenceInfo.language, fence: fenceInfo });
         i = closing ? j : j - 1;
         continue;
       }
-      if (gfm && i + 1 < lines.length && isLikelyTableRow(line.text) && isTableDelimiter(lines[i + 1].text)) {
-        const header = { ...lines[i], cells: parseTableLineRanges(lines[i].text, lines[i].start) };
-        const delimiter = { ...lines[i + 1], cells: parseTableLineRanges(lines[i + 1].text, lines[i + 1].start) };
+      if (gfm && i + 1 < lines.length && isLikelyTableRow(line.text) && isTableDelimiter(requireItem(lines, i + 1).text)) {
+        const header = { ...requireItem(lines, i), cells: parseTableLineRanges(requireItem(lines, i).text, requireItem(lines, i).start) };
+        const delimiter = { ...requireItem(lines, i + 1), cells: parseTableLineRanges(requireItem(lines, i + 1).text, requireItem(lines, i + 1).start) };
         const rows = [];
         let j = i + 2;
-        while (j < lines.length && lines[j].text.trim() && isLikelyTableRow(lines[j].text)) {
-          rows.push({ ...lines[j], cells: parseTableLineRanges(lines[j].text, lines[j].start) });
+        while (j < lines.length && requireItem(lines, j).text.trim() && isLikelyTableRow(requireItem(lines, j).text)) {
+          rows.push({ ...requireItem(lines, j), cells: parseTableLineRanges(requireItem(lines, j).text, requireItem(lines, j).start) });
           j += 1;
         }
         blocks.push({ type: "table", from: line.start, to: (rows.at(-1) ?? delimiter).end, newlineEnd: (rows.at(-1) ?? delimiter).newlineEnd, header, delimiter, rows });
         i = j - 1;
         continue;
       }
-      const setextLevel = i + 1 < lines.length ? parseSetextHeadingLevel(lines[i + 1].text) : null;
+      const setextLevel = i + 1 < lines.length ? parseSetextHeadingLevel(requireItem(lines, i + 1).text) : null;
       const canSetext = setextLevel && line.text.trim() && !parseHeading(line.text) && !parseListItem(line.text, opts) && !parseBlockquote(line.text) && !isHorizontalRule(line.text);
       if (canSetext) {
-        blocks.push({ type: "heading", from: line.start, to: lines[i + 1].end, newlineEnd: lines[i + 1].newlineEnd, line, heading: { indent: "", level: setextLevel, markerText: lines[i + 1].text, content: line.text.trim(), contentStart: 0 }, setext: lines[i + 1] });
+        blocks.push({ type: "heading", from: line.start, to: requireItem(lines, i + 1).end, newlineEnd: requireItem(lines, i + 1).newlineEnd, line, heading: { indent: "", level: setextLevel, markerText: requireItem(lines, i + 1).text, content: line.text.trim(), contentStart: 0 }, setext: requireItem(lines, i + 1) });
         i += 1;
         continue;
       }
@@ -1612,15 +1627,15 @@ var __writemark = (() => {
   }
   __name(parseBlocks, "parseBlocks");
 
-  // src/markdown/inline.js
+  // src/markdown/inline.ts
   var ESCAPABLE_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
   function isEscapablePunctuation(char) {
-    return Boolean(char) && ESCAPABLE_PUNCTUATION.includes(char);
+    return char != null && ESCAPABLE_PUNCTUATION.includes(char);
   }
   __name(isEscapablePunctuation, "isEscapablePunctuation");
   function placeholderPrefix(source) {
     let longestRun = 0;
-    for (const match of String(source ?? "").matchAll(/\uE000+/g)) longestRun = Math.max(longestRun, match[0].length);
+    for (const match of String(source ?? "").matchAll(/\uE000+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
     return "\uE000".repeat(longestRun + 1);
   }
   __name(placeholderPrefix, "placeholderPrefix");
@@ -1645,7 +1660,10 @@ var __writemark = (() => {
         continue;
       }
       if (char === "[") openers.push(i);
-      else if (char === "]" && openers.length) matches[openers.pop()] = i;
+      else if (char === "]" && openers.length) {
+        const opener = openers.pop();
+        if (opener != null) matches[opener] = i;
+      }
     }
     return matches;
   }
@@ -1686,7 +1704,7 @@ var __writemark = (() => {
   function codeSpanMarkdown(content) {
     const value = String(content ?? "");
     let longestRun = 0;
-    for (const match of value.matchAll(/`+/g)) longestRun = Math.max(longestRun, match[0].length);
+    for (const match of value.matchAll(/`+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
     const marker = "`".repeat(longestRun + 1);
     const padded = value && (value.startsWith("`") || value.endsWith("`") || value.startsWith(" ") && value.endsWith(" ")) ? ` ${value} ` : value;
     return `${marker}${padded}${marker}`;
@@ -1696,9 +1714,9 @@ var __writemark = (() => {
     const value = String(raw ?? "").trim();
     if (!value) return { url: "", title: "" };
     const angle = /^<([^<>\n]*)>(?:\s+(["'])(.*?)\2)?\s*$/.exec(value);
-    if (angle) return { url: angle[1], title: angle[3] || "" };
+    if (angle) return { url: angle[1] ?? "", title: angle[3] || "" };
     const quoted = /^(.*?)\s+(["'])(.*?)\2\s*$/.exec(value);
-    if (quoted && quoted[1].trim()) return { url: quoted[1].trim(), title: quoted[3] };
+    if (quoted && (quoted[1] ?? "").trim()) return { url: (quoted[1] ?? "").trim(), title: quoted[3] ?? "" };
     return { url: value, title: "" };
   }
   __name(splitLinkDestinationAndTitle, "splitLinkDestinationAndTitle");
@@ -1709,7 +1727,7 @@ var __writemark = (() => {
     let i = start + bang.length;
     if (source[i] !== "[" || isBackslashEscaped(source, i)) return null;
     let escaped = false;
-    let labelEnd = brackets ? brackets[i] : -1;
+    let labelEnd = brackets ? brackets[i] ?? -1 : -1;
     if (!brackets) {
       let labelDepth = 1;
       for (let j = i + 1; j < source.length; j += 1) {
@@ -1805,7 +1823,7 @@ var __writemark = (() => {
     const bang = source[start] === "!" ? "!" : "";
     const labelStartMarker = start + bang.length;
     if (source[labelStartMarker] !== "[" || isBackslashEscaped(source, labelStartMarker)) return null;
-    let labelEnd = brackets ? brackets[labelStartMarker] : -1;
+    let labelEnd = brackets ? brackets[labelStartMarker] ?? -1 : -1;
     if (!brackets) {
       let escaped = false;
       let depth = 1;
@@ -1861,7 +1879,7 @@ var __writemark = (() => {
   }
   __name(isInlineWhitespace, "isInlineWhitespace");
   function isInlinePunctuation(char) {
-    return Boolean(char) && /[\p{P}\p{S}]/u.test(char);
+    return char != null && /[\p{P}\p{S}]/u.test(char);
   }
   __name(isInlinePunctuation, "isInlinePunctuation");
   function emphasisDelimiterRuns(source) {
@@ -1906,10 +1924,12 @@ var __writemark = (() => {
       if (closer.canClose) {
         while (closer.remaining > 0) {
           const candidates = openers[closer.marker];
-          while (candidates.length && candidates.at(-1).remaining <= 0) candidates.pop();
+          while (candidates.length && (candidates.at(-1)?.remaining ?? 0) <= 0) candidates.pop();
           let opener = null;
           for (let openerIndex = candidates.length - 1; openerIndex >= 0; openerIndex -= 1) {
             const candidate = candidates[openerIndex];
+            if (!candidate) continue;
+            ;
             if (candidate.remaining <= 0) continue;
             const blockedByRuleOfThree = (candidate.canClose || closer.canOpen) && (candidate.remaining + closer.remaining) % 3 === 0 && (candidate.remaining % 3 !== 0 || closer.remaining % 3 !== 0);
             if (blockedByRuleOfThree) continue;
@@ -1946,9 +1966,9 @@ var __writemark = (() => {
       let match;
       while (match = regex.exec(source)) {
         const label = match[labelGroup] ?? "";
-        const markerOffset = markerOffsetGroup == null ? 0 : match[markerOffsetGroup]?.length ?? 0;
+        const markerOffset = markerOffsetGroup == null ? 0 : (match[markerOffsetGroup] ?? "")?.length ?? 0;
         const from = match.index + markerOffset;
-        const to = match.index + match[0].length;
+        const to = match.index + (match[0] ?? "").length;
         const innerFrom = from + openLength;
         const innerTo = to - closeLength;
         if (isBackslashEscaped(source, from) || isBackslashEscaped(source, to - closeLength)) continue;
@@ -1978,13 +1998,13 @@ var __writemark = (() => {
   }
   __name(collectInlineMarkdownRanges, "collectInlineMarkdownRanges");
 
-  // src/markdown/references.js
+  // src/markdown/references.ts
   function parseReferenceDefinition(line) {
     const match = /^ {0,3}\[([^\]\n]+)\]:[ \t]*(.+?)\s*$/.exec(String(line ?? ""));
     if (!match) return null;
-    const label = normalizeReferenceLabel(match[1]);
+    const label = normalizeReferenceLabel(match[1] ?? "");
     if (!label) return null;
-    const destination = splitLinkDestinationAndTitle(match[2]);
+    const destination = splitLinkDestinationAndTitle(match[2] ?? "");
     if (!destination.url) return null;
     return { label, ...destination };
   }
@@ -2006,19 +2026,20 @@ var __writemark = (() => {
         continue;
       }
       if (!references.has(definition.label)) references.set(definition.label, definition);
-      output[lineIndexes.get(block.line.start)] = "";
+      const lineIndex = lineIndexes.get(block.line.start);
+      if (lineIndex != null) output[lineIndex] = "";
     }
     return { markdown: output.join("\n"), references };
   }
   __name(extractReferenceDefinitions, "extractReferenceDefinitions");
 
-  // src/markdown/tags.js
+  // src/markdown/tags.ts
   function normalizeTagKey(value) {
     return String(value ?? "").normalize("NFC").toLowerCase();
   }
   __name(normalizeTagKey, "normalizeTagKey");
   function isTagBodyCharacter(char) {
-    return Boolean(char) && /[\p{L}\p{M}\p{N}_-]/u.test(char);
+    return char != null && /[\p{L}\p{M}\p{N}_-]/u.test(char);
   }
   __name(isTagBodyCharacter, "isTagBodyCharacter");
   function isValidTagValue(value) {
@@ -2030,7 +2051,7 @@ var __writemark = (() => {
   __name(isValidTagValue, "isValidTagValue");
   function isTagBoundary(source, index) {
     if (index === 0) return true;
-    const before = source[index - 1];
+    const before = source[index - 1] || "";
     if (!/\s|[\p{P}\p{S}]/u.test(before) || before === "#" || before === "/") return false;
     const tokenStart = Math.max(
       source.lastIndexOf(" ", index - 1),
@@ -2066,11 +2087,11 @@ var __writemark = (() => {
     const lines = getLines(source);
     const excluded = [];
     for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
+      const line = requireItem(lines, i);
       const fence = getFenceInfo(line.text);
       if (fence && (line.newlineEnd > line.end || i + 1 < lines.length)) {
         let closingIndex = i + 1;
-        while (closingIndex < lines.length && !isFenceCloseLine(lines[closingIndex].text, fence)) closingIndex += 1;
+        while (closingIndex < lines.length && !isFenceCloseLine(requireItem(lines, closingIndex).text, fence)) closingIndex += 1;
         const last = lines[closingIndex] || lines.at(-1) || line;
         excluded.push({ from: line.start, to: last.newlineEnd });
         i = closingIndex < lines.length ? closingIndex : lines.length - 1;
@@ -2085,7 +2106,7 @@ var __writemark = (() => {
       const brackets = matchingBrackets(text);
       for (let i = 0; i < text.length; i += 1) {
         const absolute = offset + i;
-        while (excludedIndex < excluded.length && excluded[excludedIndex].to <= absolute) excludedIndex += 1;
+        while (excludedIndex < excluded.length && requireItem(excluded, excludedIndex).to <= absolute) excludedIndex += 1;
         const blocked = excluded[excludedIndex];
         if (offset === 0 && blocked && blocked.from <= absolute && absolute < blocked.to) {
           i = blocked.to - 1;
@@ -2130,7 +2151,7 @@ var __writemark = (() => {
   }
   __name(parseTags, "parseTags");
 
-  // src/security.js
+  // src/security.ts
   function escapeHtml(value) {
     return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -2176,7 +2197,7 @@ var __writemark = (() => {
   }
   __name(codeLanguage, "codeLanguage");
 
-  // src/render/inline.js
+  // src/render/inline.ts
   function renderEmphasisMarkdown(source, markerHtml = () => "") {
     const spans = [];
     for (const pair of emphasisPairs(source)) {
@@ -2338,7 +2359,7 @@ var __writemark = (() => {
   }
   __name(renderInlineMarkdown, "renderInlineMarkdown");
 
-  // src/browser/clipboard.js
+  // src/browser/clipboard.ts
   function stripHtml(value) {
     const template = document.createElement("template");
     template.innerHTML = String(value ?? "");
@@ -2351,7 +2372,7 @@ var __writemark = (() => {
     const escapeMd = /* @__PURE__ */ __name((text) => String(text ?? "").replace(/\u00a0/g, " ").replace(/[\\`*_{}\[\]()#+\-.!>~|]/g, "\\$&"), "escapeMd");
     const walk = /* @__PURE__ */ __name((node) => {
       if (node.nodeType === Node.TEXT_NODE) return escapeMd(node.nodeValue);
-      if (node.nodeType !== Node.ELEMENT_NODE) return "";
+      if (!(node instanceof Element)) return "";
       const tag = node.tagName.toLowerCase();
       const children = /* @__PURE__ */ __name(() => Array.from(node.childNodes).map(walk).join(""), "children");
       const block = /* @__PURE__ */ __name((text) => `
@@ -2364,11 +2385,11 @@ ${text.trim()}
       if (/^h[1-6]$/.test(tag)) return block(`${"#".repeat(Number(tag[1]))} ${children().trim()}`);
       if (tag === "strong" || tag === "b") return `**${children()}**`;
       if (tag === "em" || tag === "i") return `*${children()}*`;
-      if (tag === "code" && node.parentElement?.tagName?.toLowerCase() !== "pre") return codeSpanMarkdown(node.textContent);
+      if (tag === "code" && node.parentElement?.tagName?.toLowerCase() !== "pre") return codeSpanMarkdown(node.textContent || "");
       if (tag === "pre") {
         const content = normalizeLineEndings(node.textContent);
         let longestRun = 2;
-        for (const match of content.matchAll(/`+/g)) longestRun = Math.max(longestRun, match[0].length);
+        for (const match of content.matchAll(/`+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
         const fence = "`".repeat(longestRun + 1);
         return block(`${fence}
 ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
@@ -2395,7 +2416,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
         if (!rows.length) return "";
         const cols = Math.max(...rows.map((r) => r.length));
         const pad = /* @__PURE__ */ __name((r) => Array.from({ length: cols }, (_, i) => r[i] || ""), "pad");
-        const header = pad(rows[0]);
+        const header = pad(requireItem(rows, 0));
         const body = rows.slice(1).map(pad);
         return block([`| ${header.join(" | ")} |`, `| ${Array.from({ length: cols }, () => "---").join(" | ")} |`, ...body.map((r) => `| ${r.join(" | ")} |`)].join("\n"));
       }
@@ -2410,7 +2431,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
     if (rows.length < 2 || rows.every((row) => row.length < 2)) return null;
     const cols = Math.max(...rows.map((row) => row.length));
     const pad = /* @__PURE__ */ __name((row) => Array.from({ length: cols }, (_, i) => row[i] || ""), "pad");
-    const header = pad(rows[0]);
+    const header = pad(requireItem(rows, 0));
     const body = rows.slice(1).map(pad);
     return [`| ${header.join(" | ")} |`, `| ${Array.from({ length: cols }, () => "---").join(" | ")} |`, ...body.map((row) => `| ${row.join(" | ")} |`)].join("\n");
   }
@@ -2435,7 +2456,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
     const lines = source.split("\n");
     if (lines.some((line) => /^(\s{0,3}#{1,6}\s+|\s*([-+*])\s+|\s*\d+[.)]\s+|\s*[-+*]\s+\[(?: |x|X)\]\s+|\s*>\s?|\s*```|\s*~~~)/.test(line))) return true;
     if (lines.some((line) => isHorizontalRule(line))) return true;
-    if (lines.length >= 2 && isLikelyTableRow(lines[0]) && isTableDelimiter(lines[1])) return true;
+    if (lines.length >= 2 && isLikelyTableRow(requireItem(lines, 0)) && isTableDelimiter(requireItem(lines, 1))) return true;
     return false;
   }
   __name(looksLikeBlockMarkdown, "looksLikeBlockMarkdown");
@@ -2474,7 +2495,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
         const heading = parseHeading(lineInfo.text);
         const quote = parseBlockquote(lineInfo.text);
         const contentStart = heading?.contentStart ?? list?.contentStart ?? quote?.contentStart;
-        if (Number.isFinite(contentStart) && s === lineInfo.start + contentStart && e === lineInfo.end) {
+        if (contentStart != null && Number.isFinite(contentStart) && s === lineInfo.start + contentStart && e === lineInfo.end) {
           s = lineInfo.start;
           e = lineInfo.end;
           changed = true;
@@ -2535,7 +2556,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
   }
   __name(textFromMarkdown, "textFromMarkdown");
 
-  // src/core/transactions.js
+  // src/core/transactions.ts
   function applyTextChanges(value, changes) {
     const sorted = [...changes].sort((a, b) => b.from - a.from);
     let out = value;
@@ -2592,7 +2613,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
   }
   __name(changedSpans, "changedSpans");
   function sameSelection(a, b) {
-    return a && b && a.start === b.start && a.end === b.end && (a.direction || "none") === (b.direction || "none");
+    return Boolean(a && b && a.start === b.start && a.end === b.end && (a.direction || "none") === (b.direction || "none"));
   }
   __name(sameSelection, "sameSelection");
   function makeSnapshot(value, selectionStart, selectionEnd, direction = "none") {
@@ -2629,7 +2650,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
   }
   __name(removePrefixFromLine, "removePrefixFromLine");
 
-  // src/render/live.js
+  // src/render/live.ts
   var LiveRenderer = class {
     static {
       __name(this, "LiveRenderer");
@@ -2878,7 +2899,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       let last = -1;
       const pointRange = rangeStart === rangeEnd;
       for (let i = 0; i < blocks.length; i += 1) {
-        const block = blocks[i];
+        const block = requireItem(blocks, i);
         const blockEnd = Math.max(block.newlineEnd ?? block.to ?? block.from, block.to ?? block.from, block.from);
         if (first === -1 && (pointRange ? blockEnd >= rangeStart : blockEnd > rangeStart)) first = i;
         if (first !== -1 && block.from <= rangeEnd) last = i;
@@ -2894,10 +2915,10 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       return template.content;
     }
     _syncLiveMetadata(blocks) {
-      const children = Array.from(this._liveEditor.children).filter((node) => !node.classList?.contains("md-virtual-spacer"));
+      const children = Array.from(this._liveEditor.children).filter((node) => node instanceof HTMLElement).filter((node) => !node.classList?.contains("md-virtual-spacer"));
       if (children.length !== blocks.length) return false;
       for (let i = 0; i < blocks.length; i += 1) {
-        if (!this._syncLiveBlockNodeMetadata(children[i], blocks[i])) return false;
+        if (!this._syncLiveBlockNodeMetadata(requireItem(children, i), requireItem(blocks, i))) return false;
       }
       return true;
     }
@@ -2937,14 +2958,15 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       if (block.type === "table") {
         const cells = Array.from(node.querySelectorAll('.md-cell[data-editable="cell"]'));
         const cols = Math.max(block.header.cells.length, ...block.rows.map((row) => row.cells.length), 1);
-        const bodyRows = block.rows.length ? block.rows : [{ cells: Array.from({ length: cols }, () => ({ text: "", from: block.delimiter.end, to: block.delimiter.end })) }];
+        const headerCells = parseTableLineRanges(block.header.text, block.header.start, true);
+        const bodyRows = block.rows.length ? block.rows.map((row) => ({ ...row, cells: parseTableLineRanges(row.text, row.start, true) })) : [{ end: block.delimiter.end, cells: Array.from({ length: cols }, () => ({ text: "", from: block.delimiter.end, to: block.delimiter.end })) }];
         const expected = [
-          ...Array.from({ length: cols }, (_, col) => ({ cell: block.header.cells[col] ?? { from: block.header.end, to: block.header.end }, row: -1, col })),
+          ...Array.from({ length: cols }, (_, col) => ({ cell: headerCells[col] ?? { from: block.header.end, to: block.header.end }, row: -1, col })),
           ...bodyRows.flatMap((row, rowIndex) => Array.from({ length: cols }, (_, col) => ({ cell: row.cells[col] ?? { from: row.end, to: row.end }, row: rowIndex, col })))
         ];
         if (cells.length !== expected.length) return false;
         cells.forEach((cell, index) => {
-          const meta = expected[index];
+          const meta = requireItem(expected, index);
           cell.dataset.row = String(meta.row);
           cell.dataset.col = String(meta.col);
           this._setEditableMetadata(cell, meta.cell.from, meta.cell.to);
@@ -2954,10 +2976,10 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       if (block.type === "code-fence") {
         node.dataset.language = String(block.language || "");
         const editables = Array.from(node.querySelectorAll("[data-editable]"));
-        const virtualOffset = block.codeLines[0]?.start ?? (block.closing ? block.opening.newlineEnd : block.opening.end);
+        const virtualOffset = block.codeLines[0]?.start ?? (block.closing ? block.opening.newlineEnd ?? block.opening.end : block.opening.end);
         const lines = block.codeLines.length ? block.codeLines : [{ start: virtualOffset, end: virtualOffset }];
         if (editables.length !== lines.length) return false;
-        editables.forEach((editable2, index) => this._setEditableMetadata(editable2, lines[index].start, lines[index].end, this._lineEditable(), "false"));
+        editables.forEach((editable2, index) => this._setEditableMetadata(editable2, requireItem(lines, index).start ?? block.from, requireItem(lines, index).end, this._lineEditable(), "false"));
         return true;
       }
       if (block.type === "task-list-item") {
@@ -2968,12 +2990,12 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
         return this._setEditableMetadata(source, block.line.start + block.list.contentStart, block.line.end);
       }
       if (block.type === "heading") {
-        const heading = node.matches?.(".md-heading") ? node : node.querySelector?.(".md-heading");
+        const heading = node.matches?.(".md-heading") ? node : node.querySelector(".md-heading");
         if (!heading) return false;
-        heading.id = block.heading.id;
+        heading.id = block.heading.id || "";
         return this._setEditableMetadata(heading, block.line.start, block.line.end);
       }
-      const editable = node.matches?.("[data-editable]") ? node : node.querySelector?.("[data-editable]");
+      const editable = node.matches?.("[data-editable]") ? node : node.querySelector("[data-editable]");
       if (editable && block.line) return this._setEditableMetadata(editable, block.line.start, block.line.end);
       return block.type === "horizontal-rule";
     }
@@ -3006,7 +3028,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
     _tryIncrementalBlocks(previousValue, changes) {
       const sorted = normalizeChanges(changes || []);
       if (!previousValue || sorted.length !== 1 || this._blockCacheValue !== previousValue || !this._blockCache) return null;
-      const change = sorted[0];
+      const change = requireItem(sorted, 0);
       const removed = previousValue.slice(change.from, change.to);
       if (removed.includes("\n") || change.insert.includes("\n")) return null;
       const oldLine = this._lineAt(previousValue, change.from);
@@ -3015,7 +3037,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       const oldBlocks = this._blockCache;
       const index = oldBlocks.findIndex((block) => block.from === oldLine.start && block.to === oldLine.end && block.line);
       if (index === -1) return null;
-      const oldBlock = oldBlocks[index];
+      const oldBlock = requireItem(oldBlocks, index);
       if (oldBlock.type === "table" || oldBlock.type === "code-fence") return null;
       const newBlock = this._parseSingleLineBlock(newLine);
       const delta = this._value.length - previousValue.length;
@@ -3030,19 +3052,15 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
     }
     _shiftLineOffsets(line, delta) {
       if (!line) return line;
-      const shifted = { ...line, start: line.start + delta, end: line.end + delta, newlineEnd: line.newlineEnd + delta };
+      const shifted = { ...line, start: line.start + delta, end: line.end + delta, newlineEnd: (line.newlineEnd ?? line.end) + delta };
       if (line.cells) shifted.cells = line.cells.map((cell) => this._shiftCell(cell, delta));
       return shifted;
     }
     _shiftBlockOffsets(block, delta) {
-      const shifted = { ...block, from: block.from + delta, to: block.to + delta, newlineEnd: block.newlineEnd + delta };
-      if (block.line) shifted.line = this._shiftLineOffsets(block.line, delta);
-      if (block.opening) shifted.opening = this._shiftLineOffsets(block.opening, delta);
-      if (block.closing) shifted.closing = this._shiftLineOffsets(block.closing, delta);
-      if (block.codeLines) shifted.codeLines = block.codeLines.map((line) => this._shiftLineOffsets(line, delta));
-      if (block.header) shifted.header = this._shiftLineOffsets(block.header, delta);
-      if (block.delimiter) shifted.delimiter = this._shiftLineOffsets(block.delimiter, delta);
-      if (block.rows) shifted.rows = block.rows.map((row) => this._shiftLineOffsets(row, delta));
+      const offsets = { from: block.from + delta, to: block.to + delta, newlineEnd: block.newlineEnd + delta };
+      if (block.type === "table") return { ...block, ...offsets, header: this._shiftLineOffsets(block.header, delta), delimiter: this._shiftLineOffsets(block.delimiter, delta), rows: block.rows.map((row) => this._shiftLineOffsets(row, delta)) };
+      if (block.type === "code-fence") return { ...block, ...offsets, opening: this._shiftLineOffsets(block.opening, delta), closing: block.closing ? this._shiftLineOffsets(block.closing, delta) : null, codeLines: block.codeLines.map((line) => this._shiftLineOffsets(line, delta)) };
+      const shifted = { ...block, ...offsets, line: this._shiftLineOffsets(block.line, delta) };
       return shifted;
     }
     _shouldVirtualize(blocks) {
@@ -3074,7 +3092,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       const cached = this._virtualMetricsCache;
       if (cached?.blocks === blocks && cached.lineHeight === lineHeight && cached.width === width) return cached;
       const offsets = [0];
-      for (const block of blocks) offsets.push(offsets.at(-1) + this._estimatedBlockHeight(block, lineHeight, width));
+      for (const block of blocks) offsets.push((offsets.at(-1) ?? 0) + this._estimatedBlockHeight(block, lineHeight, width));
       const metrics = { blocks, lineHeight, width, offsets };
       this._virtualMetricsCache = metrics;
       return metrics;
@@ -3084,8 +3102,8 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       let high = offsets.length - 2;
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        if (offsets[mid + 1] <= pixel) low = mid + 1;
-        else if (offsets[mid] > pixel) high = mid - 1;
+        if (requireItem(offsets, mid + 1) <= pixel) low = mid + 1;
+        else if (requireItem(offsets, mid) > pixel) high = mid - 1;
         else return mid;
       }
       return clamp(low, 0, Math.max(0, offsets.length - 2));
@@ -3097,7 +3115,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       let best = 0;
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        const block = blocks[mid];
+        const block = requireItem(blocks, mid);
         if (safe < block.from) high = mid - 1;
         else {
           best = mid;
@@ -3114,12 +3132,12 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       const viewport = this._liveEditor.clientHeight || 600;
       const overscan = Math.max(viewport * 2, lineHeight * 40);
       const anchorIndex = fromScroll ? this._virtualBlockIndexAtPixel(offsets, this._liveEditor.scrollTop || 0) : this._blockIndexForOffset(blocks, anchorOffset);
-      const anchorPixel = fromScroll ? this._liveEditor.scrollTop || 0 : offsets[anchorIndex];
+      const anchorPixel = fromScroll ? this._liveEditor.scrollTop || 0 : requireItem(offsets, anchorIndex);
       const start = this._virtualBlockIndexAtPixel(offsets, Math.max(0, anchorPixel - overscan));
       const end = Math.min(total, this._virtualBlockIndexAtPixel(offsets, anchorPixel + viewport + overscan) + 1);
       if (!force && this._virtualState.active && start === this._virtualState.start && end === this._virtualState.end && total === this._virtualState.total) return;
-      const topHeight = Math.round(offsets[start]);
-      const bottomHeight = Math.round(offsets[total] - offsets[end]);
+      const topHeight = Math.round(requireItem(offsets, start));
+      const bottomHeight = Math.round(requireItem(offsets, total) - requireItem(offsets, end));
       const top = `<div class="md-virtual-spacer" contenteditable="false" aria-hidden="true" style="block-size:${topHeight}px"></div>`;
       const bottom = `<div class="md-virtual-spacer" contenteditable="false" aria-hidden="true" style="block-size:${bottomHeight}px"></div>`;
       this._liveEditor.innerHTML = `${top}${blocks.slice(start, end).map((block) => this._renderLiveBlock(block)).join("")}${bottom}`;
@@ -3220,25 +3238,26 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       const label = language || "code";
       const header = `<div class="md-code-header" part="code-header" contenteditable="false"><span class="md-code-label">${escapeHtml(label)}</span>${language ? `<span class="md-code-language">fenced block</span>` : ""}</div>`;
       const codeLines = block.codeLines.map((line) => `<div class="md-code-line" part="code-line" data-editable="line" data-kind="code-line" data-from="${line.start}" data-to="${line.end}"${editableAttribute} spellcheck="false">${escapeHtml(line.text) || "<br>"}</div>`).join("");
-      const virtualOffset = block.codeLines[0]?.start ?? (block.closing ? block.opening.newlineEnd : block.opening.end);
+      const virtualOffset = block.codeLines[0]?.start ?? (block.closing ? block.opening.newlineEnd ?? block.opening.end : block.opening.end);
       const virtualLine = `<div class="md-code-line" part="code-line" data-editable="virtual-code" data-kind="code-line" data-from="${virtualOffset}" data-to="${virtualOffset}"${editableAttribute} spellcheck="false"><br></div>`;
       const afterAnchor = block.closing && block.newlineEnd === block.to ? `<div class="md-line md-code-after" part="line" data-editable="virtual-code-after" data-kind="blank" data-from="${block.to}" data-to="${block.to}"${editableAttribute} spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}" aria-label="After code block"><br></div>` : "";
       return `<div class="md-code-block" part="code-block" data-kind="code-fence" data-from="${block.from}" data-to="${block.to}" data-language="${escapeAttribute(language)}">${header}<div class="md-code-lines" part="code-lines">${codeLines || virtualLine}</div></div>${afterAnchor}`;
     }
     _renderTable(block) {
       const cols = Math.max(block.header.cells.length, ...block.rows.map((r) => r.cells.length), 1);
-      const alignments = Array.from({ length: cols }, (_, i) => tableAlignmentFromDelimiter(block.delimiter.cells[i]?.text));
+      const alignments = Array.from({ length: cols }, (_, i) => tableAlignmentFromDelimiter(block.delimiter.cells[i]?.text || ""));
       const editableAttribute = this._liveDescendantEditableAttribute();
-      const renderCell = /* @__PURE__ */ __name((cell, tag, row, col) => `<${tag}${tableAlignmentStyle(alignments[col])}><div class="md-cell" part="table-cell" data-editable="cell" data-row="${row}" data-col="${col}" data-from="${cell?.from ?? block.to}" data-to="${cell?.to ?? block.to}"${editableAttribute} spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${decorateInline(unescapeTableCellText(cell?.text ?? ""), this.api._rendererOptions())}</div></${tag}>`, "renderCell");
-      const header = `<thead><tr>${Array.from({ length: cols }, (_, i) => renderCell(block.header.cells[i] ?? { text: "", from: block.header.end, to: block.header.end }, "th", -1, i)).join("")}</tr></thead>`;
-      const bodyRows = block.rows.length ? block.rows : [{ cells: Array.from({ length: cols }, () => ({ text: "", from: block.delimiter.end, to: block.delimiter.end })) }];
+      const renderCell = /* @__PURE__ */ __name((cell, tag, row, col) => `<${tag}${tableAlignmentStyle(alignments[col] || "")}><div class="md-cell" part="table-cell" data-editable="cell" data-row="${row}" data-col="${col}" data-from="${cell?.from ?? block.to}" data-to="${cell?.to ?? block.to}"${editableAttribute} spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${decorateInline(unescapeTableCellText(cell?.text ?? ""), this.api._rendererOptions())}</div></${tag}>`, "renderCell");
+      const headerCells = parseTableLineRanges(block.header.text, block.header.start, true);
+      const header = `<thead><tr>${Array.from({ length: cols }, (_, i) => renderCell(headerCells[i] ?? { text: "", from: block.header.end, to: block.header.end }, "th", -1, i)).join("")}</tr></thead>`;
+      const bodyRows = block.rows.length ? block.rows.map((row) => ({ ...row, cells: parseTableLineRanges(row.text, row.start, true) })) : [{ end: block.delimiter.end, cells: Array.from({ length: cols }, () => ({ text: "", from: block.delimiter.end, to: block.delimiter.end })) }];
       const body = `<tbody>${bodyRows.map((row, r) => `<tr>${Array.from({ length: cols }, (_, i) => renderCell(row.cells[i] ?? { text: "", from: row.end, to: row.end }, "td", r, i)).join("")}</tr>`).join("")}</tbody>`;
       const afterAnchor = block.newlineEnd === block.to ? `<div class="md-line md-table-after" part="line" data-editable="virtual-table-after" data-kind="blank" data-from="${block.to}" data-to="${block.to}"${editableAttribute} spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}" aria-label="After table"><br></div>` : "";
       return `<div class="md-table-block" part="table" data-kind="table" data-from="${block.from}" data-to="${block.to}"><table class="md-table">${header}${body}</table></div>${afterAnchor}`;
     }
   };
 
-  // src/browser/input.js
+  // src/browser/input.ts
   var InputController = class {
     static {
       __name(this, "InputController");
@@ -3380,8 +3399,8 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       this._compositionSnapshot = null;
       this._beforeInputSnapshot = null;
       this._beforeInputTarget = null;
-      if (before?.value !== after.value) this.api._recordUndo(before, after, "composition");
-      if (before?.value !== after.value) this._redoStack.length = 0;
+      if (before && before.value !== after.value) this.api._recordUndo(before, after, "composition");
+      if (before && before.value !== after.value) this._redoStack.length = 0;
       if (this.api._isLiveVisible() && this._liveDirty) {
         this.api._renderAll({
           restoreSelection: true,
@@ -3495,7 +3514,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
           end: ctx.selectionEnd,
           direction: ctx.selectionDirection
         },
-        selectionAfter: result.transaction.selectionAfter
+        selectionAfter: result.ok ? result.transaction?.selectionAfter : void 0
       });
       this.api._applyActionResult(actionId, result, {
         source: "user",
@@ -3516,7 +3535,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       const nextLine = getLineRange(nextValue, nextCursor);
       const smartDashBreak = /^(\s{0,3})[\u2013\u2014]-$/.exec(nextLine.text);
       if (smartDashBreak && currentLine.start === nextLine.start && ctx.selectionEnd <= currentLine.end) {
-        const insert = `${smartDashBreak[1]}---`;
+        const insert = `${smartDashBreak[1] ?? ""}---`;
         const cursor = currentLine.start + insert.length;
         return {
           actionId: "editor.replaceSelection",
@@ -3540,7 +3559,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
         const currentBlock = parseBlocks(ctx.value, this.api._parseOptions()).find((block) => ctx.selectionStart >= block.from && ctx.selectionStart <= Math.max(block.to, block.from));
         const nextBlock = parseBlocks(nextValue, this.api._parseOptions()).find((block) => nextCursor >= block.from && nextCursor <= Math.max(block.to, block.from));
         if (nextBlock?.type === "code-fence" && currentBlock?.type !== "code-fence") return false;
-        if (!LIVE_STRUCTURAL_BLOCK_TYPES.has(nextBlock?.type) || currentBlock?.type === nextBlock.type) return false;
+        if (!nextBlock || !LIVE_STRUCTURAL_BLOCK_TYPES.has(nextBlock.type) || currentBlock?.type === nextBlock.type) return false;
         result = insertionTransaction(
           ctx,
           actionId,
@@ -3572,7 +3591,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       if (!["insertText", "insertReplacementText"].includes(inputType) || previousValue === nextValue) return false;
       const changes = diffTextChange(previousValue, nextValue);
       if (changes.length !== 1) return false;
-      const change = changes[0];
+      const change = requireItem(changes, 0);
       const selectionBefore = {
         start: change.from,
         end: change.to,
@@ -3596,7 +3615,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
           end: ctx.selectionEnd,
           direction: ctx.selectionDirection
         },
-        selectionAfter: result.transaction.selectionAfter
+        selectionAfter: result.ok ? result.transaction?.selectionAfter : void 0
       });
       const applied = this.api._applyActionResult(actionId, result, {
         source: "user",
@@ -3647,12 +3666,12 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       return editables.every((editable) => {
         if (!editable || editable.dataset.editable !== "line") return false;
         return !["task-list-item", "code-line", "horizontal-rule"].includes(
-          editable.dataset.kind
+          editable.dataset.kind || ""
         );
       });
     }
     _applyLiveDeletionBeforeInput(event, inputType, targetRange) {
-      if (this._shouldUseAppleWebKitNativeDeletion(event, inputType, targetRange)) {
+      if (targetRange && this._shouldUseAppleWebKitNativeDeletion(event, inputType, targetRange)) {
         const selection = targetRange.selection;
         this._webKitNativeInput = {
           changes: [{
@@ -3697,7 +3716,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
             inputType,
             strategy: "smart-backspace",
             targetSelection,
-            selectionAfter: result.transaction.selectionAfter
+            selectionAfter: result.ok ? result.transaction?.selectionAfter : void 0
           });
           this.api._applyActionResult("editor.smartBackspace", result, {
             source: "user",
@@ -3708,7 +3727,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       }
       let start = Math.min(current.start, current.end);
       let end = Math.max(current.start, current.end);
-      if (targetSelection?.start !== targetSelection?.end) {
+      if (targetSelection && targetSelection.start !== targetSelection.end) {
         start = targetSelection.start;
         end = targetSelection.end;
       } else if (start === end && backward && start > 0) {
@@ -3784,7 +3803,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       const compositionSourceCursor = composing && this._compositionSnapshot?.selection && event?.data != null ? this._compositionSnapshot.selection.start + String(event.data).length : null;
       const compositionDisplayStart = compositionSourceCursor != null ? this.api._displayOffsetFromSourceOffset(
         editable,
-        this._compositionSnapshot.selection.start
+        this._compositionSnapshot?.selection.start ?? 0
       ) : null;
       const compositionDisplayCursor = compositionDisplayStart == null ? null : compositionDisplayStart + String(event.data).length;
       const tableDisplayCursor = editable.dataset.editable === "cell" ? compositionDisplayCursor ?? this.api._displayOffsetFromSelection(editable) ?? inferredDisplayCursor : null;
@@ -3951,7 +3970,7 @@ ${raw}`;
       if (inputType.startsWith("insert") && event.data != null) {
         insert = normalizeLineEndings(event.data);
       } else if (inputType.startsWith("delete")) {
-        if (start === end && inputTarget?.selection.start !== inputTarget?.selection.end) {
+        if (start === end && inputTarget && inputTarget.selection.start !== inputTarget.selection.end) {
           start = inputTarget.selection.start;
           end = inputTarget.selection.end;
         } else if (start === end && inputType.includes("Backward") && start > 0) {
@@ -3982,7 +4001,7 @@ ${raw}`;
         );
         return true;
       }
-      if (inputType.startsWith("insert") && ["virtual-code", "virtual-code-after", "virtual-hr-after", "virtual-setext-after", "virtual-table-after"].includes(editable?.dataset.editable) && !this._value.slice(0, start).endsWith("\n")) {
+      if (inputType.startsWith("insert") && ["virtual-code", "virtual-code-after", "virtual-hr-after", "virtual-setext-after", "virtual-table-after"].includes(editable?.dataset.editable || "") && !this._value.slice(0, start).endsWith("\n")) {
         insert = `
 ${insert}`;
       }
@@ -4029,7 +4048,7 @@ ${insert}`;
     }
   };
 
-  // src/core/state.js
+  // src/core/state.ts
   var DocumentState = class {
     static {
       __name(this, "DocumentState");
@@ -4042,7 +4061,7 @@ ${insert}`;
     }
   };
 
-  // src/core/history.js
+  // src/core/history.ts
   var UndoHistory = class {
     static {
       __name(this, "UndoHistory");
@@ -4080,7 +4099,7 @@ ${insert}`;
     }
   };
 
-  // src/browser/util.js
+  // src/browser/util.ts
   function displayShortcut(shortcut) {
     if (!shortcut) return "";
     const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "");
@@ -4092,7 +4111,7 @@ ${insert}`;
   }
   __name(uid, "uid");
 
-  // src/browser/completions.js
+  // src/browser/completions.ts
   var CompletionController = class {
     static {
       __name(this, "CompletionController");
@@ -4100,7 +4119,7 @@ ${insert}`;
     constructor(api) {
       this.api = Object.freeze(api);
       this._providers = /* @__PURE__ */ new Map();
-      this._completion = { open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: 0, abort: null };
+      this._completion = { status: "closed", open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: 0, abort: null };
       this._completionUpdateFrame = 0;
     }
     disconnect() {
@@ -4209,7 +4228,7 @@ ${insert}`;
       const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start);
       const m = /^(\s*)\/([\w-]*)$/.exec(before);
       if (!m) return null;
-      return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: "/", query: m[2], providerId: "slash" };
+      return { from: ctx.currentLine.start + (m[1] ?? "").length, to: ctx.selectionStart, trigger: "/", query: m[2] ?? "", providerId: "slash" };
     }
     _getSlashItems(match) {
       const q = match.query.toLowerCase();
@@ -4218,7 +4237,7 @@ ${insert}`;
         if (!action.visibleInSlash) continue;
         const hay = [action.label, action.description, ...action.aliases || [], ...action.keywords || []].filter(Boolean).join(" ").toLowerCase();
         if (q && !hay.includes(q)) continue;
-        items.push({ id: action.id, label: action.label, detail: action.group, description: action.description || displayShortcut(action.defaultShortcut), kind: "slash-command", actionId: action.id });
+        items.push({ id: action.id, label: action.label || action.id, detail: action.group, description: action.description || displayShortcut(action.defaultShortcut), kind: "slash-command", actionId: action.id });
       }
       return items.slice(0, 24);
     }
@@ -4232,7 +4251,8 @@ ${insert}`;
       return ok(tx(ctx, "completion.accept", [{ from: match.from, to: match.to, insert: "" }], { start: match.from, end: match.from, direction: "none" }, "slash"), item.label);
     }
     _slashReplacementForAction(actionId) {
-      return { "block.paragraph": { insert: "", selectionOffset: 0 }, "block.heading.1": { insert: "# ", selectionOffset: 2 }, "block.heading.2": { insert: "## ", selectionOffset: 3 }, "block.heading.3": { insert: "### ", selectionOffset: 4 }, "block.heading.4": { insert: "#### ", selectionOffset: 5 }, "block.heading.5": { insert: "##### ", selectionOffset: 6 }, "block.heading.6": { insert: "###### ", selectionOffset: 7 }, "block.bulletList": { insert: "- ", selectionOffset: 2 }, "block.orderedList": { insert: "1. ", selectionOffset: 3 }, "block.taskList": { insert: "- [ ] ", selectionOffset: 6 }, "block.blockquote": { insert: "> ", selectionOffset: 2 }, "block.codeFence": { insert: "```\n\n```", selectionOffset: 4 }, "block.horizontalRule": { insert: "---\n", selectionOffset: 4 }, "block.table": { insert: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| Cell 1 | Cell 2 | Cell 3 |", selectionOffset: 2, selectionLength: "Column 1".length }, "inline.link": { insert: "[]()", selectionOffset: 1 }, "inline.image": { insert: "![]()", selectionOffset: 2 }, "inline.bold": { insert: "****", selectionOffset: 2 }, "inline.italic": { insert: "**", selectionOffset: 1 }, "inline.code": { insert: "``", selectionOffset: 1 }, "inline.strikethrough": { insert: "~~~~", selectionOffset: 2 } }[actionId] || null;
+      const replacements = { "block.paragraph": { insert: "", selectionOffset: 0 }, "block.heading.1": { insert: "# ", selectionOffset: 2 }, "block.heading.2": { insert: "## ", selectionOffset: 3 }, "block.heading.3": { insert: "### ", selectionOffset: 4 }, "block.heading.4": { insert: "#### ", selectionOffset: 5 }, "block.heading.5": { insert: "##### ", selectionOffset: 6 }, "block.heading.6": { insert: "###### ", selectionOffset: 7 }, "block.bulletList": { insert: "- ", selectionOffset: 2 }, "block.orderedList": { insert: "1. ", selectionOffset: 3 }, "block.taskList": { insert: "- [ ] ", selectionOffset: 6 }, "block.blockquote": { insert: "> ", selectionOffset: 2 }, "block.codeFence": { insert: "```\n\n```", selectionOffset: 4 }, "block.horizontalRule": { insert: "---\n", selectionOffset: 4 }, "block.table": { insert: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| Cell 1 | Cell 2 | Cell 3 |", selectionOffset: 2, selectionLength: "Column 1".length }, "inline.link": { insert: "[]()", selectionOffset: 1 }, "inline.image": { insert: "![]()", selectionOffset: 2 }, "inline.bold": { insert: "****", selectionOffset: 2 }, "inline.italic": { insert: "**", selectionOffset: 1 }, "inline.code": { insert: "``", selectionOffset: 1 }, "inline.strikethrough": { insert: "~~~~", selectionOffset: 2 } };
+      return actionId ? replacements[actionId] || null : null;
     }
     _applyCodeLanguageItem(item, match, ctx) {
       const sequence = match.sequence || "```";
@@ -4256,8 +4276,8 @@ ${closing}` : opening;
       if (ctx.block.kind === "fenced-code" && !this.api.isUnclosedFenceOpeningContext(ctx)) return null;
       const before = ctx.currentLine.text.slice(0, ctx.selectionStart - ctx.currentLine.start);
       const m = /^(\s*)(`{3,}|~{3,})([\w+-]*)$/.exec(before);
-      if (!m || LANGUAGES.includes(m[3].toLowerCase())) return null;
-      return { from: ctx.currentLine.start + m[1].length, to: ctx.selectionStart, trigger: m[2], sequence: m[2], indent: m[1], query: m[3], providerId: "code-language" };
+      if (!m || LANGUAGES.includes((m[3] ?? "").toLowerCase())) return null;
+      return { from: ctx.currentLine.start + (m[1] ?? "").length, to: ctx.selectionStart, trigger: m[2] ?? "", sequence: m[2] ?? "", indent: m[1] ?? "", query: m[3] ?? "", providerId: "code-language" };
     }
     _scheduleCompletionUpdate({ immediate = false } = {}) {
       if (this.api.disabled() || this.api.readonly() || this.api.isComposing()) return;
@@ -4300,10 +4320,9 @@ ${closing}` : opening;
         return;
       }
       const requestId = this._completion.requestId + 1;
-      this._completion.requestId = requestId;
       this._completion.abort?.abort();
       const abort = new AbortController();
-      this._completion.abort = abort;
+      this._completion = this._completion.open ? { ...this._completion, requestId, abort } : { status: "loading", open: false, providerId: selectedProvider.id, match: selectedMatch, items: [], activeIndex: 0, requestId, abort };
       try {
         Promise.resolve(selectedProvider.getItems(selectedMatch, ctx, abort.signal)).then((items) => {
           if (abort.signal.aborted || this._completion.requestId !== requestId) return;
@@ -4337,22 +4356,19 @@ ${closing}` : opening;
       return out;
     }
     _openCompletion(providerId, match, items) {
-      const was = this._completion.open;
-      this._completion.open = true;
-      this._completion.providerId = providerId;
-      this._completion.match = match;
-      this._completion.items = items;
+      const wasOpen = this._completion.open;
       const preferred = clamp(this._completion.activeIndex, 0, items.length - 1);
+      this._completion = { status: "open", open: true, providerId, match, items, activeIndex: preferred, requestId: this._completion.requestId, abort: this._completion.abort || new AbortController() };
       this._completion.activeIndex = this._enabledCompletionIndex(preferred, 1);
-      if (!was) this.api.startPositionTracking();
+      if (!wasOpen) this.api.startPositionTracking();
       this.api.render();
-      if (!was) this.api.dispatch("md-completion-open", { providerId, match, items });
+      if (!wasOpen) this.api.dispatch("md-completion-open", { providerId, match, items });
     }
     _closeCompletion() {
       const wasOpen = this._completion.open;
       const detail = { providerId: this._completion.providerId, match: this._completion.match };
       this._completion.abort?.abort();
-      this._completion = { ...this._completion, open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: this._completion.requestId + 1, abort: null };
+      this._completion = { status: "closed", open: false, providerId: null, match: null, items: [], activeIndex: 0, requestId: this._completion.requestId + 1, abort: null };
       this.api.stopPositionTracking();
       this.api.render();
       if (wasOpen) this.api.dispatch("md-completion-close", detail);
@@ -4382,7 +4398,7 @@ ${closing}` : opening;
     }
     _acceptCompletion(source = "action") {
       if (!this._completion.open || !this._completion.items.length) return fail("not-applicable");
-      const provider = this._providers.get(this._completion.providerId);
+      const provider = this._providers.get(this._completion.providerId || "");
       const item = this._completion.items[this._completion.activeIndex];
       if (!provider || !item || item.disabled) return fail("not-applicable");
       const ctx = this.api.getContext();
@@ -4399,7 +4415,7 @@ ${closing}` : opening;
         const safeTagRefinement = Boolean(
           provider.id === "tags" && currentMatch && shownMatch && currentMatch.from === shownMatch.from && currentMatch.trigger === shownMatch.trigger && currentMatch.to >= shownMatch.to && currentTagQuery.startsWith(shownTagQuery) && itemTagKey.startsWith(currentTagQuery)
         );
-        if (!exactMatch && !safeTagRefinement) {
+        if (!currentMatch || !exactMatch && !safeTagRefinement) {
           this._closeCompletion();
           this._scheduleCompletionUpdate({ immediate: true });
           return fail("not-applicable");
@@ -4408,7 +4424,7 @@ ${closing}` : opening;
       } catch (error) {
         this.api.emitError("completion", error, true, { providerId: provider.id });
         this._closeCompletion();
-        return fail("provider-error", String(error?.message || error));
+        return fail("provider-error", String(error instanceof Error ? error.message : error));
       }
       this._closeCompletion();
       if (result?.ok && result.transaction) {
@@ -4429,7 +4445,7 @@ ${closing}` : opening;
     }
   };
 
-  // src/actions/blocks.js
+  // src/actions/blocks.ts
   function toggleParagraph(ctx) {
     const changes = [];
     for (const line of ctx.selectedLines) {
@@ -4534,7 +4550,7 @@ ${closing}` : opening;
     if (language == null) return fail("invalid-language");
     const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd);
     let longestRun = 2;
-    for (const match of selected.matchAll(/`+/g)) longestRun = Math.max(longestRun, match[0].length);
+    for (const match of selected.matchAll(/`+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
     const marker = "`".repeat(longestRun + 1);
     const insert = `${marker}${language}
 ${selected}
@@ -4575,7 +4591,7 @@ ${marker}`;
   }
   __name(setCodeLanguageResult, "setCodeLanguageResult");
 
-  // src/actions/editing.js
+  // src/actions/editing.ts
   function deleteSelectionResult(ctx, actionId = "editor.deleteSelection") {
     const start = Math.min(ctx.selectionStart, ctx.selectionEnd);
     const end = Math.max(ctx.selectionStart, ctx.selectionEnd);
@@ -4590,8 +4606,8 @@ ${marker}`;
     if (after.trim()) return fail("not-applicable");
     const task = /^(\s*)(\[\]|\[ \]|\[x\]|\[X\])$/.exec(before);
     if (task) {
-      const checked = /x/i.test(task[2]) ? "x" : " ";
-      const insert = `${task[1]}- [${checked}] `;
+      const checked = /x/i.test(task[2] ?? "") ? "x" : " ";
+      const insert = `${task[1] ?? ""}- [${checked}] `;
       const cursor = ctx.currentLine.start + insert.length;
       return ok(tx(ctx, "editor.markdownShortcut", [{ from: ctx.currentLine.start, to: ctx.selectionStart, insert }], { start: cursor, end: cursor, direction: "none" }, "markdownShortcut"), "Task list.");
     }
@@ -4692,7 +4708,7 @@ ${marker}`;
   }
   __name(outdentLines, "outdentLines");
 
-  // src/actions/inline.js
+  // src/actions/inline.ts
   function wrapInline(ctx, prefix, suffix, label) {
     const selected = ctx.value.slice(ctx.selectionStart, ctx.selectionEnd);
     if (selected) {
@@ -4732,15 +4748,15 @@ ${marker}`;
   }
   __name(insertImage, "insertImage");
 
-  // src/actions/tables.js
+  // src/actions/tables.ts
   function serializeTableBlock(headerCells, delimiterCells, rows) {
     const serialize = /* @__PURE__ */ __name((cells) => tableRowSourceParts(cells).text, "serialize");
     return [serialize(headerCells), serialize(delimiterCells), ...rows.map(serialize)].join("\n");
   }
   __name(serializeTableBlock, "serializeTableBlock");
   function tableCellTexts(line, cols) {
-    const cells = splitTableRow(line?.text ?? "");
-    return Array.from({ length: cols }, (_, i) => unescapeTableCellText(cells[i] ?? ""));
+    const cells = parseTableLineRanges(line.text, line.start, true);
+    return Array.from({ length: cols }, (_, i) => unescapeTableCellText(cells[i]?.text ?? ""));
   }
   __name(tableCellTexts, "tableCellTexts");
   function tablePositionForOffset(block, offset) {
@@ -4784,14 +4800,14 @@ ${marker}`;
       for (const row of rows) row.splice(at, 0, "");
     }
     const insert = serializeTableBlock(header, delimiter, rows.length ? rows : [Array.from({ length: header.length }, () => "")]);
-    const cursor = block.from + insert.split("\n")[0].length;
+    const cursor = block.from + (insert.split("\n")[0] || "").length;
     return ok(tx(ctx, mode === "delete" ? "table.deleteColumn" : "table.insertColumnAfter", [{ from: block.from, to: block.to, insert }], { start: cursor, end: cursor, direction: "none" }, "table"), mode === "delete" ? "Column deleted." : "Column inserted.");
   }
   __name(tableColumnResult, "tableColumnResult");
   function tableDeleteRowResult(ctx, block, row) {
     if (!block.rows.length) return fail("not-applicable");
     const index = clamp(Number(row) || 0, 0, block.rows.length - 1);
-    const line = block.rows[index];
+    const line = requireItem(block.rows, index);
     let from = line.start;
     let to = line.newlineEnd;
     if (to <= line.end && line.start > block.delimiter.end && ctx.value[line.start - 1] === "\n") {
@@ -4849,7 +4865,7 @@ ${marker}`;
   }
   __name(tableRowInsertionResult, "tableRowInsertionResult");
 
-  // src/actions/registry.js
+  // src/actions/registry.ts
   function installBuiltInActions(api) {
     const r = /* @__PURE__ */ __name((a) => api.registerAction(a), "r");
     r({ id: "editor.insertText", label: "Insert text", group: "Editor", structural: false, run: /* @__PURE__ */ __name((ctx, args = {}) => insertionTransaction(ctx, "editor.insertText", normalizeLineEndings(args.text ?? ""), normalizeLineEndings(args.text ?? "").length, "insertText"), "run") });
@@ -4891,7 +4907,7 @@ ${marker}`;
     r({ id: "table.deleteRow", label: "Delete table row", group: "Table", run: /* @__PURE__ */ __name((ctx) => {
       const block = api.findBlockAtOffset(ctx.selectionStart, "table");
       const pos = block ? tablePositionForOffset(block, ctx.selectionStart) : null;
-      return block ? tableDeleteRowResult(ctx, block, pos?.row >= 0 ? pos.row : 0) : fail("not-applicable");
+      return block ? tableDeleteRowResult(ctx, block, pos && pos.row >= 0 ? pos.row : 0) : fail("not-applicable");
     }, "run") });
     r({ id: "table.deleteColumn", label: "Delete table column", group: "Table", run: /* @__PURE__ */ __name((ctx) => {
       const block = api.findBlockAtOffset(ctx.selectionStart, "table");
@@ -4943,7 +4959,7 @@ ${marker}`;
   // src/component/styles.css
   var styles_default = ':host {\n  color-scheme: light dark;\n  --md-editor-font:\n    system-ui,\n    -apple-system,\n    BlinkMacSystemFont,\n    "Segoe UI",\n    sans-serif;\n  --md-editor-mono-font:\n    ui-monospace,\n    SFMono-Regular,\n    Menlo,\n    Monaco,\n    Consolas,\n    "Liberation Mono",\n    monospace;\n  --md-editor-font-size: 15px;\n  --md-editor-line-height: 1.55;\n  --md-editor-bg: Canvas;\n  --md-editor-fg: CanvasText;\n  --md-editor-muted: color-mix(in srgb, CanvasText 55%, Canvas 45%);\n  --md-editor-token: color-mix(in srgb, CanvasText 42%, Canvas 58%);\n  --md-editor-border: color-mix(in srgb, CanvasText 22%, Canvas 78%);\n  --md-editor-border-focus: Highlight;\n  --md-editor-radius: 10px;\n  --md-editor-padding: 14px;\n  --md-editor-min-height: 220px;\n  --md-editor-max-height: none;\n  --md-editor-focus-ring: 0 0 0 3px color-mix(in srgb, Highlight 32%, transparent);\n  --md-editor-active-line-ring: none;\n  --md-editor-active-line-bg: transparent;\n  --md-editor-active-cell-ring: var(--md-editor-active-line-ring);\n  --md-editor-active-cell-bg: var(--md-editor-active-line-bg);\n  --md-editor-popup-bg: Canvas;\n  --md-editor-popup-fg: CanvasText;\n  --md-editor-popup-border: color-mix(in srgb, CanvasText 24%, Canvas 76%);\n  --md-editor-popup-shadow: 0 12px 30px rgb(0 0 0 / 0.16);\n  --md-editor-preview-bg: color-mix(in srgb, Canvas 96%, CanvasText 4%);\n  --md-editor-preview-fg: CanvasText;\n  --md-editor-code-bg: color-mix(in srgb, CanvasText 8%, Canvas 92%);\n  --md-editor-code-header-bg: color-mix(in srgb, CanvasText 5%, Canvas 95%);\n  --md-editor-code-accent: color-mix(in srgb, CanvasText 45%, Canvas 55%);\n  --md-editor-tag-bg: color-mix(in srgb, Highlight 14%, Canvas 86%);\n  --md-editor-tag-fg: color-mix(in srgb, Highlight 78%, CanvasText 22%);\n  --md-editor-tag-border: color-mix(in srgb, Highlight 28%, transparent);\n  --md-editor-danger: #b00020;\n  --md-editor-transition-duration: 140ms;\n  --md-editor-transition-ease: cubic-bezier(.2,.8,.2,1);\n  display: block;\n  font-family: var(--md-editor-font);\n  color: var(--md-editor-fg);\n}\n:host([hidden]) {\n  display: none;\n}\n.container {\n  display: grid;\n  gap: 8px;\n  font-size: var(--md-editor-font-size);\n}\n.label:empty {\n  display: none;\n}\n.label {\n  font-weight: 650;\n  color: var(--md-editor-fg);\n}\n.workspace {\n  display: grid;\n  gap: 10px;\n}\n:host([mode="split"]) .workspace,\n:host([preview="side"]) .workspace {\n  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);\n  align-items: stretch;\n}\n.editor-shell {\n  position: relative;\n  min-width: 0;\n}\n.live-editor,\ntextarea,\n.preview {\n  box-sizing: border-box;\n  inline-size: 100%;\n  min-block-size: var(--md-editor-min-height);\n  max-block-size: var(--md-editor-max-height);\n  border: 1px solid var(--md-editor-border);\n  border-radius: var(--md-editor-radius);\n  padding: var(--md-editor-padding);\n  background: var(--md-editor-bg);\n  color: var(--md-editor-fg);\n  line-height: var(--md-editor-line-height);\n  overflow: auto;\n  transition:\n    border-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.live-editor:focus,\n.live-editor:focus-within,\ntextarea:focus {\n  outline: none;\n  border-color: var(--md-editor-border-focus);\n  box-shadow: var(--md-editor-focus-ring);\n}\n.live-editor[aria-disabled=true],\ntextarea:disabled {\n  opacity: 0.62;\n  cursor: not-allowed;\n}\ntextarea {\n  display: none;\n  resize: vertical;\n  font-family: var(--md-editor-mono-font);\n  font-size: var(--md-editor-font-size);\n  tab-size: 2;\n}\n:host([mode="source"]) .live-editor {\n  display: none;\n}\n:host([mode="source"]) textarea {\n  display: block;\n}\n:host([mode="split"]) .live-editor {\n  display: none;\n}\n:host([mode="split"]) textarea {\n  display: block;\n}\n:host([mode="preview"]) .live-editor {\n  display: none;\n}\n:host([mode="preview"]) textarea {\n  display: none;\n}\n.preview {\n  display: none;\n  background: var(--md-editor-preview-bg);\n  color: var(--md-editor-preview-fg);\n}\n:host([mode="preview"]) .preview,\n:host([mode="split"]) .preview,\n:host([preview="below"]) .preview,\n:host([preview="side"]) .preview,\n:host([preview="inline-split"]) .preview {\n  display: block;\n}\n:host([preview="none"]):not([mode=split]):not([mode=preview]) .preview {\n  display: none;\n}\n.live-placeholder {\n  color: var(--md-editor-muted);\n  pointer-events: none;\n}\n.md-empty-placeholder::before {\n  content: attr(data-placeholder);\n  position: absolute;\n  color: var(--md-editor-muted);\n  pointer-events: none;\n}\n.md-virtual-spacer {\n  display: block;\n  pointer-events: none;\n  user-select: none;\n  inline-size: 1px;\n  min-block-size: 0;\n}\n.md-line {\n  position: relative;\n  min-block-size: 1.35em;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n  border-radius: 6px;\n  padding: 1px 2px;\n  outline: none;\n  transition: background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease), box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.md-line:focus,\n.md-task-source:focus,\n.md-code-line:focus {\n  box-shadow: var(--md-editor-active-line-ring);\n  background: var(--md-editor-active-line-bg);\n}\n.md-cell:focus {\n  box-shadow: var(--md-editor-active-cell-ring);\n  background: var(--md-editor-active-cell-bg);\n}\n.md-line + .md-line,\n.md-code-block + .md-line,\n.md-table-block + .md-line {\n  margin-block-start: 0.14rem;\n}\n.md-token {\n  color: var(--md-editor-token);\n  font-weight: 500;\n}\n.md-url {\n  color: var(--md-editor-muted);\n  text-decoration: underline;\n}\n.md-tag {\n  padding: 0.04em 0.28em;\n  border: 1px solid var(--md-editor-tag-border);\n  border-radius: 0.35em;\n  background: var(--md-editor-tag-bg);\n  color: var(--md-editor-tag-fg);\n}\n.preview .md-tag {\n  cursor: pointer;\n}\n.preview .md-tag:focus-visible {\n  outline: 2px solid var(--md-editor-border-focus);\n  outline-offset: 2px;\n}\n.md-heading {\n  font-family: var(--md-editor-font);\n  font-weight: 760;\n  line-height: 1.18;\n  margin-block: 0.22em;\n}\n.md-h1 {\n  font-size: 2.0em;\n}\n.md-h2 {\n  font-size: 1.6em;\n}\n.md-h3 {\n  font-size: 1.35em;\n}\n.md-h4 {\n  font-size: 1.18em;\n}\n.md-h5 {\n  font-size: 1.05em;\n}\n.md-h6 {\n  font-size: 1em;\n}\n.md-list {\n  padding-inline-start: calc(var(--md-list-depth, 0) * 1.4em + 2px);\n}\n.md-task-line {\n  display: flex;\n  align-items: baseline;\n  gap: 0.35em;\n}\n.md-task-line input {\n  transform: translateY(0.12em);\n}\n.md-task-source {\n  flex: 1;\n  min-width: 0;\n  white-space: pre-wrap;\n  outline: none;\n  border-radius: 6px;\n}\n.md-quote {\n  --md-quote-depth: 1;\n  border-radius: 0;\n  padding-inline-start: calc(var(--md-quote-depth) * 1em + 0.35em);\n  color: color-mix(in srgb, CanvasText 80%, Canvas 20%);\n  background-image:\n    repeating-linear-gradient(\n      to right,\n      var(--md-editor-border) 0 4px,\n      transparent 4px 1em);\n  background-position: left top;\n  background-repeat: no-repeat;\n  background-size: calc(var(--md-quote-depth) * 1em) 100%;\n}\n.md-quote:dir(rtl) {\n  background-image:\n    repeating-linear-gradient(\n      to left,\n      var(--md-editor-border) 0 4px,\n      transparent 4px 1em);\n  background-position: right top;\n}\n.md-quote-depth-2 {\n  --md-quote-depth: 2;\n}\n.md-quote-depth-3 {\n  --md-quote-depth: 3;\n}\n.md-quote-depth-4 {\n  --md-quote-depth: 4;\n}\n.md-quote-depth-5 {\n  --md-quote-depth: 5;\n}\n.md-quote-depth-6 {\n  --md-quote-depth: 6;\n}\n.md-quote-depth-7 {\n  --md-quote-depth: 7;\n}\n.md-quote-depth-8 {\n  --md-quote-depth: 8;\n}\n.md-quote-depth-9 {\n  --md-quote-depth: 9;\n}\n.md-quote-depth-10 {\n  --md-quote-depth: 10;\n}\n.md-quote-depth-11 {\n  --md-quote-depth: 11;\n}\n.md-quote-depth-12 {\n  --md-quote-depth: 12;\n}\n.md-quote-depth-13 {\n  --md-quote-depth: 13;\n}\n.md-quote-depth-14 {\n  --md-quote-depth: 14;\n}\n.md-quote-depth-15 {\n  --md-quote-depth: 15;\n}\n.md-quote-depth-16 {\n  --md-quote-depth: 16;\n}\n.md-quote + .md-quote {\n  margin-block-start: 0;\n}\n.md-hr-line {\n  display: block;\n  min-block-size: 1.35em;\n  padding-block: 0.55em;\n  color: var(--md-editor-token);\n  cursor: text;\n}\n.md-hr-line::after {\n  content: "";\n  display: block;\n  border-block-start: 1px solid var(--md-editor-border);\n}\n.md-hr-line .md-token {\n  display: none;\n}\n.md-code-block {\n  margin-block: 0.55em;\n  border: 1px solid var(--md-editor-border);\n  border-radius: var(--md-editor-radius);\n  background: var(--md-editor-code-bg);\n  overflow: hidden;\n  transition:\n    border-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.md-code-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n  min-block-size: 30px;\n  padding: 5px 10px;\n  border-block-end: 1px solid color-mix(in srgb, var(--md-editor-border) 82%, transparent);\n  background: var(--md-editor-code-header-bg);\n  color: var(--md-editor-code-accent);\n  font-family: var(--md-editor-mono-font);\n  font-size: 0.82em;\n  user-select: none;\n}\n.md-code-label {\n  text-transform: lowercase;\n  letter-spacing: 0.015em;\n}\n.md-code-language {\n  color: var(--md-editor-muted);\n}\n.md-code-lines {\n  padding: 10px 12px;\n  font-family: var(--md-editor-mono-font);\n  white-space: pre;\n  overflow-x: auto;\n}\n.md-code-line {\n  min-height: 1.35em;\n  outline: none;\n  white-space: pre;\n  border-radius: 5px;\n}\n.md-code-line:empty::before {\n  content: "\\200b";\n}\n.md-code-fence {\n  display: none;\n}\n.md-table-block {\n  overflow: auto;\n  margin-block: 0.5em;\n}\n.md-table {\n  border-collapse: collapse;\n  inline-size: 100%;\n  table-layout: fixed;\n}\n.md-table th,\n.md-table td {\n  border: 1px solid var(--md-editor-border);\n  padding: 6px 8px;\n  vertical-align: top;\n}\n.md-table th {\n  background: color-mix(in srgb, CanvasText 7%, Canvas 93%);\n  font-weight: 700;\n}\n.md-cell {\n  min-height: 1.35em;\n  outline: none;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n.preview :first-child {\n  margin-block-start: 0;\n}\n.preview :last-child {\n  margin-block-end: 0;\n}\n.preview pre {\n  overflow: auto;\n  padding: 10px;\n  border-radius: 6px;\n  background: var(--md-editor-code-bg);\n}\n.preview code {\n  font-family: var(--md-editor-mono-font);\n  font-size: 0.95em;\n}\n.preview :not(pre) > code {\n  padding: 0.1em 0.3em;\n  border-radius: 4px;\n  background: var(--md-editor-code-bg);\n}\n.preview blockquote {\n  border-inline-start: 4px solid var(--md-editor-border);\n  margin-inline-start: 0;\n  padding-inline-start: 1em;\n  color: var(--md-editor-muted);\n}\n.preview img {\n  max-inline-size: 100%;\n  block-size: auto;\n}\n.preview .md-table-wrap {\n  overflow: auto;\n}\n.preview table {\n  border-collapse: collapse;\n  inline-size: 100%;\n}\n.preview th,\n.preview td {\n  border: 1px solid var(--md-editor-border);\n  padding: 6px 8px;\n}\n.completion-popup {\n  position: absolute;\n  z-index: 20;\n  box-sizing: border-box;\n  min-inline-size: min(240px, calc(100vw - 16px));\n  max-inline-size: min(420px, calc(100vw - 16px));\n  max-block-size: min(320px, 50vh);\n  overflow: auto;\n  border: 1px solid var(--md-editor-popup-border);\n  border-radius: var(--md-editor-radius);\n  background: var(--md-editor-popup-bg);\n  color: var(--md-editor-popup-fg);\n  box-shadow: var(--md-editor-popup-shadow);\n  padding: 4px;\n}\n.completion-popup[hidden] {\n  display: none;\n}\n@keyframes md-editor-pop {\n  from {\n    opacity: 0;\n    transform: translateY(-3px) scale(.985);\n  }\n  to {\n    opacity: 1;\n    transform: translateY(0) scale(1);\n  }\n}\n.completion-item {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) auto;\n  gap: 4px 12px;\n  padding: 8px 10px;\n  border-radius: 6px;\n  cursor: pointer;\n}\n.completion-item[aria-selected=true] {\n  background: color-mix(in srgb, Highlight 18%, transparent);\n}\n.completion-item[aria-disabled=true] {\n  cursor: not-allowed;\n  opacity: 0.58;\n}\n.completion-label {\n  font-weight: 650;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n.completion-detail,\n.completion-description {\n  color: var(--md-editor-muted);\n  font-size: 0.9em;\n}\n.completion-description {\n  grid-column: 1 / -1;\n}\n.validation {\n  min-block-size: 1.2em;\n  color: var(--md-editor-danger);\n  font-size: 0.92em;\n}\n.validation:empty {\n  display: none;\n}\n.sr-only {\n  position: absolute;\n  inline-size: 1px;\n  block-size: 1px;\n  padding: 0;\n  margin: -1px;\n  overflow: hidden;\n  clip: rect(0, 0, 0, 0);\n  white-space: nowrap;\n  border: 0;\n}\n@media (max-width: 720px) {\n  :host([mode="split"]) .workspace,\n  :host([preview="side"]) .workspace {\n    grid-template-columns: 1fr;\n  }\n}\n@media (prefers-reduced-motion: reduce) {\n  *,\n  *::before,\n  *::after {\n    scroll-behavior: auto !important;\n    transition-duration: 0.001ms !important;\n    animation-duration: 0.001ms !important;\n  }\n}\n';
 
-  // src/component/template.js
+  // src/component/template.ts
   function renderTemplate(ids) {
     return `<style>${styles_default}</style>
       <div class="container" part="container">
@@ -4962,9 +4978,9 @@ ${marker}`;
   }
   __name(renderTemplate, "renderTemplate");
 
-  // src/render/html.js
+  // src/render/html.ts
   function isListBlock(block) {
-    return ["bullet-list-item", "ordered-list-item", "task-list-item"].includes(block?.type);
+    return ["bullet-list-item", "ordered-list-item", "task-list-item"].includes(block?.type || "");
   }
   __name(isListBlock, "isListBlock");
   function listIndentWidth(block) {
@@ -4997,6 +5013,7 @@ ${marker}`;
   __name(stripContinuationIndent, "stripContinuationIndent");
   function renderListFromBlocks(blocks, start, options) {
     const first = blocks[start];
+    if (!isListBlock(first)) throw new Error("Expected a list block.");
     const baseIndent = listIndentWidth(first);
     const listType = first.list.listType;
     const sameLevel = /* @__PURE__ */ __name((block) => isListBlock(block) && block.list.listType === listType && listIndentWidth(block) === baseIndent, "sameLevel");
@@ -5006,6 +5023,7 @@ ${marker}`;
     let stopList = false;
     while (sameLevel(blocks[index])) {
       const block = blocks[index];
+      if (!isListBlock(block)) break;
       const contentIndent = baseIndent + block.list.contentStart - block.list.indent.length;
       const item = {
         block,
@@ -5015,7 +5033,7 @@ ${marker}`;
       index += 1;
       let pendingBlank = false;
       while (index < blocks.length) {
-        const next = blocks[index];
+        const next = requireItem(blocks, index);
         if (next.type === "blank") {
           const after = blocks[index + 1];
           if (sameLevel(after)) {
@@ -5059,7 +5077,7 @@ ${marker}`;
             item.paragraphs.push([stripContinuationIndent(next.line.text, contentIndent)]);
             pendingBlank = false;
           } else {
-            item.paragraphs.at(-1).push(stripContinuationIndent(next.line.text, contentIndent));
+            item.paragraphs.at(-1)?.push(stripContinuationIndent(next.line.text, contentIndent));
           }
           index += 1;
           continue;
@@ -5094,7 +5112,7 @@ ${item.children.join("\n")}
     const blocks = parseBlocks(extracted.markdown, options);
     const out = [];
     for (let i = 0; i < blocks.length; i += 1) {
-      const block = blocks[i];
+      const block = requireItem(blocks, i);
       if (block.type === "blank") continue;
       if (block.type === "heading") {
         out.push(`<h${block.heading.level} id="${escapeAttribute(block.heading.id)}">${renderInlineMarkdown(block.heading.content, options)}</h${block.heading.level}>`);
@@ -5107,11 +5125,11 @@ ${item.children.join("\n")}
       if (block.type === "blockquote") {
         const quotes = [block];
         let j = i + 1;
-        while (j < blocks.length && blocks[j].type === "blockquote") {
-          quotes.push(blocks[j]);
+        while (j < blocks.length && requireItem(blocks, j).type === "blockquote") {
+          quotes.push(requireItem(blocks, j));
           j += 1;
         }
-        const body = quotes.map((q) => q.quote.content).join("\n");
+        const body = quotes.map((q) => q.quote?.content || "").join("\n");
         out.push(`<blockquote>${renderMarkdown(body, options)}</blockquote>`);
         i = j - 1;
         continue;
@@ -5131,17 +5149,17 @@ ${item.children.join("\n")}
         const header = block.header.cells;
         const rows = block.rows;
         const alignments = block.delimiter.cells.map((cell) => tableAlignmentFromDelimiter(cell.text));
-        out.push(`<div class="md-table-wrap"><table><thead><tr>${header.map((c, i2) => `<th${tableAlignmentStyle(alignments[i2])}>${renderInlineMarkdown(unescapeTableCellText(c.text), options)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${header.map((_, i2) => `<td${tableAlignmentStyle(alignments[i2])}>${renderInlineMarkdown(unescapeTableCellText(r.cells[i2]?.text ?? ""), options)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+        out.push(`<div class="md-table-wrap"><table><thead><tr>${header.map((c, i2) => `<th${tableAlignmentStyle(alignments[i2] || "")}>${renderInlineMarkdown(unescapeTableCellText(c.text), options)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${header.map((_, i2) => `<td${tableAlignmentStyle(alignments[i2] || "")}>${renderInlineMarkdown(unescapeTableCellText(r.cells[i2]?.text ?? ""), options)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
         continue;
       }
       if (block.type === "paragraph") {
         const paragraphs = [block];
         let j = i + 1;
-        while (j < blocks.length && blocks[j].type === "paragraph") {
-          paragraphs.push(blocks[j]);
+        while (j < blocks.length && requireItem(blocks, j).type === "paragraph") {
+          paragraphs.push(requireItem(blocks, j));
           j += 1;
         }
-        out.push(`<p>${renderInlineMarkdown(paragraphs.map((p) => p.line.text).join("\n"), options)}</p>`);
+        out.push(`<p>${renderInlineMarkdown(paragraphs.map((p) => p.line?.text || "").join("\n"), options)}</p>`);
         i = j - 1;
         continue;
       }
@@ -5151,7 +5169,7 @@ ${item.children.join("\n")}
   }
   __name(renderMarkdown, "renderMarkdown");
 
-  // src/component/element.js
+  // src/component/element.ts
   var WritemarkEditorElement = class extends HTMLElement {
     static {
       __name(this, "WritemarkEditorElement");
@@ -5256,7 +5274,7 @@ ${item.children.join("\n")}
           this._preview = value;
         }, "setPreview"),
         getHTML: /* @__PURE__ */ __name((...args) => this.getHTML(...args), "getHTML"),
-        _dispatch: /* @__PURE__ */ __name((...args) => this._dispatch(...args), "_dispatch"),
+        _dispatch: this._dispatch.bind(this),
         _emitError: /* @__PURE__ */ __name((...args) => this._emitError(...args), "_emitError"),
         _parseOptions: /* @__PURE__ */ __name((...args) => this._parseOptions(...args), "_parseOptions"),
         _rebuildLiveIndex: /* @__PURE__ */ __name((...args) => this._rebuildLiveIndex(...args), "_rebuildLiveIndex"),
@@ -5355,7 +5373,7 @@ ${item.children.join("\n")}
         isUnclosedFenceOpeningContext: /* @__PURE__ */ __name((...args) => this._isUnclosedFenceOpeningContext(...args), "isUnclosedFenceOpeningContext"),
         snapshot: /* @__PURE__ */ __name((...args) => this._snapshot(...args), "snapshot"),
         applyTransaction: /* @__PURE__ */ __name((...args) => this._applyTransaction(...args), "applyTransaction"),
-        dispatch: /* @__PURE__ */ __name((...args) => this._dispatch(...args), "dispatch"),
+        dispatch: this._dispatch.bind(this),
         announce: /* @__PURE__ */ __name((...args) => this._announce(...args), "announce"),
         getTags: /* @__PURE__ */ __name((...args) => this.getTags(...args), "getTags"),
         actions: /* @__PURE__ */ __name(() => this._actions.values(), "actions"),
@@ -5712,21 +5730,21 @@ ${item.children.join("\n")}
     }
     get mode() {
       const v = this.getAttribute("mode") ?? DEFAULTS.mode;
-      return ["live", "source", "split", "preview"].includes(v) ? v : DEFAULTS.mode;
+      return v === "live" || v === "source" || v === "split" || v === "preview" ? v : DEFAULTS.mode;
     }
     set mode(v) {
       v == null ? this.removeAttribute("mode") : this.setAttribute("mode", String(v));
     }
     get preview() {
       const v = this.getAttribute("preview") ?? DEFAULTS.preview;
-      return ["none", "below", "side", "inline-split"].includes(v) ? v : DEFAULTS.preview;
+      return v === "none" || v === "below" || v === "side" || v === "inline-split" ? v : DEFAULTS.preview;
     }
     set preview(v) {
       v == null ? this.removeAttribute("preview") : this.setAttribute("preview", String(v));
     }
     get markdownFlavor() {
       const v = this.getAttribute("markdown-flavor") ?? DEFAULTS.markdownFlavor;
-      return ["gfm", "commonmark"].includes(v) ? v : DEFAULTS.markdownFlavor;
+      return v === "gfm" || v === "commonmark" ? v : DEFAULTS.markdownFlavor;
     }
     set markdownFlavor(v) {
       v == null ? this.removeAttribute("markdown-flavor") : this.setAttribute("markdown-flavor", String(v));
@@ -5739,14 +5757,14 @@ ${item.children.join("\n")}
     }
     get shiftEnterBehavior() {
       const v = this.getAttribute("shift-enter-behavior") ?? DEFAULTS.shiftEnterBehavior;
-      return ["soft-break", "smart-enter"].includes(v) ? v : DEFAULTS.shiftEnterBehavior;
+      return v === "soft-break" || v === "smart-enter" ? v : DEFAULTS.shiftEnterBehavior;
     }
     set shiftEnterBehavior(v) {
       v == null ? this.removeAttribute("shift-enter-behavior") : this.setAttribute("shift-enter-behavior", String(v));
     }
     get tabBehavior() {
       const v = this.getAttribute("tab-behavior") ?? DEFAULTS.tabBehavior;
-      return ["accessibility-first", "editor-first"].includes(v) ? v : DEFAULTS.tabBehavior;
+      return v === "accessibility-first" || v === "editor-first" ? v : DEFAULTS.tabBehavior;
     }
     set tabBehavior(v) {
       v == null ? this.removeAttribute("tab-behavior") : this.setAttribute("tab-behavior", String(v));
@@ -5827,12 +5845,19 @@ ${item.children.join("\n")}
     get willValidate() {
       return this._internals?.willValidate ?? !this.disabled;
     }
+    addEventListener(type, listener, options) {
+      if (listener) super.addEventListener(type, listener, options);
+    }
+    removeEventListener(type, listener, options) {
+      if (listener) super.removeEventListener(type, listener, options);
+    }
     focus(options) {
       this._focusEditable(options);
     }
     blur() {
       this._focusWithin = false;
-      this._shadow?.activeElement?.blur?.();
+      const active = this._shadow?.activeElement;
+      if (active instanceof HTMLElement) active.blur();
       this._sourceTextarea?.blur();
       this._liveEditor?.blur();
       this._preview?.blur();
@@ -5957,21 +5982,29 @@ ${item.children.join("\n")}
     _upgradeProperties() {
       for (const prop of ["value", "defaultValue", "name", "label", "placeholder", "mode", "preview", "markdownFlavor", "tagsEnabled", "shiftEnterBehavior", "tabBehavior", "indentString", "debug", "debugLog", "disabled", "readonly", "required", "tagProvider"]) {
         if (Object.prototype.hasOwnProperty.call(this, prop)) {
-          const value = this[prop];
-          delete this[prop];
-          this[prop] = value;
+          this._upgradeProperty(prop);
         }
       }
     }
+    _upgradeProperty(prop) {
+      const value = this[prop];
+      Reflect.deleteProperty(this, prop);
+      this[prop] = value;
+    }
+    _requireControl(selector, constructor) {
+      const control = this._shadow.querySelector(selector);
+      if (!(control instanceof constructor)) throw new Error(`Missing editor control: ${selector}`);
+      return control;
+    }
     _renderShell() {
       this._shadow.innerHTML = renderTemplate(this._ids);
-      this._label = this._shadow.querySelector(".label");
-      this._liveEditor = this._shadow.querySelector(".live-editor");
-      this._sourceTextarea = this._shadow.querySelector("textarea");
-      this._preview = this._shadow.querySelector(".preview");
-      this._completionPopup = this._shadow.querySelector(".completion-popup");
-      this._validation = this._shadow.querySelector(".validation");
-      this._status = this._shadow.querySelector(".sr-only");
+      this._label = this._requireControl(".label", HTMLLabelElement);
+      this._liveEditor = this._requireControl(".live-editor", HTMLElement);
+      this._sourceTextarea = this._requireControl("textarea", HTMLTextAreaElement);
+      this._preview = this._requireControl(".preview", HTMLElement);
+      this._completionPopup = this._requireControl(".completion-popup", HTMLElement);
+      this._validation = this._requireControl(".validation", HTMLElement);
+      this._status = this._requireControl(".sr-only", HTMLElement);
     }
     _bindEvents() {
       this._sourceTextarea.addEventListener("beforeinput", (event) => this._onSourceBeforeInput(event));
@@ -6007,7 +6040,7 @@ ${item.children.join("\n")}
         queueMicrotask(() => {
           const active = this._shadow?.activeElement || null;
           const focusRemainsInside = [relatedTarget, active].some(
-            (target) => target && (target === this._liveEditor || this._liveEditor.contains(target))
+            (target) => target instanceof Node && (target === this._liveEditor || this._liveEditor.contains(target))
           ) || this._liveEditor.matches?.(":focus-within");
           if (!focusRemainsInside) {
             this._flushNativeLiveDom();
@@ -6018,7 +6051,7 @@ ${item.children.join("\n")}
       this._preview.addEventListener("keydown", (event) => this._onPreviewKeyDown(event));
       this._completionPopup.addEventListener("mousedown", (e) => e.preventDefault());
       this._completionPopup.addEventListener("click", (e) => {
-        const item = e.target.closest("[data-index]");
+        const item = e.target instanceof Element ? e.target.closest("[data-index]") : null;
         if (!item) return;
         const index = Number(item.dataset.index);
         if (this._completion.items[index]?.disabled) return;
@@ -6137,7 +6170,7 @@ ${item.children.join("\n")}
       if (usesGfm(ctx.config)) {
         for (const match of visible.matchAll(/~~([^~\n]+)~~/g)) {
           if (isBackslashEscaped(visible, match.index)) continue;
-          if (pos >= match.index + 2 && pos <= match.index + match[0].length - 2) ids.push("inline.strikethrough");
+          if (pos >= match.index + 2 && pos <= match.index + (match[0] ?? "").length - 2) ids.push("inline.strikethrough");
         }
       }
       return ids;
@@ -6155,10 +6188,10 @@ ${item.children.join("\n")}
       }
       if (!match) return null;
       const index = match.index;
-      const end = index + match[0].length;
+      const end = index + (match[0] ?? "").length;
       this.setSelectionRange(index, end, "forward");
       this._announce("Match found.");
-      return { start: index, end, text: match[0] };
+      return { start: index, end, text: match[0] ?? "" };
     }
     _replaceText(query, replacement, options = {}) {
       const q = String(query ?? "");
@@ -6167,7 +6200,7 @@ ${item.children.join("\n")}
       const changes = [];
       if (options.all) {
         const pattern = literalSearchPattern(q, options.caseSensitive, true);
-        for (const match of this._value.matchAll(pattern)) changes.push({ from: match.index, to: match.index + match[0].length, insert: repl });
+        for (const match of this._value.matchAll(pattern)) changes.push({ from: match.index, to: match.index + (match[0] ?? "").length, insert: repl });
       } else {
         const sel = this._getCurrentSelection();
         const selected = this._value.slice(Math.min(sel.start, sel.end), Math.max(sel.start, sel.end));
@@ -6176,7 +6209,7 @@ ${item.children.join("\n")}
         if (found) changes.push({ from: found.start, to: found.end, insert: repl });
       }
       if (!changes.length) return 0;
-      const first = changes[0].from + repl.length;
+      const first = requireItem(changes, 0).from + repl.length;
       this._applyTransaction({ changes, selectionAfter: { start: first, end: first, direction: "none" }, actionId: options.all ? "editor.replaceAll" : "editor.replace", undoGroup: "replace", source: "api" }, { source: "api" });
       return changes.length;
     }
@@ -6493,17 +6526,17 @@ ${item.children.join("\n")}
       }
     }
     _headingElementForId(surface, id) {
-      return [...surface?.querySelectorAll?.(".md-heading[id], h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]") || []].find((heading) => heading.id === id) || null;
+      return [...surface?.querySelectorAll(".md-heading[id], h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]") || []].find((heading) => heading.id === id) || null;
     }
     _navigateFragmentLink(event, surface) {
-      const link = event.target?.closest?.("a[href]");
+      const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
       const id = this._fragmentIdForLink(link);
       if (!link || !surface?.contains(link) || !id) return false;
       let target = this._headingElementForId(surface, id);
       let label = target?.textContent?.trim() || "";
       if (surface === this._liveEditor) {
         const block = this._getBlocks().find((candidate) => candidate.type === "heading" && candidate.heading?.id === id);
-        if (!block) return false;
+        if (block?.type !== "heading") return false;
         label = block.heading.content;
         event.preventDefault();
         this.setSelectionRange(block.from, block.from, "none");
@@ -6526,7 +6559,7 @@ ${item.children.join("\n")}
     }
     _activateTag(event, surface) {
       if (!this.tagsEnabled) return false;
-      const target = event.target.closest?.("[data-md-tag]");
+      const target = event.target instanceof Element ? event.target.closest("[data-md-tag]") : null;
       if (!target) return false;
       const tag = target.dataset.mdTag || "";
       if (!tag) return false;
@@ -6547,7 +6580,7 @@ ${item.children.join("\n")}
       if (this._navigateFragmentLink(event, this._liveEditor)) return;
       this._activateTag(event, "live");
       this._structuredSelection = null;
-      const checkbox = event.target.closest?.("[data-task-checkbox]");
+      const checkbox = event.target instanceof Element ? event.target.closest("[data-task-checkbox]") : null;
       if (checkbox) {
         event.preventDefault();
         const offset = Number(checkbox.dataset.checkOffset);
@@ -6676,7 +6709,7 @@ ${item.children.join("\n")}
     _readLiveSelection(...args) {
       return this._selectionController._readLiveSelection(...args);
     }
-    _liveSelectionCandidates(...args) {
+    _liveSelectionCandidates() {
       return readSelectionCandidates(this._shadow);
     }
     _isLiveSelectionNode(...args) {
@@ -6765,7 +6798,7 @@ ${item.children.join("\n")}
       if (this._isComposing || event?.isComposing || event?.keyCode === 229) return;
       const isMac = /Mac|iPhone|iPad|iPod/.test(globalThis.navigator?.platform ?? "");
       const mod = isMac ? event.metaKey : event.ctrlKey;
-      const taskCheckbox = event.target.closest?.("[data-task-checkbox]");
+      const taskCheckbox = event.target instanceof Element ? event.target.closest("[data-task-checkbox]") : null;
       if (!this._isSourceActive() && taskCheckbox && (event.key === " " || event.key === "Spacebar")) {
         event.preventDefault();
         taskCheckbox.click();
@@ -6809,7 +6842,7 @@ ${item.children.join("\n")}
         const map = { ArrowDown: "completion.next", ArrowUp: "completion.previous", Home: "completion.first", End: "completion.last", Escape: "completion.close" };
         if (map[event.key]) {
           event.preventDefault();
-          this._runAction(map[event.key], void 0, { source: "keyboard", apply: true });
+          this._runAction(map[event.key] || "", void 0, { source: "keyboard", apply: true });
           return;
         }
         if (event.key === "PageDown") {
@@ -6964,7 +6997,7 @@ ${item.children.join("\n")}
       return this._getBlocks().find((block) => (!type || block.type === type) && safe >= block.from && safe <= Math.max(block.to, block.from)) || null;
     }
     _findTableBlockForCell(cell) {
-      const tableEl = cell?.closest?.(".md-table-block");
+      const tableEl = cell?.closest(".md-table-block");
       if (!tableEl) return null;
       const from = Number(tableEl.dataset.from);
       const to = Number(tableEl.dataset.to);
@@ -7000,7 +7033,7 @@ ${item.children.join("\n")}
       }
       const info = this._tableInfoForCell(cell);
       if (!info) return;
-      if (info.row >= 0 && this._isTableRowEmpty(info.line)) this._exitTable(cell, "after");
+      if (info.row >= 0 && Boolean(info.line && this._isTableRowEmpty(info.line))) this._exitTable(cell, "after");
       else this._insertTableRowAfterCell(cell);
     }
     _maybeHandleTableLineBoundaryKey(event, activeCell = null) {
@@ -7133,7 +7166,7 @@ ${item.children.join("\n")}
         header[info.col] = raw;
       } else {
         while (rows.length <= info.row) rows.push(Array.from({ length: cols }, () => ""));
-        rows[info.row][info.col] = raw;
+        requireItem(rows, info.row)[info.col] = raw;
       }
       const serialized = this._tableBlockSourceWithOffsets(header, delimiter, rows);
       const lineIndex = info.row < 0 ? 0 : info.row + 2;
@@ -7155,14 +7188,14 @@ ${item.children.join("\n")}
       if (!info || info.row < 0 || !info.line) return fail("not-applicable");
       const selection = this._getLiveSelection(cell);
       if (!selection || selection.start !== selection.end) return fail("not-applicable");
-      if (this._plainText(cell).trim() || !this._isTableRowEmpty(info.line)) return fail("not-applicable");
+      if (this._plainText(cell) || !Boolean(info.line && this._isTableRowEmpty(info.line))) return fail("not-applicable");
       return this._tableDeleteRowResult(this._getContext(), info.block, info.row);
     }
     _insertTableRowAfterCell(cell) {
       const info = this._tableInfoForCell(cell);
       if (!info) return;
       const ctx = this._getContext();
-      const result = this._tableRowInsertionResult(ctx, info.block, info.line, info.row < 0 ? "after-delimiter" : "after-row");
+      const result = this._tableRowInsertionResult(ctx, info.block, info.line || null, info.row < 0 ? "after-delimiter" : "after-row");
       this._applyActionResult("table.insertRowAfter", result, { source: "keyboard" });
     }
     _tableRowInsertionResult(...args) {
@@ -7234,7 +7267,7 @@ ${item.children.join("\n")}
       let headingIndex = -1;
       let headingLevel = Infinity;
       for (let i = 0; i < blocks.length; i += 1) {
-        const block = blocks[i];
+        const block = requireItem(blocks, i);
         if (block.type === "heading" && block.from <= offset) {
           headingIndex = i;
           headingLevel = block.heading.level;
@@ -7244,13 +7277,13 @@ ${item.children.join("\n")}
       if (headingIndex === -1) return null;
       let end = this._value.length;
       for (let i = headingIndex + 1; i < blocks.length; i += 1) {
-        const block = blocks[i];
+        const block = requireItem(blocks, i);
         if (block.type === "heading" && block.heading.level <= headingLevel) {
           end = block.from;
           break;
         }
       }
-      return { start: blocks[headingIndex].from, end, label: "section" };
+      return { start: requireItem(blocks, headingIndex).from, end, label: "section" };
     }
     _sameRange(a, b) {
       return a && b && a.start === b.start && a.end === b.end;
@@ -7267,7 +7300,7 @@ ${item.children.join("\n")}
       if (!segments.length) return false;
       let cursor = 0;
       for (let index = 0; index < segments.length; index += 1) {
-        const segment = segments[index];
+        const segment = requireItem(segments, index);
         const found = selected.indexOf(segment, cursor);
         if (found === -1) return false;
         if (index === 0 && found !== 0) return false;
@@ -7432,7 +7465,7 @@ ${item.children.join("\n")}
         return this._applyActionResult(actionId, result, options);
       } catch (error) {
         this._emitError("action", error, true, { actionId });
-        return fail("provider-error", String(error?.message || error));
+        return fail("provider-error", String(error instanceof Error ? error.message : error));
       }
     }
     _applyActionResult(actionId, result, options = {}) {
@@ -7480,7 +7513,7 @@ ${item.children.join("\n")}
         expandSelection: /* @__PURE__ */ __name((...args) => this._expandSelection(...args), "expandSelection"),
         undo: /* @__PURE__ */ __name((...args) => this._undo(...args), "undo"),
         redo: /* @__PURE__ */ __name((...args) => this._redo(...args), "redo"),
-        findBlockAtOffset: /* @__PURE__ */ __name((...args) => this._findBlockAtOffset(...args), "findBlockAtOffset"),
+        findBlockAtOffset: this._findBlockAtOffset.bind(this),
         setMode: /* @__PURE__ */ __name((mode) => {
           this.mode = mode;
         }, "setMode"),
@@ -7503,7 +7536,7 @@ ${item.children.join("\n")}
         const fenceInfo = getFenceInfo(ctx.currentLine.text);
         return insertionTransaction(ctx, "editor.smartEnter", `
 
-${fenceInfo.sequence}`, 1, "smartEnter");
+${fenceInfo?.sequence || "```"}`, 1, "smartEnter");
       }
       if (ctx.block.kind === "fenced-code") return insertionTransaction(ctx, "editor.smartEnter", "\n", 1, "smartEnter");
       const list = ctx.block.list;
@@ -7515,7 +7548,7 @@ ${list.indent}${list.marker} [ ] `;
           return insertionTransaction(ctx, "editor.smartEnter", insert2, insert2.length, "smartEnter");
         }
         if (list.kind === "ordered-list-item") {
-          const next = Number.isFinite(list.number) ? list.number + 1 : 1;
+          const next = Number.isFinite(list.number) ? (list.number ?? 0) + 1 : 1;
           const insert2 = `
 ${list.indent}${next}${list.delimiter || "."} `;
           return insertionTransaction(ctx, "editor.smartEnter", insert2, insert2.length, "smartEnter");
@@ -7534,7 +7567,7 @@ ${quote.markerText}`;
       if (ctx.block.kind === "heading") return insertionTransaction(ctx, "editor.smartEnter", "\n", 1, "smartEnter");
       if (ctx.block.kind === "table") {
         const table = this._findBlockAtOffset(ctx.selectionStart, "table");
-        if (table) {
+        if (table?.type === "table") {
           const placement = ctx.currentLine.start === table.header.start ? "after-delimiter" : "after-row";
           return this._tableRowInsertionResult(ctx, table, ctx.currentLine, placement);
         }
@@ -7553,7 +7586,7 @@ ${quote.markerText}`;
         pending && pending.start === ctx.currentLine.start && pending.marker === fenceInfo?.marker
       );
       return Boolean(
-        fenceInfo && currentTextBeforeCursor.trim().startsWith(fenceInfo.sequence) && !isInsideFence(ctx.value, ctx.selectionStart) && (isPending || !hasClosingFenceAfter(ctx.value, ctx.currentLine.end, fenceInfo))
+        fenceInfo && currentTextBeforeCursor.trim().startsWith(fenceInfo?.sequence || "```") && !isInsideFence(ctx.value, ctx.selectionStart) && (isPending || !hasClosingFenceAfter(ctx.value, ctx.currentLine.end, fenceInfo))
       );
     }
     _smartTab(ctx) {
@@ -7579,8 +7612,8 @@ ${quote.markerText}`;
     _smartBackspace(...args) {
       return smartBackspace(...args);
     }
-    _lineOutdentAmount(...args) {
-      return lineOutdentAmount(...args, this.indentString);
+    _lineOutdentAmount(text) {
+      return lineOutdentAmount(text, this.indentString);
     }
     _indentLines(...args) {
       return indentLines(...args);
@@ -7770,7 +7803,7 @@ ${quote.markerText}`;
       const readAnchor = /* @__PURE__ */ __name(() => {
         let rect = null;
         try {
-          const sel = this._shadow.getSelection?.() || globalThis.getSelection?.();
+          const sel = readSelectionCandidates(this._shadow)[0]?.selection || globalThis.getSelection?.();
           if (sel?.rangeCount) rect = sel.getRangeAt(0).getBoundingClientRect();
         } catch {
         }
@@ -7904,7 +7937,7 @@ ${quote.markerText}`;
       if (this.debugLog) globalThis.console?.debug?.("[writemark-editor]", payload);
       return event;
     }
-    _dispatch(name, detail = {}, options = {}) {
+    _dispatch(name, detail, options = {}) {
       const event = new CustomEvent(name, { detail, bubbles: options.bubbles ?? true, composed: options.composed ?? true, cancelable: options.cancelable ?? false });
       this.dispatchEvent(event);
       return event;
@@ -7933,7 +7966,7 @@ ${quote.markerText}`;
     }
   };
 
-  // src/component/register.js
+  // src/component/register.ts
   var registry = globalThis.customElements;
   var WritemarkEditorElement2 = registry?.get(TAG_NAME) || WritemarkEditorElement;
   if (registry && !registry.get(TAG_NAME)) registry.define(TAG_NAME, WritemarkEditorElement2);
@@ -7945,51 +7978,18 @@ ${quote.markerText}`;
   var MdLiveEditorElement2 = registry?.get(LEGACY_TAG_NAME) || LegacyEditor;
   if (registry && !registry.get(LEGACY_TAG_NAME)) registry.define(LEGACY_TAG_NAME, MdLiveEditorElement2);
 
-  // src/writemark-editor.js
-  var WritemarkEditorElement3 = (
-    /** @type {unknown} */
-    WritemarkEditorElement2
-  );
-  var MdLiveEditorElement3 = (
-    /** @type {unknown} */
-    MdLiveEditorElement2
-  );
-  var renderMarkdown2 = (
-    /** @type {unknown} */
-    renderMarkdown
-  );
-  var renderInlineMarkdown2 = (
-    /** @type {unknown} */
-    renderInlineMarkdown
-  );
-  var parseBlocks2 = (
-    /** @type {unknown} */
-    parseBlocks
-  );
-  var parseTags2 = (
-    /** @type {unknown} */
-    parseTags
-  );
-  var parseListItem2 = (
-    /** @type {unknown} */
-    parseListItem
-  );
-  var parseHeading2 = (
-    /** @type {unknown} */
-    parseHeading
-  );
-  var parseBlockquote2 = (
-    /** @type {unknown} */
-    parseBlockquote
-  );
-  var htmlToMarkdown2 = (
-    /** @type {unknown} */
-    htmlToMarkdown
-  );
-  var tsvToMarkdownTable2 = (
-    /** @type {unknown} */
-    tsvToMarkdownTable
-  );
+  // src/writemark-editor.ts
+  var WritemarkEditorElement3 = WritemarkEditorElement2;
+  var MdLiveEditorElement3 = MdLiveEditorElement2;
+  var renderMarkdown2 = renderMarkdown;
+  var renderInlineMarkdown2 = renderInlineMarkdown;
+  var parseBlocks3 = parseBlocks;
+  var parseTags2 = parseTags;
+  var parseListItem2 = parseListItem;
+  var parseHeading3 = parseHeading;
+  var parseBlockquote3 = parseBlockquote;
+  var htmlToMarkdown2 = htmlToMarkdown;
+  var tsvToMarkdownTable2 = tsvToMarkdownTable;
   return __toCommonJS(writemark_editor_exports);
 })();
 globalThis.WritemarkEditor = Object.freeze(__writemark);

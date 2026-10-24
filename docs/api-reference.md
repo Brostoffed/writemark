@@ -1,6 +1,6 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.8.0. The default `live` mode
+This page is the lookup reference for Writemark 1.8.1. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
@@ -311,7 +311,7 @@ cancelable.
 | `md-completion-open` | `{ providerId, match, items }`. |
 | `md-completion-close` | `{ providerId, match }`. |
 | `md-completion-accept` | `{ providerId, item, before, after }`. |
-| `md-tags-change` | `{ current, added, removed, source, inputType }`. The list matches `getTags()`. A switch change uses `source: "attribute"`. |
+| `md-tags-change` | `{ current, added, removed, source, inputType }`. `current` matches `getTags()`. `added` and `removed` contain tag value strings. A switch change uses `source: "attribute"`. |
 | `md-tag-activate` | `{ tag, key, surface }`. Surface is `live` or `preview`. |
 | `md-render` | `{ html }`; preview output was generated. |
 | `md-file-paste` | `{ files, insertionPoint, insertMarkdown }`. |
@@ -472,7 +472,7 @@ import {
 | `parseHeading(line)` | Parse one ATX heading line. |
 | `parseBlockquote(line)` | Parse one blockquote line. |
 | `htmlToMarkdown(html)` | Convert supported clipboard-style HTML to Markdown. |
-| `tsvToMarkdownTable(text)` | Convert tab-separated rows to a Markdown table. |
+| `tsvToMarkdownTable(text)` | Convert tab-separated rows to a Markdown table. Return `null` when the text has no table. |
 
 The rendering helpers leave tags as plain text by default. Pass
 `{ tagsEnabled: true }` to render tag labels. The explicit `parseTags()` helper
