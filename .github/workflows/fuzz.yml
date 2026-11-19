@@ -67,7 +67,7 @@ jobs:
           tests/input-contract.spec.js
           tests/navigation.spec.js
           tests/shift-enter.spec.js
-          --project=chromium --workers=2 --timeout=300000
+          --project=chromium --workers=2 --timeout=300000 --grep-invert @cursor-timing
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}

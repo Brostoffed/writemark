@@ -113,10 +113,11 @@ The short workload uses 64 selections of four characters in an 800-line document
 The long workload uses 64 overlapping selections across 1,000 paragraphs or one wrapped paragraph.
 The long workload also limits the number of geometry reads and rectangles.
 The lifecycle check repeats 40 connection and removal cycles.
-Run timing checks with one worker after other browser jobs finish.
+`npm test` runs timing checks with one worker after the other browser tests finish.
+Use the timing tag to run those checks on their own.
 
 ```sh
-npx playwright test tests/presence-chaos.spec.js --workers=1 --grep='sustained|viewport budget|lifecycle'
+npm run test:browser -- --grep @cursor-timing --workers=1
 ```
 
 These browser checks do not establish physical-device performance or shared document convergence.
@@ -125,7 +126,8 @@ Failed runs retain an HTML report, trace, screenshot, and video under
 `output/playwright/`. Open the HTML report with:
 
 ```sh
-npx playwright show-report output/playwright/report
+npx playwright show-report output/playwright/report/browser
+npx playwright show-report output/playwright/report/timing
 ```
 
 ## Main demo flows

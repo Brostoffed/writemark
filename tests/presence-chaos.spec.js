@@ -155,8 +155,10 @@ test("seeded presence operations preserve document and ordering invariants", asy
   await testInfo.attach("presence-chaos-seed.json", { body: JSON.stringify(report, null, 2), contentType: "application/json" });
 });
 
+const timing = { tag: "@cursor-timing" };
+
 for (const mode of ["live", "source"]) {
-  test(`64 cursor samples stay bounded during sustained ${mode} updates`, async ({ page }, testInfo) => {
+  test(`64 cursor samples stay bounded during sustained ${mode} updates`, timing, async ({ page }, testInfo) => {
     await page.goto("/tests/fixtures/editor.html");
     const report = await page.locator("#editor").evaluate(async (editor, mode) => {
       editor.mode = mode;
@@ -219,7 +221,7 @@ for (const mode of ["live", "source"]) {
 }
 
 for (const [mode, layout] of [["live", "paragraphs"], ["source", "paragraphs"], ["live", "wrapped paragraph"]]) {
-  test(`64 overlapping long selections keep ${mode} updates within the viewport budget for ${layout}`, async ({ page }, testInfo) => {
+  test(`64 overlapping long selections keep ${mode} updates within the viewport budget for ${layout}`, timing, async ({ page }, testInfo) => {
     await page.goto("/tests/fixtures/editor.html");
     const report = await page.locator("#editor").evaluate(async (editor, { mode, layout }) => {
       const wrapped = layout === "wrapped paragraph";
@@ -295,7 +297,7 @@ for (const [mode, layout] of [["live", "paragraphs"], ["source", "paragraphs"], 
   });
 }
 
-test("repeated presence lifecycle preserves outside focus and bounded overlay nodes", async ({ page }, testInfo) => {
+test("repeated presence lifecycle preserves outside focus and bounded overlay nodes", timing, async ({ page }, testInfo) => {
   await page.goto("/tests/fixtures/editor.html");
   const report = await page.evaluate(async () => {
     const outside = document.createElement("input");

@@ -56,7 +56,7 @@
     "scripts/check-runtime.mjs": "5dddc8c5721ce2d6c06d08ab8b0bb66c4648fafe0a441694d3e2b95a2319111f",
     "tsconfig.json": "5cd68f49e185b58a832ee3b0d49df31be41fe7d8551c62f86efe4a5189a64a09",
     "tsconfig.declarations.json": "6a593e7dc947c37a9a4b2824d37e2dc745ad71f980b146484a491632cb831863",
-    "package.json": "e07d783ba46025e19dacb3699efe7debb122f4892c8bdd5ea8ac8b6eb2ddb483",
+    "package.json": "c5ec7fa73b71c8ee87a33e93844856cccef311f28b580a08372a7dbec39a314d",
     "package-lock.json": "de41dedb8681925a8f4c97cff6dcde5b572def958514a922ac8676ca800524e1",
     "LICENSE": "1126322e2cc8d165adc4c792eeb195717de2bcc7b39be1ce77959d78e87ef685",
     ".node-version": "7e8a2fa94951112b894a3dbe3d05efef5e9263741fa49125f0a70f40fedab4cc"

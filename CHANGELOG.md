@@ -43,6 +43,7 @@
 - Added HTML and plain-text clipboard captures from LibreOffice Calc.
 - Kept parent list text after nested lists in HTML paste and preview.
 - Added long-selection timing checks and weekly clipboard, cursor, and keyboard tests.
+- Run cursor timing checks with one browser worker after the functional tests.
 
 ## 1.8.1 - 2026-10-23
 
