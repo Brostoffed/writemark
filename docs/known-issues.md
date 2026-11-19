@@ -1,5 +1,42 @@
 # Known issues and issue history
 
+## Remote cursor display in 1.9.0
+
+The cursor API supplies display only.
+The host must supply transport and shared document positions.
+Preview mode hides remote cursors.
+Visible carets and selection fragments remain available when other selection endpoints are outside the mounted view.
+At crowded positions, the display hides some names and keeps all visible carets.
+Hover reveals a caret name, and the screen-reader roster exposes all names.
+Host keyboard controls can set the persistent name policy.
+The demo controls sample cursors through the real display API.
+It has no shared room or network transport.
+Version tuples reject old updates for active peers and bounded retained removal records.
+The host owns authentication and messages beyond the five-minute, 256-record retention limit.
+Whole document writes cannot identify the intended insertion among repeated identical characters.
+Supply exact transaction ranges when they are available.
+Physical-device and native IME results remain separate from browser regression results.
+
+## Textarea enhancement in 1.9.0
+
+Automatic enhancement scans opted-in textareas when the document is ready and after document insertions.
+It also observes open shadow roots found in scanned inserted subtrees.
+Late or closed shadow roots need one `enhanceTextareas(root)` call to register future insertions.
+Native prototype value setter calls need an `input` or `change` event to synchronize.
+Instance `setRangeText()` calls synchronize immediately.
+Direct `textarea.value` assignments synchronize immediately.
+Attribute changes synchronize at the next mutation checkpoint.
+
+## Clipboard corpus in 1.9.0
+
+The corpus uses traceable upstream regression inputs with pinned source revisions and license records.
+It includes Word and Google Docs producer evidence.
+Upstream sources do not state their native capture method.
+The native spreadsheet capture covers LibreOffice Calc on Linux.
+Fresh Word and Google Docs captures are pending.
+Table cells flatten code blocks to inline code and collapse internal line breaks.
+The source tree records changes and known losses in `tests/fixtures/clipboard-corpus/manifest.json`.
+
 ## Table cell input in 1.8.1
 
 The 1.8.1 source fix preserves cell spaces and keeps the cursor after each typed space.

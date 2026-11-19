@@ -3,7 +3,7 @@ import type { Tag, CompletionState, ActionContext, CompletionMatch, CompletionIt
 import { displayShortcut } from "./util.ts";
 import { ALIASES, LANGUAGES } from "../config.ts";
 import { clamp } from "../core/text.ts";
-import { fail, ok, okNoop, tx } from "../core/transactions.ts";
+import { applyTextChanges, fail, ok, okNoop, tx } from "../core/transactions.ts";
 import { isBackslashEscaped } from "../markdown/inline.ts";
 import { isTagBodyCharacter, isTagBoundary, isValidTagValue, normalizeTagKey } from "../markdown/tags.ts";
 
@@ -228,6 +228,7 @@ export class CompletionController {
     const item = this._completion.items[this._completion.activeIndex];
     if (!provider || !item || item.disabled) return fail("not-applicable");
     const ctx = this.api.getContext();
+    const sourceRevision = this.api.getRevision();
     let result: ActionResult;
     try {
       const currentMatch = provider.match(ctx);
@@ -265,17 +266,23 @@ export class CompletionController {
       return fail("provider-error", String(error instanceof Error ? error.message : error));
     }
     this._closeCompletion();
+    if (this.api.getRevision() !== sourceRevision) return fail("reentrant-change");
     if (result?.ok && result.transaction) {
       const before = this.api.snapshot();
-      this.api.applyTransaction({
+      const beforeRevision = this.api.getRevision();
+      const expectedRevision = beforeRevision + (applyTextChanges(before.value, result.transaction.changes) === before.value ? 0 : 1);
+      const applied = this.api.applyTransaction({
         ...result.transaction,
         source: source === "pointer" ? "pointer" : "keyboard",
-        actionId: "completion.accept"
+        actionId: "completion.accept",
+        origin: { kind: "completion", id: provider.id }
       }, {
         source: source === "pointer" ? "pointer" : "keyboard"
       });
+      if (!applied) return fail("change-canceled");
+      if (this.api.getRevision() !== expectedRevision) return okNoop();
       const after = this.api.snapshot();
-      this.api.dispatch("md-completion-accept", { providerId: provider.id, item, before, after });
+      this.api.dispatch("md-completion-accept", { providerId: provider.id, item, before, after, origin: { kind: "completion", id: provider.id }, beforeRevision, revision: expectedRevision });
       if (result.announcement) this.api.announce(result.announcement);
       return okNoop(result.announcement);
     }

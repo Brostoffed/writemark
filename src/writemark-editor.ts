@@ -1,5 +1,5 @@
 /*
- * <writemark-editor> v1.8.1 live inline Markdown editor.
+ * <writemark-editor> v1.9.0 live inline Markdown editor.
  * Dependency-free. No network calls. Markdown source is canonical.
  */
 import { WritemarkEditorElement as Editor, MdLiveEditorElement as LegacyEditor } from "./component/register.ts";
@@ -9,7 +9,8 @@ import { parseBlocks as parseBlocksImpl } from "./markdown/blocks.ts";
 import { parseTags as parseTagsImpl } from "./markdown/tags.ts";
 import { parseListItem as parseListItemImpl, parseHeading as parseHeadingImpl, parseBlockquote as parseBlockquoteImpl } from "./markdown/block-syntax.ts";
 import { htmlToMarkdown as htmlToMarkdownImpl, tsvToMarkdownTable as tsvToMarkdownTableImpl } from "./browser/clipboard.ts";
-import type { EditorConstructor, MarkdownOptions, MarkdownBlock, Tag, ListItem, Heading, Blockquote } from "./types.js";
+import { enhanceTextarea as enhanceTextareaImpl, enhanceTextareas as enhanceTextareasImpl, startTextareaEnhancement } from "./browser/enhance.ts";
+import type { EditorConstructor, MarkdownOptions, MarkdownBlock, Tag, ListItem, Heading, Blockquote, TextareaEnhancement } from "./types.js";
 export type * from "./types.js";
 export type WritemarkEditorElement = import("./types.js").WritemarkEditorElement;
 export type MdLiveEditorElement = import("./types.js").MdLiveEditorElement;
@@ -24,4 +25,7 @@ const parseHeading: (line: string) => Heading | null = parseHeadingImpl;
 const parseBlockquote: (line: string) => Blockquote | null = parseBlockquoteImpl;
 const htmlToMarkdown: (html: string) => string = htmlToMarkdownImpl;
 const tsvToMarkdownTable: (text: string) => string | null = tsvToMarkdownTableImpl;
-export { WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown, parseBlocks, parseTags, parseListItem, parseHeading, parseBlockquote, htmlToMarkdown, tsvToMarkdownTable };
+const enhanceTextarea: (textarea: HTMLTextAreaElement) => TextareaEnhancement = enhanceTextareaImpl;
+const enhanceTextareas: (root?: ParentNode) => TextareaEnhancement[] = enhanceTextareasImpl;
+startTextareaEnhancement();
+export { WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown, parseBlocks, parseTags, parseListItem, parseHeading, parseBlockquote, htmlToMarkdown, tsvToMarkdownTable, enhanceTextarea, enhanceTextareas };

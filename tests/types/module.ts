@@ -1,13 +1,58 @@
 import {
   WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown,
   parseTags, parseBlocks, parseHeading, parseBlockquote, parseListItem,
-  htmlToMarkdown, tsvToMarkdownTable,
+  htmlToMarkdown, tsvToMarkdownTable, enhanceTextarea, enhanceTextareas,
   type Action, type ActionResult, type MarkdownBlock, type CompletionState, type CompletionProvider, type TagProvider, type SourceSelection,
 } from "writemark-editor";
 import { WritemarkEditorElement as ExplicitEditor } from "writemark-editor/writemark-editor.js";
 import { MdLiveEditorElement as LegacyEditor } from "writemark-editor/md-live-editor.js";
 
 const editor: WritemarkEditorElement = new ExplicitEditor();
+const nativeTextarea = document.createElement("textarea");
+const enhancement = enhanceTextarea(nativeTextarea);
+const enhancedEditor: WritemarkEditorElement = enhancement.editor;
+const enhancedTextarea: HTMLTextAreaElement = enhancement.textarea;
+const enhancements = enhanceTextareas(document.createDocumentFragment());
+enhancements[0]?.destroy();
+enhancement.destroy();
+const revision: number = editor.revision;
+const presenceAccepted: boolean = editor.setRemoteCursors([
+  { id: "peer", name: "Alex", color: "#4765a9", anchor: 0, head: 0 }
+], { baseRevision: revision, animate: false });
+const cursorUpdate = editor.updateRemoteCursors({
+  cursors: [{ id: "peer", name: "Alex", color: "#4765a9", anchor: 0, head: 0, epoch: 2, sequence: 4, ttlMs: 30000 }],
+  remove: ["retired"], baseRevision: revision, showNames: true,
+});
+if (!cursorUpdate.ok) {
+  const reason: import("writemark-editor").RemoteCursorFailureReason = cursorUpdate.reason;
+  const id: string | undefined = cursorUpdate.id;
+  void reason; void id;
+} else {
+  const count: number = cursorUpdate.count;
+  void count;
+}
+// @ts-expect-error Cursor sequence numbers must use numbers.
+editor.updateRemoteCursors({ cursors: [{ id: "peer", name: "Alex", color: "#fff", anchor: 0, head: 0, epoch: 1, sequence: "4" }] });
+const remoteName: string | undefined = editor.getRemoteCursors()[0]?.name;
+// @ts-expect-error Cursor positions use numeric source offsets.
+editor.setRemoteCursors([{ id: "peer", name: "Alex", color: "#4765a9", anchor: "0", head: 0 }]);
+void presenceAccepted; void remoteName;
+const transactionResult = editor.applyTransaction({
+  baseRevision: revision,
+  changes: [{ from: 0, to: 0, expected: "", insert: "Hello" }],
+  origin: { kind: "external", id: "typed-host" },
+});
+if (!transactionResult.ok) {
+  const reason: string = transactionResult.reason;
+  void reason;
+}
+// @ts-expect-error Enhancement needs a native textarea.
+enhanceTextarea(document.createElement("input"));
+// @ts-expect-error External transactions require a base revision.
+editor.applyTransaction({ changes: [] });
+// @ts-expect-error Revisions are read-only.
+editor.revision = 0;
+void enhancedEditor; void enhancedTextarea;
 const legacy: MdLiveEditorElement = new LegacyEditor();
 class ExtendedEditor extends WritemarkEditorElement {
   override connectedCallback() { super.connectedCallback(); }

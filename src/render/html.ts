@@ -40,7 +40,8 @@ export function renderListFromBlocks(blocks: MarkdownBlock[], start: number, opt
     isListBlock(block)
     && block.list.listType === listType
     && listIndentWidth(block) === baseIndent;
-  const items: { block: Extract<MarkdownBlock, { list: ListItem }>; paragraphs: string[][]; children: string[] }[] = [];
+  type ListContent = { type: "paragraph"; lines: string[] } | { type: "child"; html: string };
+  const items: { block: Extract<MarkdownBlock, { list: ListItem }>; content: ListContent[] }[] = [];
   let loose = false;
   let index = start;
   let stopList = false;
@@ -51,8 +52,7 @@ export function renderListFromBlocks(blocks: MarkdownBlock[], start: number, opt
     const contentIndent = baseIndent + block.list.contentStart - block.list.indent.length;
     const item = {
       block,
-      paragraphs: [[block.list.content]],
-      children: [] as string[],
+      content: [{ type: "paragraph", lines: [block.list.content] }] as ListContent[],
     };
     index += 1;
     let pendingBlank = false;
@@ -88,7 +88,7 @@ export function renderListFromBlocks(blocks: MarkdownBlock[], start: number, opt
           break;
         }
         const child = renderListFromBlocks(blocks, index, options);
-        item.children.push(child.html);
+        item.content.push({ type: "child", html: child.html });
         index = child.nextIndex;
         pendingBlank = false;
         continue;
@@ -99,10 +99,12 @@ export function renderListFromBlocks(blocks: MarkdownBlock[], start: number, opt
             stopList = true;
             break;
           }
-          item.paragraphs.push([stripContinuationIndent(next.line.text, contentIndent)]);
+          item.content.push({ type: "paragraph", lines: [stripContinuationIndent(next.line.text, contentIndent)] });
           pendingBlank = false;
         } else {
-          item.paragraphs.at(-1)?.push(stripContinuationIndent(next.line.text, contentIndent));
+          const last = item.content.at(-1);
+          if (last?.type === "paragraph") last.lines.push(stripContinuationIndent(next.line.text, contentIndent));
+          else item.content.push({ type: "paragraph", lines: [stripContinuationIndent(next.line.text, contentIndent)] });
         }
         index += 1;
         continue;
@@ -123,13 +125,16 @@ export function renderListFromBlocks(blocks: MarkdownBlock[], start: number, opt
     const checkbox = item.block.list.kind === "task-list-item"
       ? `<input type="checkbox" disabled${item.block.list.checked ? " checked" : ""}> `
       : "";
-    const paragraphs = item.paragraphs.map((lines, paragraphIndex) => {
+    let paragraphIndex = 0;
+    const content = item.content.map((part, index) => {
+      if (part.type === "child") return `\n${part.html}`;
       const prefix = paragraphIndex === 0 ? checkbox : "";
-      const content = `${prefix}${renderInlineMarkdown(lines.join("\n"), options)}`;
-      return loose || paragraphIndex > 0 ? `<p>${content}</p>` : content;
+      const text = `${prefix}${renderInlineMarkdown(part.lines.join("\n"), options)}`;
+      const paragraph = loose || paragraphIndex > 0 ? `<p>${text}</p>` : text;
+      paragraphIndex += 1;
+      return (item.content[index - 1]?.type === "child" ? "\n" : "") + paragraph;
     }).join("");
-    const children = item.children.length ? `\n${item.children.join("\n")}\n` : "";
-    return `<li>${paragraphs}${children}</li>`;
+    return `<li>${content}${item.content.at(-1)?.type === "child" ? "\n" : ""}</li>`;
   }).join("");
   return { html: `<${tag}${startAttribute}>${html}</${tag}>`, nextIndex: index };
 }

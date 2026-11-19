@@ -1,6 +1,6 @@
 ---
 name: writemark-change-completion
-description: Complete Writemark editor fixes, features, build changes, and release preparation. Check changelog entries, versions, bundles, tests, and release status before reporting completion. Skip read-only reviews and text-only edits.
+description: Complete Writemark editor changes with demo, API, documentation, version, changelog, bundle, test, and release checks. Skip read-only reviews and text-only edits.
 ---
 
 # Complete a Writemark change
@@ -25,6 +25,23 @@ Keep unrelated changes intact.
 Before build or test commands, run `npm run check:runtime`.
 Use the exact Node.js version in `.node-version`.
 A green check under another runtime does not verify the pinned CI runtime.
+
+## Complete the affected surfaces
+
+1. List the changed public properties, methods, helpers, attributes, events, and style parts.
+2. Update public declarations and type examples when contracts change.
+3. Update the README, API reference, feature guide, and affected setup or architecture guides.
+4. Show each user-visible feature in the main demo or a linked focused demo.
+5. Use actual public APIs in demo controls.
+6. Update demo state and event output when metadata changes.
+7. Cover forms, revision checks, and cleanup when the change affects those behaviors.
+8. Check demo controls at wide and narrow widths.
+9. Run the affected demo tests in each locally supported browser.
+10. Record why an affected surface needs no change.
+
+Keep examples within the user's selected scope.
+Keep the main editor usable when a focused demo covers a larger feature.
+Do not treat a demo version update as feature coverage.
 
 ## Complete the release metadata
 
@@ -72,7 +89,10 @@ Record unavailable checks and unconfirmed symptoms.
 
 ## Report completion
 
-Report the change, version, changelog status, test results, and remaining work.
+Report the changed APIs by name.
+Report the main demo, README, API reference, feature guide, changelog, version, declarations, and test status.
+State which surfaces changed and which need no change.
+Report remaining work and unavailable checks explicitly.
 State whether the changes have a commit, pull request, tag, or published package.
 Distinguish a local fix, a local release candidate, and a verified public release.
 Do not describe local tests as proof of publication.

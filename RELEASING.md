@@ -7,6 +7,21 @@ GitHub Release, and the npm version should all match.
 The [known issues](docs/known-issues.md) list confirmed open defects. Update
 that list when a release fixes an issue or changes its scope.
 
+## Complete local changes
+
+Use the [change completion skill](.agents/skills/writemark-change-completion/SKILL.md) for editor fixes, features, build changes, and release work.
+The repository instructions require this workflow without a separate user request.
+
+Each change includes its affected APIs, declarations, README, guides, demo, changelog, version, bundles, and checks.
+Record why a surface needs no change.
+Show user-visible features through real public API calls.
+Link focused demos from the main demo page.
+Check the demo at wide and narrow widths.
+Include affected APIs and completion status in the final report.
+
+Local completion does not publish a release.
+Create a commit, pull request, tag, or package publication only within the user's authorized scope.
+
 ## One-time first publish
 
 The first publish establishes ownership of the unscoped npm package. Do this
@@ -123,10 +138,9 @@ publishes that version to npm. It exits successfully without republishing when
 the same version is already present, which also makes the first GitHub Release
 safe to create after the one-time manual npm publish.
 
-The weekly `Markdown fuzz` workflow adds a rotating-seed, 5,000-case-per-property
-security run between releases. Its logged seed and any reported shrink path can
-be supplied through `WRITEMARK_FUZZ_SEED` and `WRITEMARK_FUZZ_PATH` to reproduce
-a failure locally.
+The weekly `Markdown fuzz` workflow checks Markdown, clipboard, cursor history, and keyboard input.
+The workflow logs a rotating seed and saves the two browser reports.
+Use the logged seed and the replay controls in the [browser test guide](tests/README.md).
 
 ## Published demo
 

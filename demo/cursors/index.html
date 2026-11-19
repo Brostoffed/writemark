@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Cursor samples · Writemark</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+  <script src="../../dist/writemark-editor.global.min.js" defer></script>
+  <script src="./assets/cursor-demo.js" type="module"></script>
+</head>
+<body>
+  <div class="page">
+    <header class="site-header">
+      <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">w</span><span>Writemark</span></a>
+      <span class="demo-tag"><span aria-hidden="true"></span>Cursor display demo</span>
+    </header>
+
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">A place on the page</p>
+      <h1 id="page-title">Give every cursor a clear place.</h1>
+      <p class="intro-copy">Edit the page. Place sample cursors and selections where you need them.</p>
+    </section>
+
+    <main class="workbench">
+      <section class="document-card" aria-labelledby="document-title">
+        <header class="document-header">
+          <div><p class="eyebrow">Field notes</p><h2 id="document-title">A plan for Friday</h2></div>
+          <div class="mode-switch" role="group" aria-label="Editor view">
+            <button id="mode-live" type="button" aria-pressed="true">Live</button>
+            <button id="mode-source" type="button" aria-pressed="false">Source</button>
+          </div>
+        </header>
+        <div class="document-surface">
+          <writemark-editor id="cursor-editor" mode="live" preview="none" aria-label="Editable Friday field notes" label="" placeholder="Write a note"></writemark-editor>
+        </div>
+        <footer class="document-footer">
+          <span id="word-count">An editable page</span>
+          <span id="selection-label">Caret at 0</span>
+        </footer>
+      </section>
+
+      <aside class="cursor-panel" aria-labelledby="samples-title">
+        <div class="panel-heading"><div><p class="eyebrow">Try the display</p><h2 id="samples-title">Cursor samples</h2></div><span id="sample-count" class="count-pill">2</span></div>
+        <p class="scope-note">These markers are examples. They do not connect to other people.</p>
+        <label class="names-control"><input id="show-names" type="checkbox" checked><span>Keep cursor names visible</span></label>
+        <div id="cursor-list" class="cursor-list" role="group" aria-label="Choose a cursor sample"></div>
+        <div class="sample-editor">
+          <label class="field-label" for="cursor-name">Name</label>
+          <div class="identity-row">
+            <input id="cursor-name" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-label="Cursor name">
+            <label class="color-well" title="Cursor color"><span class="sr-only">Cursor color</span><input id="cursor-color" type="color" value="#b45c42" aria-label="Cursor color"></label>
+          </div>
+          <button id="place-cursor" class="button button-primary" type="button"><span aria-hidden="true">⌖</span>Place at selection</button>
+          <label class="follow-control"><input id="follow-selection" type="checkbox"><span><strong>Move with my selection</strong><small>Click or select text to move this sample.</small></span></label>
+        </div>
+        <div class="sample-actions"><button id="add-cursor" class="button button-quiet" type="button"><span aria-hidden="true">+</span>Add cursor here</button><button id="remove-cursor" class="remove-button" type="button">Remove</button></div>
+        <details class="position-details">
+          <summary>Source positions</summary>
+          <p>Anchor and head use Markdown source offsets.</p>
+          <form id="position-form">
+            <div class="offset-fields"><label>Anchor<input id="cursor-anchor" type="number" min="0" step="1" required></label><label>Head<input id="cursor-head" type="number" min="0" step="1" required></label></div>
+            <button class="button button-quiet" type="submit">Set positions</button>
+          </form>
+          <div class="ordering-check"><p>Older updates cannot move a newer sample.</p><button id="test-older-update" class="button button-quiet" type="button">Try an older update</button></div>
+        </details>
+        <p id="demo-status" class="demo-status" role="status" aria-live="polite">Select a cursor sample to change its name or color.</p>
+      </aside>
+    </main>
+    <footer class="page-footer">
+      <a href="../../perf/presence.html">Measure 64 cursors <span aria-hidden="true">↗</span></a>
+      <a href="../../docs/api-reference.md#remote-cursor-display">Cursor API reference <span aria-hidden="true">↗</span></a>
+    </footer>
+  </div>
+</body>
+</html>

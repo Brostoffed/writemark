@@ -421,3 +421,172 @@ test.describe("published demo sizing controls", () => {
     expect(styles).toEqual({ maxHeight: "", minHeight: "" });
   });
 });
+
+test.describe("main demo 1.9.0 examples", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/demo/index.html");
+    await expect(page.locator("#editor")).toBeVisible();
+  });
+
+  test("links directly to the cursor demo and readable release notes", async ({ page }) => {
+    const links = page.getByRole("navigation", { name: "New in 1.9.0" });
+    await expect(links.getByRole("link", { name: "Try the cursor demo" })).toHaveAttribute("href", "./cursors/index.html");
+    await expect(links.getByRole("link", { name: "Read the 1.9.0 release notes" })).toHaveAttribute("href", "../CHANGELOG.md#190---2026-11-19");
+    await links.getByRole("link", { name: "Try textarea enhancement" }).click();
+    await expect(page.getByRole("heading", { name: "Native textarea", exact: true })).toBeInViewport();
+    await links.getByRole("link", { name: "Try checked external edits" }).click();
+    await expect(page.getByRole("heading", { name: "External edits", exact: true })).toBeInViewport();
+  });
+
+  test("applies an external insertion at the saved keyboard selection and supports undo and redo", async ({ page }) => {
+    const editor = page.locator("#editor");
+    await page.locator("#mode").selectOption("source");
+    await editor.locator("textarea").fill("Alpha beta");
+    await editor.locator("textarea").focus();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.locator("#state-selection")).toHaveText("5–5");
+    const beforeRevision = await editor.evaluate(element => element.revision);
+    await page.locator("#external-insert-text").fill(" inserted");
+    await page.getByRole("button", { name: "Apply current edit", exact: true }).click();
+    await expect(editor).toHaveJSProperty("value", "Alpha inserted beta");
+    await expect(page.locator("#external-revision")).toHaveText(String(beforeRevision + 1));
+    await expect(page.locator("#state-origin")).toHaveText("external: demo.external-edit");
+    await expect(page.locator("#log")).toContainText('"beforeRevision"');
+    await expect(page.locator("#log")).toContainText('"revision"');
+    await expect(page.locator("#log")).toContainText('"origin"');
+    await expect(page.locator("#log")).toContainText('"demo.external-edit"');
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(editor).toHaveJSProperty("value", "Alpha beta");
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await expect(editor).toHaveJSProperty("value", "Alpha inserted beta");
+  });
+
+  test("rejects a saved stale request without changing text, revision, or selection", async ({ page }) => {
+    const editor = page.locator("#editor");
+    await page.locator("#mode").selectOption("source");
+    const source = editor.locator("textarea");
+    await source.fill("Before");
+    await page.locator("#external-insert-text").fill(" saved");
+    await page.getByRole("button", { name: "Save request", exact: true }).click();
+    await expect(page.locator("#external-saved-request")).toContainText("Saved revision");
+    await source.focus();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" changed");
+    const before = await editor.evaluate(element => ({ value: element.value, revision: element.revision, start: element.selectionStart, end: element.selectionEnd }));
+    await page.getByRole("button", { name: "Apply saved request", exact: true }).click();
+    await expect(page.locator("#external-edit-status")).toContainText("Rejected: stale-revision.");
+    expect(await editor.evaluate(element => ({ value: element.value, revision: element.revision, start: element.selectionStart, end: element.selectionEnd }))).toEqual(before);
+  });
+
+  test("enhances and restores a real native form without losing text or duplicating its field", async ({ page }) => {
+    const native = page.locator("#native-demo-textarea");
+    const form = page.locator("#native-demo-form");
+    await expect(native).toBeVisible();
+    await native.fill("Native keyboard draft");
+    await page.getByRole("button", { name: "Enhance textarea", exact: true }).click();
+    const enhanced = form.locator("writemark-editor");
+    await expect(enhanced).toHaveJSProperty("mode", "source");
+    await expect(enhanced).toHaveJSProperty("value", "Native keyboard draft");
+    await enhanced.locator("textarea").focus();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" plus edit");
+    const expected = "Native keyboard draft plus edit";
+    await expect(page.locator("#native-demo-count")).toHaveText("1");
+    await expect(page.locator("#native-demo-value")).toHaveText(JSON.stringify([expected], null, 2));
+    await page.getByRole("button", { name: "Read form value", exact: true }).click();
+    expect(await form.evaluate(element => new FormData(element).getAll("nativeBody"))).toEqual([expected]);
+    await page.getByRole("button", { name: "Restore textarea", exact: true }).click();
+    await expect(native).toBeVisible();
+    await expect(native).toHaveValue(expected);
+    await expect(enhanced).toHaveCount(0);
+    await page.getByRole("button", { name: "Enhance textarea", exact: true }).click();
+    await expect(enhanced).toHaveCount(1);
+    await expect(enhanced).toHaveJSProperty("value", expected);
+    expect(await form.evaluate(element => ({ all: Array.from(new FormData(element)), count: new FormData(element).getAll("nativeBody").length }))).toEqual({ all: [["nativeBody", expected]], count: 1 });
+  });
+
+  test("keeps revision state current after silent default changes", async ({ page }) => {
+    const editor = page.locator("#editor");
+    await editor.evaluate(element => { element.defaultValue = "Silent default"; });
+    const revision = await editor.evaluate(element => element.revision);
+    await expect(editor).toHaveJSProperty("value", "Silent default");
+    await expect(page.locator("#state-revision")).toHaveText(String(revision));
+    await expect(page.locator("#external-revision")).toHaveText(String(revision));
+    await expect(page.locator("#state-length")).toHaveText("14 characters");
+  });
+
+  test("keeps the form preview current through native resets and canceled resets", async ({ page }) => {
+    const form = page.locator("#native-demo-form");
+    const native = page.locator("#native-demo-textarea");
+    const reset = form.getByRole("button", { name: "Reset form", exact: true });
+    const preview = page.locator("#native-demo-value");
+    const initial = await native.inputValue();
+    await native.fill("Native draft");
+    await reset.click();
+    await expect(native).toHaveValue(initial);
+    await expect(preview).toHaveText(JSON.stringify([initial], null, 2));
+
+    await native.fill("Keep native text");
+    await form.evaluate(element => element.addEventListener("reset", event => event.preventDefault(), { once: true }));
+    await reset.click();
+    await expect(native).toHaveValue("Keep native text");
+    await expect(preview).toHaveText(JSON.stringify(["Keep native text"], null, 2));
+
+    await page.getByRole("button", { name: "Enhance textarea", exact: true }).click();
+    const enhanced = form.locator("writemark-editor");
+    await enhanced.locator("textarea").fill("Enhanced draft");
+    await reset.click();
+    await expect(enhanced).toHaveJSProperty("value", initial);
+    await expect(preview).toHaveText(JSON.stringify([initial], null, 2));
+
+    await enhanced.locator("textarea").fill("Keep enhanced text");
+    await form.evaluate(element => element.addEventListener("reset", event => event.preventDefault(), { once: true }));
+    await reset.click();
+    await expect(enhanced).toHaveJSProperty("value", "Keep enhanced text");
+    await expect(preview).toHaveText(JSON.stringify(["Keep enhanced text"], null, 2));
+    expect(await form.evaluate(element => new FormData(element).getAll("nativeBody"))).toEqual(["Keep enhanced text"]);
+  });
+
+  test("keeps the new examples within a 390px viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Enhance textarea", exact: true }).click();
+    const result = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      page: document.documentElement.scrollWidth,
+      panels: Array.from(document.querySelectorAll('.version-examples > section, nav[aria-label="New in 1.9.0"]')).map(element => ({ left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right }))
+    }));
+    expect(result.page).toBeLessThanOrEqual(result.viewport + 1);
+    for (const panel of result.panels) {
+      expect(panel.left).toBeGreaterThanOrEqual(0);
+      expect(panel.right).toBeLessThanOrEqual(390);
+    }
+  });
+
+  test("runs the main page examples directly from disk without a network", async ({ page, context, browserName }) => {
+    const networkRequests = [];
+    await page.route(/^https?:/, route => {
+      networkRequests.push(route.request().url());
+      return route.abort();
+    });
+    // WebKit offline emulation blocks local file navigation.
+    if (browserName !== "webkit") await context.setOffline(true);
+    await page.goto(new URL("../demo/index.html", import.meta.url).href);
+    const editor = page.locator("#editor");
+    await expect(editor).toBeVisible();
+    const before = await editor.evaluate(element => element.value);
+    await page.locator("#external-insert-text").fill("Offline edit. ");
+    await page.getByRole("button", { name: "Apply current edit", exact: true }).click();
+    await expect(editor).toHaveJSProperty("value", "Offline edit. " + before);
+    await page.locator("#native-demo-textarea").fill("Offline form text");
+    await page.getByRole("button", { name: "Enhance textarea", exact: true }).click();
+    await expect(page.locator("#native-demo-form writemark-editor")).toHaveJSProperty("value", "Offline form text");
+    await expect(page.locator("#native-demo-value")).toHaveText(JSON.stringify(["Offline form text"], null, 2));
+    await page.getByRole("button", { name: "Restore textarea", exact: true }).click();
+    await expect(page.locator("#native-demo-textarea")).toHaveValue("Offline form text");
+    expect(networkRequests).toEqual([]);
+  });
+});

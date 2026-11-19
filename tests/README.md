@@ -78,6 +78,14 @@ budget without changing the suite:
 WRITEMARK_FUZZ_RUNS=5000 npm run test:fuzz
 ```
 
+The clipboard corpus also accepts `WRITEMARK_FUZZ_RUNS` for its hostile HTML property.
+Run its deep budget with the Markdown properties:
+
+```sh
+WRITEMARK_FUZZ_RUNS=5000 npx playwright test tests/security.spec.js tests/clipboard-corpus.spec.js --project=chromium
+WRITEMARK_TRANSACTION_FUZZ_RUNS=5000 npm run test:unit
+```
+
 Failures report a seed and shrink path. Replay the exact counterexample with
 the reported values:
 
@@ -85,9 +93,33 @@ the reported values:
 WRITEMARK_FUZZ_SEED=6212113 WRITEMARK_FUZZ_PATH="2:1:0" npm run test:fuzz
 ```
 
-The scheduled `Markdown fuzz` GitHub Actions workflow runs 5,000 cases per
-property with a rotating seed. Its seed is printed in the workflow log so every
-failure remains reproducible.
+The weekly `Markdown fuzz` workflow uses a rotating seed and records it in the log.
+It runs 5,000 cases per Markdown and hostile clipboard property by default.
+It also runs 5,000 cursor operations, 500 history cases per mode, and 200 Shift+Enter cases per property.
+The workflow runs the native input and navigation tests in Chromium.
+
+Cursor chaos checks use an independent endpoint model and print a replay seed on failure.
+The standard run checks 240 operations per browser.
+Use the deeper budget with the pinned runtime:
+
+```sh
+WRITEMARK_PRESENCE_STEPS=10000 WRITEMARK_PRESENCE_SEED=119298569 npx playwright test tests/presence-chaos.spec.js --grep='seeded presence operations'
+WRITEMARK_INVERSE_RUNS=500 WRITEMARK_INVERSE_SEED=27898999 npx playwright test tests/presence-history.spec.js --grep='generated inverse batches'
+WRITEMARK_TRANSACTION_FUZZ_RUNS=10000 node --test tests/unit/transactions.test.mjs
+```
+
+The cursor workload records update cost and frame intervals separately.
+The short workload uses 64 selections of four characters in an 800-line document.
+The long workload uses 64 overlapping selections across 1,000 paragraphs or one wrapped paragraph.
+The long workload also limits the number of geometry reads and rectangles.
+The lifecycle check repeats 40 connection and removal cycles.
+Run timing checks with one worker after other browser jobs finish.
+
+```sh
+npx playwright test tests/presence-chaos.spec.js --workers=1 --grep='sustained|viewport budget|lifecycle'
+```
+
+These browser checks do not establish physical-device performance or shared document convergence.
 
 Failed runs retain an HTML report, trace, screenshot, and video under
 `output/playwright/`. Open the HTML report with:
@@ -95,6 +127,21 @@ Failed runs retain an HTML report, trace, screenshot, and video under
 ```sh
 npx playwright show-report output/playwright/report
 ```
+
+## Main demo flows
+
+`demo.spec.js` covers the examples in the [main demo](../demo/index.html).
+The 1.9.0 examples expose these public workflows:
+
+- Enhance a native textarea and check its form value and reset behavior.
+- Apply a checked external edit and report a stale request without changing the document.
+- Open cursor samples through the main demo link.
+
+`cursor-demo.spec.js` checks the dedicated [cursor demo](../demo/cursors/index.html).
+It covers manual placement, names, colors, source positions, stale updates, and the keyboard name control.
+The demo has no shared room or transport.
+These tests do not prove shared document convergence or fresh clipboard capture from external applications.
+See the [known issues](../docs/known-issues.md) for evidence limits.
 
 ## Suite structure
 
@@ -111,6 +158,16 @@ The CI loading checks test both outputs.
 - `actions.spec.js` verifies the reusable action fixtures as isolated,
   data-driven Playwright tests.
 - `clipboard.spec.js` verifies Markdown-aware paste and copy behavior.
+- `clipboard-corpus.spec.js` checks upstream inputs, native Calc payloads, paste in both modes, history, MIME priority, and hostile HTML.
+- `textarea-enhancement.spec.js` checks native forms, fallback recovery, defaults, focus, selection, and enhancement lifecycle.
+- `transactions.spec.js` checks external edit validation, revisions, edit origins, cancellation, reentrancy, history, and native input.
+- `enhancement-transactions.spec.js` checks generated external edits, native form callbacks, and history through enhanced textareas.
+- `presence.spec.js` checks cursor display, motion, reduced motion, validation, history mapping, cleanup, and focus.
+- `presence-geometry.spec.js` checks cursor geometry against native text hit tests, wrapping, RTL, scroll, and mounted content.
+- `presence-history.spec.js` checks deleted anchors, exact transaction ranges, later peer moves, and native undo coalescing.
+- `input-native-mapping.spec.js` checks repeated-text native edits, UTF-16 replacement, and verified cumulative composition ranges.
+- `presence-chaos.spec.js` checks seeded cursor sequences, 64-cursor workloads, and repeated cursor lifecycle operations.
+- `cursor-demo.spec.js` checks the real cursor controls, keyboard selection, editing, mode changes, and narrow layouts.
 - `component.spec.js` verifies registration, rendering, modes, public APIs,
   sanitization, and instance isolation.
 - `state-and-forms.spec.js` verifies focus, accessible naming, readonly and
@@ -149,7 +206,7 @@ The CI loading checks test both outputs.
   CommonMark reference renderer over the supported unambiguous subset.
 - `tables.spec.js` verifies source-backed cell editing, navigation, structural
   actions, escaping, alignment, generated rows, and undo.
-- `demo.spec.js` verifies the published demo controls, output, and form loop.
+- `demo.spec.js` checks the main demo controls, output, forms, and 1.9.0 API examples.
 - `version-policy.test.mjs` verifies that release metadata stays synchronized
   and that completed notes do not remain under `Unreleased`.
 - `fixtures/markdown-security-corpus.js` owns reviewed hostile inputs, safe

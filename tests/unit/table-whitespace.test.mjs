@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { tableCellTexts, tableRowSourceParts } from "../../src/actions/tables.ts";
-import { parseTableLineRanges } from "../../src/markdown/tables.ts";
+import { isLikelyTableRow, isTableDelimiter, parseTableLineRanges } from "../../src/markdown/tables.ts";
 import { renderMarkdown } from "../../src/render/html.ts";
 
 test("live table cells retain spaces through repeated edits and source offsets", () => {
@@ -33,4 +33,20 @@ test("preview table cells still remove all boundary spaces", () => {
     renderMarkdown(table + "| page |  |")
   );
   assert.equal(parseTableLineRanges("|   page    |    |", 0)[0].text, "page");
+});
+
+
+test("one-column tables require an unescaped table pipe", () => {
+  for (const row of ["| Header |", "Header|", "|Header"]) assert.equal(isLikelyTableRow(row), true);
+  for (const row of ["| --- |", "---|", "|---"]) assert.equal(isTableDelimiter(row), true);
+  for (const row of ["---", "Header", "Header\\|", "\\|Header"]) {
+    assert.equal(isLikelyTableRow(row), false);
+    assert.equal(isTableDelimiter(row), false);
+  }
+  assert.match(renderMarkdown("Heading\n---"), /<h2[^>]*>Heading<\/h2>/);
+  const rendered = renderMarkdown("| Code |\n| --- |\n| `a\\|b` |\n| `a\\\\\\|b` |");
+  assert.equal((rendered.match(/<th>/g) || []).length, 1);
+  assert.equal((rendered.match(/<td>/g) || []).length, 2);
+  assert.match(rendered, /<code>a\|b<\/code>/);
+  assert.match(rendered, /<code>a\\\|b<\/code>/);
 });

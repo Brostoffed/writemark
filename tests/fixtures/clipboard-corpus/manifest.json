@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 2,
+  "policy": "Expected Markdown uses the first table row as its header. Upstream text files contain expected text or Markdown. Native capture files contain clipboard payloads. Nonbreaking spaces become spaces outside code. Table line breaks become spaces.",
+  "fixtures": [
+    {
+      "id": "google-docs",
+      "html": "google-docs.html",
+      "expectedMarkdown": "text\n\n1. i1\n2. i2\n   1. i3\n\n**text**",
+      "text": "google-docs.txt",
+      "source": "https://github.com/slab/quill/blob/539cbffd0a13b18e9c65eb84dd35e6596e403158/packages/quill/test/unit/modules/clipboard.spec.ts",
+      "revision": "539cbffd0a13b18e9c65eb84dd35e6596e403158",
+      "producer": "Google Docs",
+      "license": "BSD-3-Clause",
+      "licenseFile": "LICENSE.quill",
+      "provenance": "Upstream clipboard regression input. Native capture method is not stated.",
+      "modifications": "Extracted the upstream string. Producer follows the upstream test name and docs-internal-guid wrapper.",
+      "losses": [],
+      "sha256": "75f3976eb6a0e170facc6bde9c27266204dc6e0e3e44f48bb2e946a11a24f578"
+    },
+    {
+      "id": "nested-list",
+      "html": "nested-list.html",
+      "expectedMarkdown": "1. One\n   1. Alpha\n   2. Beta\n      1. I",
+      "text": "nested-list.txt",
+      "source": "https://github.com/slab/quill/blob/539cbffd0a13b18e9c65eb84dd35e6596e403158/packages/quill/test/unit/modules/clipboard.spec.ts",
+      "revision": "539cbffd0a13b18e9c65eb84dd35e6596e403158",
+      "producer": "Unknown",
+      "license": "BSD-3-Clause",
+      "licenseFile": "LICENSE.quill",
+      "provenance": "Upstream clipboard regression input. Native capture method is not stated.",
+      "modifications": "Extracted the HTML string without content changes.",
+      "losses": [],
+      "sha256": "e1795ea05fe7ea046f321c8fb2a7c71a718b06a5d6333fe907e88df008f29a43"
+    },
+    {
+      "id": "table",
+      "html": "table.html",
+      "expectedMarkdown": "| A1 | A2 | A3 |\n| --- | --- | --- |\n| B1 |  | B3 |",
+      "text": "table.txt",
+      "source": "https://github.com/slab/quill/blob/539cbffd0a13b18e9c65eb84dd35e6596e403158/packages/quill/test/unit/modules/clipboard.spec.ts",
+      "revision": "539cbffd0a13b18e9c65eb84dd35e6596e403158",
+      "producer": "Unknown",
+      "license": "BSD-3-Clause",
+      "licenseFile": "LICENSE.quill",
+      "provenance": "Upstream clipboard regression input. Native capture method is not stated.",
+      "modifications": "Extracted the HTML string without content changes.",
+      "losses": [
+        "The first row becomes the Markdown header. Cell spans and presentation styles have no Markdown equivalent."
+      ],
+      "sha256": "fbb5515dcb4401849d81f741c0835b5d243d15d92c9aae83ba0b5621532ca077"
+    },
+    {
+      "id": "code-whitespace",
+      "html": "code-whitespace.html",
+      "expectedMarkdown": "```\n 01 \n 23 \n```",
+      "text": "code-whitespace.txt",
+      "source": "https://github.com/slab/quill/blob/539cbffd0a13b18e9c65eb84dd35e6596e403158/packages/quill/test/unit/modules/clipboard.spec.ts",
+      "revision": "539cbffd0a13b18e9c65eb84dd35e6596e403158",
+      "producer": "Unknown",
+      "license": "BSD-3-Clause",
+      "licenseFile": "LICENSE.quill",
+      "provenance": "Upstream clipboard regression input. Native capture method is not stated.",
+      "modifications": "Extracted the HTML string without content changes.",
+      "losses": [],
+      "sha256": "4842a452694315d9cef2cf287f7f0e6f756db530e7d7110aef971831ac5ee73a"
+    },
+    {
+      "id": "hostile-script",
+      "html": "hostile-script.html",
+      "expectedMarkdown": "",
+      "text": "hostile-script.txt",
+      "source": "https://github.com/slab/quill/blob/539cbffd0a13b18e9c65eb84dd35e6596e403158/packages/quill/test/unit/modules/clipboard.spec.ts",
+      "revision": "539cbffd0a13b18e9c65eb84dd35e6596e403158",
+      "producer": "Unknown",
+      "license": "BSD-3-Clause",
+      "licenseFile": "LICENSE.quill",
+      "provenance": "Upstream clipboard regression input. Native capture method is not stated.",
+      "modifications": "Extracted the HTML string without content changes.",
+      "losses": [],
+      "sha256": "9d4f8e0626b5e4351ba8b68659361376cfbe9a736df71d3011c014bd20b66030"
+    },
+    {
+      "id": "word",
+      "html": "word.html",
+      "text": "word.txt",
+      "expectedMarkdown": "This is normal text\n\n1. Numbered list 1\n\n2. Numbered list 2\n\n3. Numbered list 3\n\n4. Numbered list 4\n\n1. Outline numbered 1\n\n   1. Outline numbered 1\\.a\n\n   1. Outline numbered 1\\.b\n\n2. Outline numbered 2\n\n- Bulleted list 1\n\n- Bulleted list 2",
+      "source": "https://github.com/facebook/lexical/blob/e7baf734094dd546275727602e08dcb516772f07/dev-examples/dom-import/src/fixtures/word.html",
+      "revision": "e7baf734094dd546275727602e08dcb516772f07",
+      "producer": "Microsoft Word 15",
+      "license": "MIT",
+      "licenseFile": "LICENSE.lexical",
+      "provenance": "Upstream Word import fixture. Generator and Originator metadata identify Microsoft Word 15. msohtmlclip paths support clipboard origin. Capture method is not stated.",
+      "modifications": "Extracted the complete body. Removed the head, which contains a local user path and Word styles.",
+      "losses": [
+        "Alphabetic list labels become decimal labels. Blank Office paragraphs separate list items. Fonts, styles, and list definitions are omitted."
+      ],
+      "sha256": "9506bf3bc9757f45373e7a8ea3b23cedb2884d3899f420328ccea1c66a12549d"
+    }
+  ],
+  "nativeCaptures": [
+    {
+      "id": "calc-native",
+      "producer": "LibreOffice Calc",
+      "version": "24.2.7.2 420(Build:2)",
+      "platform": "Ubuntu 24.04 LTS arm64 in Xvfb",
+      "date": "2026-11-18",
+      "source": "capture-calc.py",
+      "selection": "A1:C4",
+      "method": "The Calc Copy command wrote the formats to the X11 clipboard. xclip read both formats.",
+      "formats": [
+        {
+          "browserType": "text/html",
+          "clipboardTarget": "text/html",
+          "file": "calc-native.html",
+          "modifications": "Removed trailing whitespace outside the table.",
+          "capturedSha256": "ff78e47e90395f4656e0d5c67c01feb61b110973eac4fcba8bdfa4d391f87ca1",
+          "sha256": "2c8b20d958e22dd7b26587579359d960a6d23e26ad8de98c73479641fd76d505"
+        },
+        {
+          "browserType": "text/plain",
+          "clipboardTarget": "UTF8_STRING",
+          "file": "calc-native.tsv",
+          "sha256": "a65e1926d28fcd393696da2353dee64e0fb7f4947fab4457081d6693abaab4a4"
+        }
+      ],
+      "rows": [
+        ["Route", "Quantity", "Notes"],
+        ["a\\|b", "7", "café 雪 😀"],
+        ["**literal**", "", "Retail"],
+        ["final", "0", "saved"]
+      ]
+    }
+  ]
+}

@@ -5,6 +5,22 @@ This guide describes how Writemark behaves while a person edits. Start with
 host page. API details are collected separately in the
 [API reference](api-reference.md).
 
+## Features in 1.9.0
+
+- [Textarea enhancement](getting-started.md#enhance-an-existing-textarea) adds the editor to existing Markdown forms and preserves the native submitted field.
+- [Checked external edits](api-reference.md#external-transactions) use revision checks, exact source ranges, and structured results.
+- Clipboard conversion preserves supported HTML, Markdown clipboard data, and tab-separated tables.
+- [Cursor display](api-reference.md#remote-cursor-display) shows supplied carets, names, colors, and selection ranges.
+
+The clipboard corpus records Word and Google Docs producer evidence from traceable upstream inputs.
+It also stores HTML and plain text from a native LibreOffice Calc clipboard.
+It does not establish fresh application captures or spreadsheet application coverage.
+See the [known issues](known-issues.md) for conversion losses and evidence limits.
+
+Cursor display has no transport and does not share text.
+Try the [main demo](../demo/index.html) and the dedicated [cursor demo](../demo/cursors/index.html).
+Read the [motion guide](advanced.md#remote-cursor-motion) for cursor movement and name behavior.
+
 ## The source-backed editing model
 
 Writemark keeps one canonical Markdown string. Every rendered live block maps
@@ -418,6 +434,8 @@ Paste behavior is ordered by the most useful source:
 Block-shaped paste is separated from surrounding inline text when needed.
 HTML conversion escapes literal Markdown punctuation and keeps blank lines
 inside pasted code blocks.
+Tab-separated cells keep literal backslashes, vertical bars, and Markdown punctuation.
+Text after a nested list stays in its parent item and keeps its order.
 `md-paste` reports the inserted Markdown and detected kind.
 
 Pasted or dropped files emit `md-file-paste` or `md-file-drop`. Writemark does

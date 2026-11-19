@@ -1,7 +1,8 @@
-import type { EditorMode, PreviewMode, MarkdownFlavor, SourceSelection, TextChange, MarkdownOptions, MarkdownBlock, DebugDetails, WritemarkEventMap, EventDetail } from "../types.ts";
+import type { EditorMode, PreviewMode, MarkdownFlavor, SourceSelection, TextChange, MarkdownOptions, MarkdownBlock, DebugDetails, WritemarkEventMap, DispatchDetail } from "../types.ts";
 
 export type DecorateOptions = MarkdownOptions & {
     linkTarget?: string;
+    hideEscapes?: boolean;
 };
 export interface VirtualState {
     active: boolean;
@@ -43,7 +44,7 @@ export interface RenderHost {
     getPreviewElement: () => HTMLElement;
     setPreview: (value: HTMLElement) => void;
     getHTML: () => string;
-    _dispatch: <K extends keyof WritemarkEventMap>(name: K, detail: EventDetail<K>, options?: Pick<CustomEventInit<unknown>, "bubbles" | "composed" | "cancelable">) => WritemarkEventMap[K];
+    _dispatch: <K extends keyof WritemarkEventMap>(name: K, detail: DispatchDetail<K>, options?: Pick<CustomEventInit<unknown>, "bubbles" | "composed" | "cancelable">) => WritemarkEventMap[K];
     _emitError: (phase: string, error: unknown, recoverable?: boolean, extra?: Record<string, unknown>) => void;
     _parseOptions: () => MarkdownOptions;
     _rebuildLiveIndex: () => void;

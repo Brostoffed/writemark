@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Presence geometry</title>
+<style>
+body { margin: 16px; }
+#host { display: block; width: 280px; }
+#shell { position: relative; }
+textarea, #live { box-sizing: border-box; width: 280px; height: 170px; border: 2px solid black; padding: 11px 13px; font: 16px/24px monospace; tab-size: 4; overflow: auto; }
+#live { white-space: pre-wrap; }
+#other { margin-top: 12px; }
+</style>
+</head>
+<body>
+<div id="host"><div id="shell"><textarea id="source" aria-label="Source"></textarea><div id="live" hidden><div data-editable data-from="0" data-to="16">Live sample text</div></div></div></div>
+<input id="other" aria-label="Other">
+</body>
+</html>

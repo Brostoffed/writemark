@@ -58,7 +58,7 @@ export function decorateInline(raw: string, opts: DecorateOptions = {}) {
       }
     }
     if (text[i] === "\\" && isEscapablePunctuation(text[i + 1])) {
-      prepared += reserve(token("\\") + escapeHtml(text[i + 1]));
+      prepared += reserve((opts.hideEscapes ? "" : token("\\")) + escapeHtml(text[i + 1]));
       i += 2;
       i -= 1;
       continue;

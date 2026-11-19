@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Textarea enhancement</title></head>
+<body>
+<form id="post">
+<label for="body">Body</label>
+<textarea id="body" name="body" data-writemark># Hello</textarea>
+<textarea id="plain" name="plain">Native</textarea>
+<button type="reset">Reset</button>
+<button type="submit">Save</button>
+</form>
+<textarea id="external" name="external" form="post" data-writemark>External</textarea>
+<script src="/dist/writemark-editor.global.js"></script>
+</body>
+</html>

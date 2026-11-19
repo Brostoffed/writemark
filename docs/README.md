@@ -14,7 +14,7 @@ integrations.
 | Intermediate | Understand editing behavior, supported Markdown, shortcuts, tables, code blocks, selection, and paste. | [Features and editing](features.md) |
 | Advanced | Connect host UI, define custom actions and completions, handle files, validate input, and prepare a production integration. | [Advanced integration](advanced.md) |
 | Reference | Look up the exact public surface without working through a tutorial. | [API reference](api-reference.md) |
-| Fixed issues | Check the 15 issues from 1.7.0 that version 1.7.1 addresses. | [Fixed issues](known-issues.md) |
+| Known issues | Check current limits, evidence levels, and fixed issue history. | [Known issues](known-issues.md) |
 
 The main [README](../README.md) remains the compact project overview. The
 [public live demo](https://brostoffed.github.io/writemark/demo/) exposes the
@@ -22,6 +22,22 @@ editor's modes, sizing, typography, and state controls; its
 [source](../demo/index.html) can also be opened directly from a local checkout.
 The [Playwright suite](../tests/README.md) verifies the component across its
 public workflows and isolated browser behavior cases.
+
+## 1.9.0 topics and examples
+
+| Topic | Guide or example |
+|---|---|
+| Main editor examples | [Main demo](../demo/index.html) |
+| Existing textarea forms | [Enhancement guide](getting-started.md#enhance-an-existing-textarea) |
+| Revision checks and external edits | [Transaction API](api-reference.md#external-transactions) |
+| Cursor batches and updates | [Cursor API](api-reference.md#remote-cursor-display) and [cursor demo](../demo/cursors/index.html) |
+| Cursor movement and names | [Motion guide](advanced.md#remote-cursor-motion) |
+| Public methods, exports, and events | [API reference](api-reference.md) |
+| Clipboard evidence and feature limits | [Known issues](known-issues.md) |
+| Browser regressions and example flows | [Test guide](../tests/README.md) |
+
+Cursor display has no transport.
+The host supplies shared document positions and any network integration.
 
 ## Core concepts
 

@@ -4,6 +4,7 @@ import type { SourceSelection, MarkdownOptions, Snapshot, TextChange, ActionCont
 import { LIVE_STRUCTURAL_BLOCK_TYPES } from "../config.ts";
 import { clamp, getLineRange, nextGraphemeOffset, normalizeLineEndings, previousGraphemeOffset } from "../core/text.ts";
 import { applyTextChanges, diffTextChange, insertionTransaction, makeSnapshot, ok, tx } from "../core/transactions.ts";
+import { composeTextChanges, inferSourceTextChanges } from "../core/text-edits.ts";
 import { getFenceInfo, hasClosingFenceAfter, isInsideFence } from "../markdown/block-syntax.ts";
 import { parseBlocks } from "../markdown/blocks.ts";
 
@@ -16,6 +17,9 @@ export class InputController {
   declare _isComposing: boolean;
   declare _pendingFenceOpening: PendingFenceOpening | null;
   declare _webKitNativeInput: WebKitNativeInput | null;
+  _sourceInputIntent: { snapshot: Snapshot; inputType: string; data: string | null } | null = null;
+  _compositionChanges: TextChange[] | null = null;
+  _compositionValue: string | null = null;
 
   constructor(api: InputHost) {
     this.api = Object.freeze(api);
@@ -50,23 +54,28 @@ export class InputController {
 
   _onSourceBeforeInput(event: InputEvent) {
     this._beforeInputSnapshot = null;
+    this._sourceInputIntent = null;
     if (this.disabled || this.readonly) {
       event.preventDefault();
       return;
     }
-    if (this._isComposing || event?.isComposing) return;
-    const inputType = event?.inputType || "";
-    if (inputType === "historyUndo" || inputType === "historyRedo") {
+    const composing = this._isComposing || event.isComposing;
+    const inputType = event.inputType || "";
+    if (!composing && (inputType === "historyUndo" || inputType === "historyRedo")) {
       event.preventDefault();
       inputType === "historyUndo"
         ? this.api._undo({ source: "user", inputType })
         : this.api._redo({ source: "user", inputType });
       return;
     }
-    this._beforeInputSnapshot = this.api._snapshot();
+    const snapshot = this.api._snapshot();
+    this._sourceInputIntent = { snapshot, inputType, data: event.data };
+    if (!composing) this._beforeInputSnapshot = snapshot;
   }
 
   _onSourceInput(event: InputEvent) {
+    const intent = this._sourceInputIntent;
+    this._sourceInputIntent = null;
     if (this.disabled || this.readonly) {
       this._sourceTextarea.value = this._value;
       this._sourceTextarea.setSelectionRange(
@@ -75,6 +84,7 @@ export class InputController {
         this._selection.direction
       );
       this._beforeInputSnapshot = null;
+      this._sourceInputIntent = null;
       return;
     }
     const composing = this._isComposing || event?.isComposing;
@@ -92,20 +102,30 @@ export class InputController {
     if (this._sourceTextarea.value !== this._value) this._sourceTextarea.value = this._value;
     this._selection = { start: this._sourceTextarea.selectionStart, end: this._sourceTextarea.selectionEnd, direction: this._sourceTextarea.selectionDirection || "none" };
     const after = this.api._snapshot();
+    const inputType = event?.inputType || intent?.inputType || "";
+    const inferred = intent?.snapshot.value === previousValue
+      ? inferSourceTextChanges(previousValue, this._value, intent.snapshot.selection, inputType, event?.data ?? intent.data, after.selection)
+      : null;
+    const changes = inferred ?? diffTextChange(previousValue, this._value);
     this._beforeInputSnapshot = null;
     if (previousValue === this._value) {
       if (!this._isComposing) this.api._scheduleCompletionUpdate();
       return;
     }
-    if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+    if (composing && inferred === null) this._compositionChanges = null;
+    this._trackCompositionChanges(previousValue, this._value, changes);
+    if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward", changes });
     this._redoStack.length = 0;
-    this.api._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: false, previousValue, changes: diffTextChange(previousValue, this._value) });
+    this.api._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: false, previousValue, changes });
     if (!this._isComposing) this.api._scheduleCompletionUpdate();
   }
 
   _onCompositionStart() {
     if (this.disabled || this.readonly || this._isComposing) return;
     this._compositionSnapshot = this.api._snapshot();
+    this._compositionChanges = [];
+    this._compositionValue = this._value;
+    this._sourceInputIntent = null;
     this._beforeInputSnapshot = null;
     this._beforeInputTarget = null;
     this._isComposing = true;
@@ -116,21 +136,37 @@ export class InputController {
     if (!this._isComposing) return;
     const before = this._compositionSnapshot;
     const after = this.api._snapshot();
+    const changes = before && this._compositionValue === after.value && this._compositionChanges && applyTextChanges(before.value, this._compositionChanges) === after.value ? this._compositionChanges : null;
+    this._compositionChanges = null;
+    this._compositionValue = null;
+    this._sourceInputIntent = null;
     this._isComposing = false;
     this._compositionSnapshot = null;
     this._beforeInputSnapshot = null;
     this._beforeInputTarget = null;
-    if (before && before.value !== after.value) this.api._recordUndo(before, after, "composition");
+    if (before && before.value !== after.value) this.api._recordUndo(before, after, "composition", changes ? { changes } : undefined);
     if (before && before.value !== after.value) this._redoStack.length = 0;
     if (this.api._isLiveVisible() && this._liveDirty) {
       this.api._renderAll({
         restoreSelection: true,
         previousValue: before?.value ?? this._value,
-        changes: before ? diffTextChange(before.value, this._value) : null,
+        changes: changes ?? (before ? diffTextChange(before.value, this._value) : null),
         force: true
       });
     }
     this.api._scheduleCompletionUpdate();
+  }
+
+  _trackCompositionChanges(previousValue: string, nextValue: string, changes: TextChange[]) {
+    if (!this._isComposing || !this._compositionSnapshot) return;
+    if (this._compositionChanges === null || this._compositionValue !== previousValue) {
+      this._compositionChanges = null;
+      this._compositionValue = nextValue;
+      return;
+    }
+    const composed = composeTextChanges(this._compositionSnapshot.value, this._compositionChanges, changes);
+    this._compositionChanges = applyTextChanges(this._compositionSnapshot.value, composed) === nextValue ? composed : null;
+    this._compositionValue = nextValue;
   }
 
   _onLiveBeforeInput(event: InputEvent) {
@@ -626,14 +662,17 @@ export class InputController {
         if (!this._isComposing) this.api._scheduleCompletionUpdate();
         return;
       }
-      if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+      const changes = diffTextChange(previousValue, this._value);
+      if (composing) this._compositionChanges = null;
+      this._trackCompositionChanges(previousValue, this._value, changes);
+      if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward", changes });
       this._redoStack.length = 0;
       this.api._afterValueChanged({
         source: "user",
         inputType: event?.inputType,
         restoreSelection: true,
         previousValue,
-        changes: diffTextChange(previousValue, this._value),
+        changes,
         preserveLiveDom: this.api._isAppleWebKitRuntime()
       });
       if (!this._isComposing) this.api._scheduleCompletionUpdate();
@@ -666,6 +705,7 @@ export class InputController {
     if (pendingFenceOpening) {
       editable.dataset.to = String(from + insert.length);
     }
+    const previousSelection = { ...this._selection };
     this._value = nextValue;
     this._selection = { start: cursor, end: cursor, direction: "none" };
     if (composing) editable.dataset.to = String(from + insert.length);
@@ -675,14 +715,18 @@ export class InputController {
       if (!this._isComposing) this.api._scheduleCompletionUpdate();
       return;
     }
-    if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+    const inferred = inferSourceTextChanges(previousValue, this._value, inputTarget?.selection ?? previousSelection, event?.inputType || "", event?.data ?? null, this._selection);
+    const changes = inferred ?? [{ from, to, insert }];
+    if (composing && inferred === null) this._compositionChanges = null;
+    this._trackCompositionChanges(previousValue, this._value, changes);
+    if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward", changes });
     this._redoStack.length = 0;
     this.api._afterValueChanged({
       source: "user",
       inputType: event?.inputType,
       restoreSelection: true,
       previousValue,
-      changes: [{ from, to, insert }],
+      changes,
       preserveLiveDom: this.api._isAppleWebKitRuntime() || pendingFenceOpening
     });
     if (!this._isComposing) this.api._scheduleCompletionUpdate();
@@ -715,7 +759,9 @@ export class InputController {
       if (!this._isComposing) this.api._scheduleCompletionUpdate();
       return;
     }
+    this._trackCompositionChanges(previousValue, this._value, pending.changes);
     this.api._recordUndo(before, after, this.api._undoGroupForInput(inputType), {
+      changes: pending.changes,
       coalesce: inputType === "deleteContentBackward"
         || inputType === "deleteContentForward"
     });
@@ -842,7 +888,9 @@ export class InputController {
       this._selection.end,
       this._selection.direction
     );
+    this._trackCompositionChanges(previousValue, this._value, changes);
     this.api._recordUndo(before, after, this.api._undoGroupForInput(inputType), {
+      changes,
       coalesce: inputType === "insertText"
         || inputType === "deleteContentBackward"
         || inputType === "deleteContentForward"

@@ -1,4 +1,4 @@
-import type { EditorMode, SelectionDirection, SourceSelection, Snapshot, TextChange, Tag, MarkdownOptions, MarkdownBlock, Transaction, ActionResult, ActionContext, Action, CompletionProvider, TagProvider, DebugDetails, WritemarkEventMap, EventDetail } from "../types.ts";
+import type { EditorMode, SelectionDirection, SourceSelection, Snapshot, TextChange, Tag, MarkdownOptions, MarkdownBlock, Transaction, ActionResult, ActionContext, Action, CompletionProvider, TagProvider, DebugDetails, WritemarkEventMap, DispatchDetail } from "../types.ts";
 import type { UndoEntry } from "../core/types.ts";
 import type { VirtualState, RenderOptions } from "../render/types.ts";
 import type { ValueChangeOptions } from "../component/types.ts";
@@ -79,6 +79,7 @@ export interface InputHost {
     } | undefined) => void;
     _recordUndo: (before: Snapshot, after: Snapshot, group: string | undefined, args_3?: {
         coalesce?: boolean | undefined;
+        changes?: readonly TextChange[];
     } | undefined) => void;
     _undoGroupForInput: (inputType: string | null) => string;
     getRedoStack: () => UndoEntry[];
@@ -200,8 +201,9 @@ export interface CompletionHost {
     startPositionTracking: () => void;
     isUnclosedFenceOpeningContext: (ctx: ActionContext) => boolean;
     snapshot: () => Snapshot;
+    getRevision: () => number;
     applyTransaction: (transaction: Transaction, options?: ActionOptions) => boolean;
-    dispatch: <K extends keyof WritemarkEventMap>(name: K, detail: EventDetail<K>, options?: Pick<CustomEventInit<unknown>, "bubbles" | "composed" | "cancelable">) => WritemarkEventMap[K];
+    dispatch: <K extends keyof WritemarkEventMap>(name: K, detail: DispatchDetail<K>, options?: Pick<CustomEventInit<unknown>, "bubbles" | "composed" | "cancelable">) => WritemarkEventMap[K];
     announce: (message: string | undefined) => void;
     getTags: () => {
         value: string;

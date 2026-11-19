@@ -1,0 +1,21 @@
+This is normal text
+
+1. Numbered list 1
+
+2. Numbered list 2
+
+3. Numbered list 3
+
+4. Numbered list 4
+
+1. Outline numbered 1
+
+   1. Outline numbered 1\.a
+
+   1. Outline numbered 1\.b
+
+2. Outline numbered 2
+
+- Bulleted list 1
+
+- Bulleted list 2

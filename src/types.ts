@@ -109,7 +109,57 @@ export type BlockContext = {
     heading?: Heading;
     blockquote?: Blockquote;
 };
+/** Host origin metadata does not prove identity. */
+export type EditOrigin = Readonly<{
+    kind: "user" | "paste" | "action" | "completion" | "external" | "api";
+    id?: string;
+}>;
+export type TransactionChange = Readonly<{ from: number; to: number; insert: string; expected?: string }>;
+export type RemoteCursor = Readonly<{
+    id: string;
+    name: string;
+    color: string;
+    anchor: number;
+    head: number;
+    active?: boolean;
+    epoch?: number;
+    sequence?: number;
+    ttlMs?: number;
+}>;
+export type RemoteCursorOptions = Readonly<{ baseRevision?: number; animate?: boolean; showNames?: boolean }>;
+export type RemoteCursorFailureReason = "invalid-update" | "invalid-cursor" | "duplicate-id" | "invalid-remove" | "capacity-exceeded" | "stale-revision" | "stale-cursor" | "version-conflict" | "reentrant-change" | "not-connected";
+export type RemoteCursorUpdate = Readonly<{
+    cursors: readonly RemoteCursor[];
+    remove?: readonly string[];
+    replace?: boolean;
+    baseRevision?: number;
+    animate?: boolean;
+    showNames?: boolean;
+}>;
+export type RemoteCursorResult = { ok: true; count: number } | { ok: false; reason: RemoteCursorFailureReason; id?: string };
+export type TransactionRequest = Readonly<{
+    baseRevision: number;
+    changes: readonly TransactionChange[];
+    selectionAfter?: Readonly<SourceSelection>;
+    origin?: EditOrigin;
+}>;
+export type TransactionFailureReason = "invalid-request" | "stale-revision" | "invalid-change" | "overlapping-changes" | "expected-mismatch" | "invalid-selection" | "disabled" | "readonly" | "composition-active" | "change-canceled" | "reentrant-change";
+export type TransactionResult = {
+    ok: true;
+    changed: boolean;
+    beforeRevision: number;
+    revision: number;
+    origin: EditOrigin;
+    selection: SourceSelection;
+} | {
+    ok: false;
+    reason: TransactionFailureReason;
+    beforeRevision: number;
+    revision: number;
+    origin: EditOrigin;
+};
 export type Transaction = {
+    origin?: EditOrigin;
     changes: TextChange[];
     selectionBefore?: SourceSelection;
     selectionAfter?: SourceSelection;
@@ -259,7 +309,8 @@ export type DebugDetails = {
     selection: SourceSelection;
     [key: string]: unknown;
 };
-export type WritemarkEventMap = {
+export type BaseWritemarkEventMap = {
+    "md-value-sync": CustomEvent<{ value: string; defaultValue: string; revision: number }>;
     "md-before-change": CustomEvent<{
         transaction: Transaction;
         before: Snapshot;
@@ -344,7 +395,17 @@ export type WritemarkEventMap = {
         [key: string]: unknown;
     }>;
 };
+export interface TextareaEnhancement {
+    readonly editor: WritemarkEditorElement;
+    readonly textarea: HTMLTextAreaElement;
+    destroy(): void;
+}
 export type EditorAPI = {
+    readonly revision: number;
+    applyTransaction(request: TransactionRequest): TransactionResult;
+    setRemoteCursors(cursors: readonly RemoteCursor[], options?: RemoteCursorOptions): boolean;
+    updateRemoteCursors(update: RemoteCursorUpdate): RemoteCursorResult;
+    getRemoteCursors(): RemoteCursor[];
     value: string;
     defaultValue: string;
     name: string;
@@ -423,4 +484,12 @@ export type EditorConstructor = {
     readonly observedAttributes: string[];
 };
 
+export type EditEventMetadata = { origin: EditOrigin; beforeRevision: number; revision: number };
+export type WritemarkEventMap = {
+    [K in keyof BaseWritemarkEventMap]: K extends "md-before-change" | "md-input" | "md-change" | "md-action" | "md-completion-accept" | "md-paste" | "md-cut"
+        ? BaseWritemarkEventMap[K] extends CustomEvent<infer D> ? CustomEvent<D & EditEventMetadata> : never
+        : BaseWritemarkEventMap[K]
+};
 export type EventDetail<K extends keyof WritemarkEventMap> = WritemarkEventMap[K] extends CustomEvent<infer Detail> ? Detail : never;
+
+export type DispatchDetail<K extends keyof WritemarkEventMap> = (BaseWritemarkEventMap[K] extends CustomEvent<infer Detail> ? Detail : never) & Partial<EditEventMetadata>;

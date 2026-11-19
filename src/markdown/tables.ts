@@ -1,3 +1,6 @@
+import { isEscapablePunctuation, parseCodeSpanAt } from "./inline.ts";
+import { diffTextChange } from "../core/transactions.ts";
+
 
 
 export function splitTableRow(line: string) {
@@ -17,16 +20,26 @@ export function splitTableRow(line: string) {
   return cells;
 }
 
+function hasTablePipe(text: string) {
+  let escaped = false;
+  for (const character of text) {
+    if (escaped) { escaped = false; continue; }
+    if (character === "\\") { escaped = true; continue; }
+    if (character === "|") return true;
+  }
+  return false;
+}
+
 export function isTableDelimiter(line: string) {
   const t = String(line ?? "").trim();
-  if (!t.includes("|")) return false;
+  if (!hasTablePipe(t)) return false;
   const cells = splitTableRow(t);
-  return cells.length >= 2 && cells.every(cell => /^:?-{3,}:?$/.test(cell.trim()));
+  return cells.length >= 1 && cells.every(cell => /^:?-{3,}:?$/.test(cell.trim()));
 }
 
 export function isLikelyTableRow(line: string) {
   const t = String(line ?? "").trim();
-  return t.includes("|") && splitTableRow(t).length >= 2;
+  return hasTablePipe(t) && splitTableRow(t).length >= 1;
 }
 
 export function parseTableLineRanges(line: string, absoluteStart: number, preserveWhitespace = false) {
@@ -85,4 +98,53 @@ export function tableAlignmentStyle(alignment: string) {
 
 export function unescapeTableCellText(cellText: string) {
   return String(cellText ?? "").replace(/\\([\\|])/g, "$1");
+}
+
+export function escapeTableCellText(cellText: string) {
+  return String(cellText ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+}
+
+/** Map visible table text to exact canonical UTF-16 boundaries. */
+export function tableCellDisplayMap(raw: string) {
+  let inline = "";
+  const tableOffsets = [0];
+  for (let index = 0; index < raw.length;) {
+    if (raw[index] === "\\" && (raw[index + 1] === "\\" || raw[index + 1] === "|")) {
+      inline += raw[index + 1];
+      index += 2;
+    } else { inline += raw[index]; index += 1; }
+    tableOffsets.push(index);
+  }
+  let text = "";
+  const sourceOffsets = [0];
+  for (let index = 0; index < inline.length;) {
+    const code = inline[index] === "`" ? parseCodeSpanAt(inline, index) : null;
+    if (code) {
+      while (index < code.to) { text += inline[index]; index += 1; sourceOffsets.push(tableOffsets[index] ?? raw.length); }
+    } else if (inline[index] === "\\" && isEscapablePunctuation(inline[index + 1])) {
+      text += inline[index + 1];
+      index += 2;
+      sourceOffsets.push(tableOffsets[index] ?? raw.length);
+    } else {
+      text += inline[index];
+      index += 1;
+      sourceOffsets.push(tableOffsets[index] ?? raw.length);
+    }
+  }
+  return { text, sourceOffsets };
+}
+
+/** Keep unchanged cell bytes when a native edit changes visible text. */
+export function editTableCellDisplay(raw: string, nextText: string, displayCursor: number) {
+  const before = tableCellDisplayMap(raw);
+  const change = diffTextChange(before.text, nextText)[0];
+  let text = raw;
+  if (change) {
+    const from = before.sourceOffsets[change.from] ?? raw.length;
+    const to = before.sourceOffsets[change.to] ?? raw.length;
+    text = raw.slice(0, from) + escapeTableCellText(change.insert) + raw.slice(to);
+  }
+  const after = tableCellDisplayMap(text);
+  const cursor = after.sourceOffsets[Math.max(0, Math.min(after.text.length, displayCursor))] ?? text.length;
+  return { text, cursor };
 }

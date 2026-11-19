@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+## 1.9.0 - 2026-11-19
+
+- Added opt-in enhancement for native textareas with `data-writemark`.
+- Kept the native textarea as the submitted form control and fallback.
+- Kept native labels, focus, reset behavior, and user input events during enhancement.
+- Added explicit enhancement helpers and a method to restore the native textarea.
+- Added document revisions and strict external transaction checks.
+- Added edit origin metadata to change events.
+- Added traceable clipboard inputs from upstream editor tests with source and license records.
+- Improved Word and Google Docs paste, nested lists, tables, and code whitespace.
+- Added one-column table support for converted clipboard content.
+- Added named remote cursors and selection colors through a display API.
+- Added short cursor easing, bounded labels, and reduced motion support.
+- Added a working cursor demo with editable names, colors, and source positions.
+- Added main-demo examples for textarea forms, revision checks, and edit origin metadata.
+- Required demo, API, and documentation coverage in the change completion skill.
+- Kept external transactions from focusing inactive live editors.
+- Added hostile input, transaction property, form, and clipboard regression checks.
+- Fixed cursor display after page and ancestor scrolling.
+- Kept visible selection fragments when their caret or remote endpoint is outside the mounted view.
+- Added incremental cursor updates, structured failures, ordered versions, and bounded expiry.
+- Restored deleted cursor endpoints through local undo without replacing later peer positions.
+- Added hover names, a persistent name policy, and a screen-reader cursor roster.
+- Reused selection nodes and shared geometry work across cursor batches.
+- Added seeded cursor sequences, sustained cursor workloads, lifecycle checks, and a performance report page.
+- Enhanced dynamically inserted textareas and registered shadow-root controls.
+- Synchronized native `setRangeText()` calls and removed enhancement listeners after ancestor removal.
+- Kept reconnecting editors from taking focus from other controls.
+- Preserved exact transaction ranges through undo and redo.
+- Preserved native edit positions in repeated text and composed exact ranges across coalesced history records.
+- Kept unversioned cursor replacements authoritative after local edits.
+- Bounded cursor input iteration and batched label layout work.
+- Limited long selection geometry to the visible area and reused shared ranges across cursors.
+- Refreshed cursor visibility after container size, class, or style changes.
+- Preserved cursor positions between adjacent replacements through undo and redo.
+- Preserved exact offsets for native `setRangeText()` edits in repeated text.
+- Matched native form length validation and kept updated label text and tab order.
+- Kept literal backslashes, pipes, and Markdown punctuation in pasted table cells.
+- Added HTML and plain-text clipboard captures from LibreOffice Calc.
+- Kept parent list text after nested lists in HTML paste and preview.
+- Added long-selection timing checks and weekly clipboard, cursor, and keyboard tests.
+
 ## 1.8.1 - 2026-10-23
 
 - Fixed trailing spaces and cursor positions in live table cells.

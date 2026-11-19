@@ -17,3 +17,9 @@ export interface TemplateIds {
     status: string;
     validation: string;
 }
+
+export interface NativeTextareaBridge {
+    valueChanged(source: string): void;
+    validity(value: string): { flags: ValidityStateFlags; message: string };
+    tabIndex(): number;
+}

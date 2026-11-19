@@ -2,6 +2,7 @@ import type { SelectionHost, StructuredSelection, PointerSelection, DomPosition,
 import type { SourceSelection } from "../types.ts";
 import { LIVE_ARROW_KEYS, NAVIGATION_KEYS } from "../config.ts";
 import { clamp, getLineRange } from "../core/text.ts";
+import { tableCellDisplayMap } from "../markdown/tables.ts";
 
 /** Owns DOM selection and source mapping state. */
 export class SelectionController {
@@ -459,17 +460,9 @@ export class SelectionController {
     const raw = this._cellRawSource(editable);
     const rel = clamp(Number(sourceOffset) - range.from, 0, range.to - range.from);
     if (raw == null) return clamp(rel, 0, this._plainText(editable).length);
+    const map = tableCellDisplayMap(raw);
     let display = 0;
-    for (let i = 0; i < raw.length && i < rel;) {
-      if (raw[i] === "\\" && (raw[i + 1] === "|" || raw[i + 1] === "\\")) {
-        if (rel <= i + 1) return display;
-        display += 1;
-        i += 2;
-      } else {
-        display += 1;
-        i += 1;
-      }
-    }
+    while (display < map.text.length && (map.sourceOffsets[display + 1] ?? raw.length) <= rel) display += 1;
     return clamp(display, 0, this._plainText(editable).length);
   }
 
@@ -479,20 +472,7 @@ export class SelectionController {
     const raw = this._cellRawSource(editable);
     const target = clamp(Number(displayOffset) || 0, 0, this._plainText(editable).length);
     if (raw == null) return clamp(range.from + target, range.from, Math.max(range.to, range.from + this._plainText(editable).length));
-    let display = 0;
-    for (let i = 0; i < raw.length;) {
-      if (display >= target) return range.from + i;
-      if (raw[i] === "\\" && (raw[i + 1] === "|" || raw[i + 1] === "\\")) {
-        if (display + 1 >= target) return range.from + i + 2;
-        display += 1;
-        i += 2;
-      } else {
-        if (display + 1 >= target) return range.from + i + 1;
-        display += 1;
-        i += 1;
-      }
-    }
-    return range.to;
+    return range.from + (tableCellDisplayMap(raw).sourceOffsets[target] ?? raw.length);
   }
 
   _getCurrentSelection(): SourceSelection {

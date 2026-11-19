@@ -16,6 +16,11 @@ The editor itself requires no network access.
 The existing browser support limits still apply.
 See [Known issues](known-issues.md).
 
+The same file enhances native textareas with `data-writemark` when the document is ready.
+It keeps the native textarea as the submitted form control.
+It also exports enhancement helpers and supports external transactions with revision checks.
+Neither feature adds another browser asset or a runtime dependency.
+
 ## Files
 
 | File | Purpose |

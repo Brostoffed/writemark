@@ -1,6 +1,6 @@
 # API reference
 
-This page is the lookup reference for Writemark 1.8.1. The default `live` mode
+This page is the lookup reference for Writemark 1.9.0. The default `live` mode
 is the primary inline editing surface; `source`, `split`, and `preview` are
 explicit alternate modes. For a guided setup, start with
 [Getting started](getting-started.md). For custom actions and providers, see
@@ -79,6 +79,7 @@ their text value.
 | `readonly` | `boolean` | Reflects `readonly`. |
 | `required` | `boolean` | Reflects `required`. |
 | `dirty` | `boolean`, read-only | Whether current Markdown differs from `defaultValue`. |
+| `revision` | `number`, read-only | Monotonic count of actual canonical Markdown changes in this editor. |
 | `tagProvider` | Object or `null` | Optional host tag catalog. The object requires `getItems`. Set `allowCreate` to offer catalog additions. |
 | `selectionStart` | `number` | Start offset in canonical Markdown. May be set directly. |
 | `selectionEnd` | `number` | End offset in canonical Markdown. May be set directly. |
@@ -100,6 +101,172 @@ their text value.
 - `reset()` or native form reset restores `defaultValue`.
 
 ## Methods
+
+### Remote cursor display
+
+`setRemoteCursors(cursors, options?)` replaces the cursor batch in a connected editor.
+It returns `false` when validation fails or the editor has no connected controls.
+`getRemoteCursors()` returns copies of the current cursor data.
+`updateRemoteCursors(update)` merges cursor changes and returns a structured result.
+
+```js
+editor.setRemoteCursors([
+  { id: 'alex', name: 'Alex', color: '#4765a9', anchor: 20, head: 35 },
+  { id: 'river', name: 'River', color: '#b64325', anchor: 62, head: 62 }
+], { baseRevision: editor.revision });
+
+editor.setRemoteCursors([]);
+```
+
+Use incremental updates when separate connections supply cursor changes:
+
+```js
+const result = editor.updateRemoteCursors({
+  cursors: [{
+    id: 'alex', name: 'Alex', color: '#4765a9', anchor: 20, head: 35,
+    epoch: 1, sequence: 8, ttlMs: 30000
+  }],
+  remove: ['departed-peer'],
+  baseRevision: editor.revision,
+  showNames: true
+});
+
+if (!result.ok) console.log(result.reason, result.id);
+```
+
+The update object requires `cursors` and accepts `remove`, `replace`, `baseRevision`, `animate`, and `showNames`.
+The default operation merges cursors by ID.
+Use `replace: true` for a complete replacement.
+An ID cannot appear in both `cursors` and `remove`.
+Successful updates return `{ ok: true, count }`.
+Rejected updates return `{ ok: false, reason, id? }`.
+Rejection reasons are `invalid-update`, `invalid-cursor`, `duplicate-id`, `invalid-remove`, `capacity-exceeded`, and `stale-revision`.
+They also include `stale-cursor`, `version-conflict`, `reentrant-change`, and `not-connected`.
+The boolean replacement setter remains available for existing callers.
+
+Each `RemoteCursor` has an `id`, `name`, `color`, `anchor`, and `head`.
+The optional `active` flag defaults to `true`.
+The optional `epoch` and `sequence` fields must appear together.
+Both fields require nonnegative safe integers.
+The optional `ttlMs` controls expiry after the last accepted update.
+The default expiry is 30000 milliseconds.
+Use `ttlMs: 0` for manual samples that must not expire.
+The maximum expiry is 300000 milliseconds.
+Offsets use UTF-16 units in the current canonical Markdown.
+The caret follows `head`.
+Different endpoints show a selection range.
+The editor shows visible selection fragments when the caret is outside the viewport.
+Undo preserves cursor positions at boundaries between adjacent replacements.
+The API accepts `#RGB` and `#RRGGBB` colors.
+Names use text content and cannot insert HTML.
+
+A batch can contain up to 64 cursors with unique, nonempty IDs.
+IDs can contain up to 128 UTF-16 units.
+Names can contain up to 80 UTF-16 units.
+IDs and names cannot contain ASCII control characters.
+Invalid batches leave the previous cursor data intact.
+The optional `baseRevision` rejects stale positions.
+Set `animate: false` to place all cursors without travel.
+Set `showNames: true` to retain names for host keyboard controls.
+The name policy persists until an update changes it.
+
+Versioned cursors compare `epoch` first, then `sequence`.
+An older tuple cannot replace a newer tuple.
+An equal tuple accepts identical content as a heartbeat.
+A heartbeat refreshes expiry without moving locally mapped endpoints or reviving a faded name.
+Different content with an equal tuple returns `version-conflict`.
+A newer tuple applies its supplied endpoints, even when an earlier local edit moved the current endpoints.
+An unversioned update cannot replace a versioned cursor.
+For unversioned cursors, updates apply their supplied endpoints.
+The controller retains at most 256 removed version records for five minutes.
+The host must reject messages older than that bounded retention window.
+Version fields and names do not prove identity.
+
+Presence does not change Markdown, revision, history, form values, focus, or the local selection.
+Canonical edits map cursor endpoints through the changed source ranges.
+Local undo restores deleted endpoints for peers that did not submit a later authoritative position.
+Undo does not restore removed peers or overwrite their current names and colors.
+Whole document writes use a bounded diff to preserve unchanged spans between separate edits.
+Large unrelated writes can use one replacement range when the diff reaches its work limit.
+Text alone cannot identify the intended insertion point among repeated identical characters.
+Use `applyTransaction()` when exact change ranges are available.
+Adapters should refresh positions from their shared document model.
+The host owns transport, user identity, and connection state.
+
+The display supports `live`, `source`, and `split` modes.
+Split mode displays cursors in its source pane.
+Preview mode hides cursor markers.
+Offscreen carets hide independently from visible selection fragments.
+Live selections clip to mounted content without rendering virtual content or moving the local view.
+Each cursor displays up to 256 selection rectangles.
+Short moves on the same visual row ease for 90 milliseconds.
+Line changes, large jumps, scroll, and layout changes move directly.
+Labels fade after 1.6 seconds without a cursor change.
+Duplicate batches do not extend that delay.
+Four placement lanes limit label collisions.
+Hovering near a caret reveals its name and gives it collision priority.
+A separate screen-reader roster contains all supplied names without live movement announcements.
+Reduced motion disables cursor travel and label fades.
+An empty cursor list releases measurement mirrors, observers, listeners, and timers.
+Editor disconnection also releases those resources.
+
+See the [cursor demo](../demo/cursors/index.html) and [motion design](advanced.md#remote-cursor-motion).
+
+### External transactions
+
+`applyTransaction(request)` returns a `TransactionResult`.
+It applies a validated batch as one undo step.
+It does not rebase stale edits.
+It preserves focus when another control owns focus.
+
+```js
+const result = editor.applyTransaction({
+  baseRevision: editor.revision,
+  changes: [{ from: 0, to: 5, expected: 'Draft', insert: 'Final' }],
+  origin: { kind: 'external', id: 'proofreader' }
+});
+
+if (!result.ok) console.log(result.reason, result.revision);
+```
+
+| Request field | Contract |
+|---|---|
+| `baseRevision` | Required nonnegative safe integer. It must equal the current editor revision. |
+| `changes` | Required array of source edits. All ranges refer to the original canonical Markdown. |
+| `from`, `to` | Integer UTF-16 offsets with `0 <= from <= to <= value.length`. |
+| `insert` | Required string. Writemark normalizes inserted line endings to LF. |
+| `expected` | Optional exact source text for the replaced range. |
+| `selectionAfter` | Optional valid source selection in the resulting Markdown. Otherwise Writemark maps the current selection. |
+| `origin` | Optional `{ kind, id? }` metadata. The default kind is `external`. |
+
+The validator rejects overlaps and ambiguous insertion boundaries.
+Adjacent nonempty replacements are valid.
+Two insertions at one offset are invalid.
+An insertion that shares a replacement boundary is also invalid.
+The validator copies caller data and never clamps external ranges.
+For form fields, keep edits on Unicode code point boundaries.
+Native `FormData` replaces lone surrogates with U+FFFD.
+
+Success includes `ok`, `changed`, `beforeRevision`, `revision`, `origin`, and `selection`.
+Failure includes `ok: false`, `reason`, `beforeRevision`, `revision`, and `origin`.
+
+Failure reasons are `invalid-request`, `stale-revision`, `invalid-change`, `overlapping-changes`, `expected-mismatch`, and `invalid-selection`.
+State failures are `disabled`, `readonly`, and `composition-active`.
+Cancellation returns `change-canceled`.
+A document change during validation or `md-before-change` returns `reentrant-change`.
+
+An accepted text no-op preserves revision and history.
+It also preserves selection unless the request includes `selectionAfter`.
+Mapped noncollapsed selections keep replacement text between their start and end boundaries.
+A mapped collapsed caret moves after inserted text.
+Revisions advance on actual changes from native input, composition, actions, API writes, undo, redo, and reset.
+Native composition and reconciliation can make several canonical changes during one user operation.
+Revisions identify editor state, not a file identity or a user action count.
+
+Edit origin kinds are `user`, `paste`, `action`, `completion`, `external`, and `api`.
+The optional `id` names the action, provider, or external tool.
+Host origin metadata does not authenticate a caller.
+Stale requests return before the validator reads caller origin metadata.
 
 ### Focus and selection
 
@@ -301,8 +468,14 @@ Built-in providers are `slash` at priority 100, `tags` at priority 80, and
 All public events bubble and are composed. Only `md-before-change` is
 cancelable.
 
+Edit events also include `origin`, `beforeRevision`, and `revision`.
+These fields apply to `md-before-change`, `md-input`, `md-change`, `md-action`, `md-completion-accept`, `md-paste`, and `md-cut`.
+For `md-before-change`, both revision fields identify the document before the proposed edit.
+`md-value-sync` supplies synchronous value synchronization, including silent changes.
+
 | Event | `event.detail` |
 |---|---|
+| `md-value-sync` | `{ value, defaultValue, revision }`. Runs before normal value change events. |
 | `md-before-change` | `{ transaction, before, nextValue, selectionAfter, source }`; cancel to block the mutation. |
 | `md-input` | `{ value, source, inputType }`; emitted after canonical value changes. |
 | `md-change` | `{ value }`; emitted by `commit()` and source textarea change. |
@@ -456,7 +629,9 @@ import {
   parseHeading,
   parseBlockquote,
   htmlToMarkdown,
-  tsvToMarkdownTable
+  tsvToMarkdownTable,
+  enhanceTextarea,
+  enhanceTextareas
 } from 'writemark-editor';
 ```
 
@@ -473,6 +648,10 @@ import {
 | `parseBlockquote(line)` | Parse one blockquote line. |
 | `htmlToMarkdown(html)` | Convert supported clipboard-style HTML to Markdown. |
 | `tsvToMarkdownTable(text)` | Convert tab-separated rows to a Markdown table. Return `null` when the text has no table. |
+| `enhanceTextarea(textarea)` | Return a `TextareaEnhancement` with `editor`, `textarea`, and `destroy()`. Throws if safe initialization fails. |
+| `enhanceTextareas(root?)` | Enhance opted-in textareas within a root. Default root is `document`. Individual failures preserve native fallbacks. |
+
+See [textarea enhancement](getting-started.md#enhance-an-existing-textarea) for form, lifecycle, and synchronization rules.
 
 The rendering helpers leave tags as plain text by default. Pass
 `{ tagsEnabled: true }` to render tag labels. The explicit `parseTags()` helper
