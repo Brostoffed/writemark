@@ -27,6 +27,18 @@ import 'writemark-editor';
 <writemark-editor name="body" label="Body"></writemark-editor>
 ```
 
+An existing Markdown textarea can opt in without application code:
+
+```html
+<label for="body">Body</label>
+<textarea id="body" name="body" data-writemark># First draft</textarea>
+<script src="./writemark-editor.global.min.js"></script>
+```
+
+The native textarea remains the submitted field.
+If the script cannot load or enhancement fails, the native textarea stays usable.
+See [textarea enhancement](docs/getting-started.md#enhance-an-existing-textarea) for lifecycle and synchronization rules.
+
 ## Why Writemark
 
 Writemark explores a specific tradeoff: make Markdown feel rendered while it is being edited without replacing the Markdown with an opaque document model. Raw Markdown remains the value that forms submit and application code reads. The component owns the editing mechanics; the host application keeps control of its toolbar, persistence, uploads, and product UI.
@@ -57,6 +69,11 @@ The demo includes an autocomplete catalog, a live document tag index, and
 explicit catalog additions. It also includes tag activation, action buttons,
 readonly controls, and disabled controls. A live inspector shows selection,
 dirty state, validity, active marks, and counts.
+
+The 1.9.0 examples cover textarea enhancement, checked external edits, and cursor samples.
+The dedicated [cursor demo](demo/cursors/index.html) provides more display controls.
+The [cursor performance page](perf/presence.html) measures 64 cursors with short or long selections.
+Cursor display has no transport and does not share document text.
 
 Tags are off by default. Use the demo's `Enable tags` switch to try them.
 The demo's `Shift+Enter` control switches between a line break and Smart Enter.
@@ -289,6 +306,7 @@ console.log(editor.getPlainText());
 | `tagProvider` | optional host tag catalog. Requires `tagsEnabled`. |
 | `selectionStart` / `selectionEnd` | source offsets |
 | `dirty` | boolean |
+| `revision` | read-only `number` for actual canonical Markdown changes |
 
 ### Methods
 
@@ -316,6 +334,28 @@ console.log(editor.getPlainText());
 | `replaceAll(query, replacement, options?)` | Replace all matches. |
 | `commit()` | Mark current value as clean and emit `md-change`. |
 | `reset()` | Restore default value. |
+| `applyTransaction(request)` | Apply a checked external edit and return a structured result. |
+| `setRemoteCursors(cursors, options?)` | Replace the displayed cursor batch and return a boolean. |
+| `updateRemoteCursors(update)` | Merge cursor changes and return a structured result. |
+| `getRemoteCursors()` | Return copies of the current cursor data. |
+
+Use `revision` and `applyTransaction()` for checked external edits.
+See [external transactions](docs/api-reference.md#external-transactions) for ranges, validation, history, and result details.
+
+The [cursor API reference](docs/api-reference.md#remote-cursor-display) defines cursor batches, incremental updates, ordering, and expiry.
+The API provides display only, with no transport.
+The host supplies shared document positions.
+See the [motion guide](docs/advanced.md#remote-cursor-motion) and [known issues](docs/known-issues.md) before integration.
+
+### Textarea enhancement exports
+
+| Export or handle method | Purpose |
+|---|---|
+| `enhanceTextarea(textarea)` | Return a `TextareaEnhancement` handle for one native textarea. |
+| `enhanceTextareas(root?)` | Enhance opted-in textareas within a root. |
+| `TextareaEnhancement.destroy()` | Restore the native textarea and preserve its latest value. |
+
+See the [export reference](docs/api-reference.md#module-exports) and [textarea enhancement guide](docs/getting-started.md#enhance-an-existing-textarea).
 
 ## Built-in actions
 
@@ -363,6 +403,7 @@ Important action IDs:
 
 | Event | Description |
 |---|---|
+| `md-value-sync` | Synchronize `value`, `defaultValue`, and `revision`, including silent changes. |
 | `md-before-change` | Cancelable event fired before a transaction mutates the canonical Markdown. |
 | `md-input` | Value changed. |
 | `md-change` | Committed value change. |
@@ -382,6 +423,11 @@ Important action IDs:
 | `md-dirty-change` | Dirty state changed. |
 | `md-debug` | Opt-in, serializable input/selection diagnostic event controlled by `debug`. |
 | `md-error` | Recoverable editor error. |
+
+Edit events include `origin`, `beforeRevision`, and `revision` metadata.
+These fields identify the edit source and document state.
+Origin metadata does not authenticate a caller.
+See [event details](docs/api-reference.md#events) for the affected events and synchronous value behavior.
 
 Debug output is event-first and disabled by default:
 
@@ -520,11 +566,10 @@ complete input contract in an iPhone 13 Mobile Safari context. Playwright no
 longer provides a current WebKit build for macOS 14 and older, so the local
 config omits those unavailable WebKit projects on those hosts.
 
-The current desktop suite registers 465 independent cases per browser project,
-including every one of the 230 checks migrated from the retired page-hosted
-suite. It also includes a browser input and synthetic IME-composition contract,
-a hostile Markdown corpus, property-based parser and sanitizer checks, and
-CommonMark differential coverage. Playwright owns discovery, isolation,
+The desktop suite registers independent cases for each browser project.
+It includes the 230 checks from the retired page-hosted suite.
+It also includes browser input, synthetic IME composition, hostile Markdown, parser properties, sanitization, and CommonMark comparison checks.
+Playwright owns discovery, isolation,
 browser lifecycle, and assertions; the specs drive real keyboard, pointer,
 form, and host-API workflows. Failed expectations, uncaught page errors, and
 browser console errors make the command exit nonzero.

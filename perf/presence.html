@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Cursor display benchmark · Writemark</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root { color-scheme: light; font: 15px/1.55 system-ui, sans-serif; color: #26382d; background: #f4f5ef; }
+    body { max-width: 1160px; margin: auto; padding: 32px 24px; }
+    h1 { font: 36px Georgia, serif; margin: 0 0 12px; }
+    p { max-width: 760px; color: #687462; }
+    form { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; margin: 26px 0 18px; }
+    label { display: grid; gap: 5px; font-size: 12px; }
+    input[type="number"] { width: 94px; }
+    input, select, button { font: inherit; padding: 8px; border: 1px solid #cdd7c6; border-radius: 6px; background: #fffefa; color: #30482d; }
+    button { cursor: pointer; }
+    button:disabled { opacity: .45; cursor: default; }
+    :focus-visible { outline: 2px solid #5273a3; outline-offset: 3px; }
+    .check { display: flex; align-items: center; gap: 6px; padding: 9px 0; }
+    .check input { accent-color: #54744b; }
+    #run { background: #54744b; color: #fffefa; }
+    writemark-editor { --md-editor-max-height: 480px; --md-editor-min-height: 400px; --md-editor-bg: #fffefa; --md-editor-fg: #27382c; --md-editor-border: #d7dfd0; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #fffefa; border: 1px solid #d7dfd0; border-radius: 8px; padding: 20px; font-size: 12px; }
+    #status { min-height: 24px; }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  </style>
+  <script src="./presence.js" type="module"></script>
+</head>
+<body>
+  <h1>Cursor display benchmark</h1>
+  <p>This page measures 64 synthetic cursor samples in one real editor.</p>
+  <p>Keep this tab visible during a run. The results apply to this browser and device.</p>
+  <form id="benchmark-form">
+    <label>Document paragraphs<input id="lines" type="number" min="100" max="5000" step="100" value="1000" required></label>
+    <label>Update frames<input id="frames" type="number" min="30" max="1000" step="1" value="180" required></label>
+    <label>Editor view<select id="mode"><option value="live">Live</option><option value="source">Source</option></select></label>
+    <label>Selection length<select id="selection"><option value="short">Five characters</option><option value="long">Most of the document</option></select></label>
+    <label class="check"><input id="animate" type="checkbox" checked>Animate marker motion</label>
+    <button id="run" type="submit">Run 64-cursor workload</button>
+    <button id="lifecycle" type="button">Run 40 lifecycle checks</button>
+    <button id="download" type="button" disabled>Save result JSON</button>
+  </form>
+  <p id="status" role="status" aria-live="polite">No benchmark has run.</p>
+  <writemark-editor id="benchmark-editor" mode="live" label="Benchmark document" aria-label="Benchmark document"></writemark-editor>
+  <h2>Measured results</h2>
+  <pre id="result">The report will include update times, frame times, DOM counts, and this browser's configuration.</pre>
+</body>
+</html>

@@ -70,6 +70,62 @@ editor.focus();
 For multiline initial content, assigning `value` in JavaScript is clearer than
 putting newlines in an HTML attribute.
 
+### Enhance an existing textarea
+
+Use this path when the form already stores Markdown:
+
+```html
+<form method="post" action="/articles">
+  <label for="body">Body</label>
+  <textarea id="body" name="body" data-writemark># First draft</textarea>
+  <button>Save</button>
+</form>
+<script src="./writemark-editor.global.min.js"></script>
+```
+
+The script scans opted-in textareas when the document is ready.
+It also scans dynamically inserted controls and late `data-writemark` attributes.
+It hides each native textarea only after successful enhancement.
+The native textarea remains the only named form control for its value.
+If enhancement fails, the native textarea stays usable.
+
+The default mode is `live`.
+For production mobile forms, set `data-writemark-mode="source"` on the textarea.
+This uses the existing source mode and its native editing surface.
+
+Use the exported helpers for direct control or explicit shadow-root registration:
+
+```js
+const handle = WritemarkEditor.enhanceTextarea(document.querySelector('#body'));
+handle.editor.value = '## Updated draft';
+console.log(handle.textarea.value);
+handle.destroy();
+
+WritemarkEditor.enhanceTextareas(document.querySelector('#new-fields'));
+```
+
+Repeated enhancement returns the same active handle.
+`destroy()` restores the native textarea and keeps its latest value.
+Removing either sibling restores the native textarea at the next mutation checkpoint.
+
+Direct `textarea.value` assignments synchronize immediately through an instance property.
+Instance `setRangeText()` calls synchronize value and selection immediately.
+These calls use the native replacement range to move displayed cursors.
+Native prototype setter calls need an `input` or `change` event to synchronize.
+Attribute changes synchronize at the next mutation checkpoint.
+The helper preserves existing custom property descriptors by refusing enhancement when it cannot safely wrap the value property.
+
+User edits emit `input` from the native textarea.
+After a user changes the value, leaving the editor emits one native `change` event.
+API writes synchronize values without native input or change events.
+An editor user edit can set a length error.
+A programmatic value change or form reset clears that error.
+An unchanged editor value write keeps the current length error.
+The enhanced editor uses the native tab order and tracks changes to associated labels.
+Removing a containing subtree also restores native controls and removes enhancement listeners.
+Open shadow roots in scanned inserted subtrees register automatically.
+Call `enhanceTextareas(shadowRoot)` once for a late or closed shadow root.
+
 ## 3. Read and update Markdown
 
 ```js

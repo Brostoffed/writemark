@@ -1,11 +1,13 @@
 import { requireItem } from "../core/collections.ts";
-import type { ValueChangeOptions, TemplateIds } from "./types.ts";
+import type { ValueChangeOptions, TemplateIds, NativeTextareaBridge } from "./types.ts";
 import type { ActionOptions } from "../actions/types.ts";
 import type { TableBlock, CodeFenceBlock, ReferenceMap } from "../markdown/types.ts";
 import type { StructuredSelection } from "../browser/types.ts";
-import type { EditorMode, PreviewMode, MarkdownFlavor, SelectionDirection, SourceSelection, Snapshot, TextChange, Tag, MarkdownOptions, TableLine, MarkdownBlock, Transaction, ActionResult, ActionContext, Action, CompletionProvider, TagProvider, WritemarkEventMap, EventDetail, FindOptions } from "../types.ts";
+import type { RemoteCursor, RemoteCursorOptions, RemoteCursorUpdate, RemoteCursorResult, TransactionRequest, TransactionResult, EditEventMetadata, EditOrigin, DispatchDetail, EditorMode, PreviewMode, MarkdownFlavor, SelectionDirection, SourceSelection, Snapshot, TextChange, Tag, MarkdownOptions, TableLine, MarkdownBlock, Transaction, ActionResult, ActionContext, Action, CompletionProvider, TagProvider, WritemarkEventMap, EventDetail, FindOptions } from "../types.ts";
 import { isAppleWebKitRuntime, isIOSWebKitRuntime, readSelectionCandidates } from "../browser/runtime.ts";
 import { SelectionController } from "../browser/selection.ts";
+import { PresenceController } from "../browser/presence.ts";
+import type { PresenceAnchorSnapshot } from "../browser/presence.ts";
 import { LiveRenderer } from "../render/live.ts";
 import { InputController } from "../browser/input.ts";
 import { DocumentState } from "../core/state.ts";
@@ -21,12 +23,12 @@ import { expandMarkdownFormattingRange, looksLikeBlockMarkdown, markdownFromClip
 import { displayShortcut, uid } from "../browser/util.ts";
 import { ALIASES, DEFAULTS, LANGUAGES, LIVE_ARROW_KEYS, LIVE_STRUCTURAL_BLOCK_TYPES, NAVIGATION_KEYS, REFLECTED_ATTRIBUTES, normalizeIndentAttribute } from "../config.ts";
 import { clamp, getLineRange, literalSearchPattern, nextGraphemeOffset, normalizeLineEndings, now, parseLengthConstraint, previousGraphemeOffset } from "../core/text.ts";
-import { applyTextChanges, changedSpans, diffTextChange, fail, insertionTransaction, makeSnapshot, normalizeChanges, ok, okNoop, removePrefixFromLine, sameSelection, tx } from "../core/transactions.ts";
+import { validateTransactionRequest, mapTransactionSelection, applyTextChanges, changedSpans, diffTextChange, diffTextChanges, invertTextChanges, fail, insertionTransaction, makeSnapshot, normalizeChanges, ok, okNoop, removePrefixFromLine, sameSelection, tx } from "../core/transactions.ts";
 import { classifyLine, getFenceInfo, getSelectedLineRanges, hasClosingFenceAfter, isFenceLine, isHorizontalRule, isInsideFence, isInsideInlineCode, makeLineInfo, parseBlockquote, parseHeading, parseListItem, parseSetextHeadingLevel, usesGfm } from "../markdown/block-syntax.ts";
 import { assignHeadingIds, parseBlocks } from "../markdown/blocks.ts";
 import { codeSpanMarkdown, emphasisPairs, isBackslashEscaped, matchingBrackets, parseCodeSpanAt, parseInlineLinkAt, parseReferenceLinkAt } from "../markdown/inline.ts";
 import { extractReferenceDefinitions, parseReferenceDefinition } from "../markdown/references.ts";
-import { isLikelyTableRow, isTableDelimiter, splitTableRow, tableAlignmentFromDelimiter, tableAlignmentStyle, unescapeTableCellText } from "../markdown/tables.ts";
+import { isLikelyTableRow, isTableDelimiter, splitTableRow, tableAlignmentFromDelimiter, tableAlignmentStyle, unescapeTableCellText, editTableCellDisplay } from "../markdown/tables.ts";
 import { cloneTags, isTagBodyCharacter, isTagBoundary, isValidTagValue, normalizeTagKey, parseTags } from "../markdown/tags.ts";
 import { renderMarkdown } from "../render/html.ts";
 import { decorateInline } from "../render/inline.ts";
@@ -34,6 +36,7 @@ import { codeLanguage, escapeAttribute, escapeHtml, escapeMarkdownLabel, isProba
 
 /** @internal */
 export class WritemarkEditorElement extends HTMLElement {
+  _nativeTextareaBridge: NativeTextareaBridge | null = null;
   declare _document: DocumentState;
   declare _history: UndoHistory;
   declare _inputController: InputController;
@@ -68,6 +71,11 @@ export class WritemarkEditorElement extends HTMLElement {
   declare _referenceCacheValue: string | undefined;
   declare _referenceCache: ReferenceMap | undefined;
   declare _validationMessage: string | undefined;
+  _presenceController: PresenceController | null = null;
+  _presenceMappedValue = "";
+  _presenceSnapshots = new WeakMap<Snapshot, PresenceAnchorSnapshot>();
+  _pendingPresenceAfter: Snapshot | null = null;
+  _pendingPresenceRestore: PresenceAnchorSnapshot | null = null;
 
   static formAssociated = true;
   static get observedAttributes() { return REFLECTED_ATTRIBUTES; }
@@ -232,6 +240,7 @@ export class WritemarkEditorElement extends HTMLElement {
       startPositionTracking: (...args) => this._startCompletionPositionTracking(...args),
       isUnclosedFenceOpeningContext: (...args) => this._isUnclosedFenceOpeningContext(...args),
       snapshot: (...args) => this._snapshot(...args),
+      getRevision: () => this.revision,
       applyTransaction: (...args) => this._applyTransaction(...args),
       dispatch: this._dispatch.bind(this),
       announce: (...args) => this._announce(...args),
@@ -343,13 +352,15 @@ export class WritemarkEditorElement extends HTMLElement {
       this._updateValidity();
     } else {
       this._syncAttributesToControls();
-      this._renderAll({ restoreSelection: true });
+      this._renderAll({ restoreSelection: this.matches(":focus-within") });
       this._updateFormValue();
       this._updateValidity();
     }
     if (this._completion.open) this._startCompletionPositionTracking();
+    this._presenceController?.connect();
   }
   disconnectedCallback() {
+    this._presenceController?.disconnect();
     this._selectionController.disconnect();
     this._completionController.disconnect();
     this._selectionRestoreRequest += 1;
@@ -375,6 +386,7 @@ export class WritemarkEditorElement extends HTMLElement {
         const oldDirty = this._dirty;
         this._dirty = this._value !== this._defaultValue;
         if (oldDirty !== this._dirty) this._dispatch("md-dirty-change", { dirty: this._dirty });
+        this._dispatch("md-value-sync", { value: this._value, defaultValue: this._defaultValue, revision: this.revision });
       }
       return;
     }
@@ -403,6 +415,52 @@ export class WritemarkEditorElement extends HTMLElement {
     if (restoreFocus && !this.disabled) this._focusEditable();
   }
 
+  get revision() { return this._document.revision; }
+  setRemoteCursors(cursors: readonly RemoteCursor[], options?: RemoteCursorOptions): boolean {
+    return this._getPresenceController()?.set(cursors, options) ?? false;
+  }
+  updateRemoteCursors(update: RemoteCursorUpdate): RemoteCursorResult {
+    return this._getPresenceController()?.update(update) ?? { ok: false, reason: "not-connected" };
+  }
+  _getPresenceController(): PresenceController | null {
+    if (!this._hasConnected || !this.isConnected) return null;
+    if (this._presenceController) return this._presenceController;
+    this._presenceMappedValue = this._value;
+    this._presenceController = new PresenceController({
+      host: this,
+      shell: this._requireControl(".editor-shell", HTMLElement),
+      source: this._sourceTextarea,
+      live: this._liveEditor,
+      getMode: () => this.mode,
+      getValue: () => this._value,
+      getRevision: () => this.revision,
+      domPositionFromSource: offset => this._virtualState.active && !this._isSourceOffsetRendered(offset)
+        ? null : this._domPositionFromSource(offset),
+    });
+    return this._presenceController;
+  }
+  getRemoteCursors(): RemoteCursor[] { return this._presenceController?.get() ?? []; }
+  applyTransaction(request: TransactionRequest): TransactionResult {
+    const beforeRevision = this.revision;
+    let origin: EditOrigin = { kind: "external" };
+    const reject = (reason: Extract<TransactionResult, { ok: false }>["reason"]): TransactionResult => ({ ok: false, reason, beforeRevision, revision: this.revision, origin });
+    const checked = validateTransactionRequest(this._value, request, beforeRevision);
+    if (this.revision !== beforeRevision) return reject("reentrant-change");
+    if (!checked.ok) return reject(checked.reason);
+    origin = Object.freeze({ ...(checked.request.origin ?? origin) });
+    if (checked.request.baseRevision !== beforeRevision) return reject("stale-revision");
+    if (this.disabled) return reject("disabled");
+    if (this.readonly) return reject("readonly");
+    if (this._isComposing) return reject("composition-active");
+    const selection = checked.request.selectionAfter ?? mapTransactionSelection(this._getCurrentSelection(), checked.changes);
+    if (checked.value === this._value) {
+      if (checked.request.selectionAfter) this._setSelectionRangeWithoutFocus(selection.start, selection.end, selection.direction);
+      return { ok: true, changed: false, beforeRevision, revision: this.revision, origin, selection: { ...this._getCurrentSelection() } };
+    }
+    const transaction: Transaction = { changes: checked.changes, selectionAfter: { ...selection }, origin, source: "api", undoGroup: "external" };
+    if (!this._applyTransaction(transaction, { restoreSelection: this._isSourceActive() || this.matches(":focus-within") })) return reject(this.revision !== beforeRevision ? "reentrant-change" : this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composition-active" : "change-canceled");
+    return { ok: true, changed: true, beforeRevision, revision: this.revision, origin, selection: { ...this._selection } };
+  }
   get value() { return this._value; }
   set value(next) { this._setValueInternal(next, { source: "api", silent: false, recordUndo: false }); }
   get defaultValue() { return this._defaultValue; }
@@ -476,12 +534,19 @@ export class WritemarkEditorElement extends HTMLElement {
   override blur() { this._focusWithin = false; const active = this._shadow?.activeElement; if (active instanceof HTMLElement) active.blur(); this._sourceTextarea?.blur(); this._liveEditor?.blur(); this._preview?.blur(); }
   select() { this.setSelectionRange(0, this._value.length); }
   setSelectionRange(start: number, end: number, direction: SelectionDirection = "none") {
+    this._setSelectionRange(start, end, direction, true);
+  }
+  _setSelectionRangeWithoutFocus(start: number, end: number, direction: SelectionDirection = "none") {
+    if (!this.matches(":focus-within") && this._selection.start === clamp(Number(start) || 0, 0, this._value.length) && this._selection.end === clamp(Number(end) || 0, 0, this._value.length) && this._selection.direction === direction) return;
+    this._setSelectionRange(start, end, direction, this.matches(":focus-within"));
+  }
+  _setSelectionRange(start: number, end: number, direction: SelectionDirection, restoreLive: boolean) {
     const s = clamp(Number(start) || 0, 0, this._value.length);
     const e = clamp(Number(end) || 0, 0, this._value.length);
     this._selection = { start: s, end: e, direction };
     this._structuredSelection = (!this._isSourceActive() && s !== e) ? { start: s, end: e, direction, label: "selection" } : null;
     if (this._sourceTextarea && this._isSourceActive()) this._sourceTextarea.setSelectionRange(s, e, direction);
-    if (this._liveEditor && !this._isSourceActive()) { this._ignoreSelectionChangeCount = 2; this._restoreLiveSelection(this._selection); }
+    if (restoreLive && this._liveEditor && !this._isSourceActive()) { this._ignoreSelectionChangeCount = 2; this._restoreLiveSelection(this._selection); }
     this._emitSelectionChange();
     this._scheduleCompletionUpdate();
   }
@@ -511,8 +576,29 @@ export class WritemarkEditorElement extends HTMLElement {
   find(query: string, options: FindOptions = {}) { return this._findText(query, options); }
   replace(query: string, replacement: string, options: FindOptions = {}) { return this._replaceText(query, replacement, { ...options, all: false }); }
   replaceAll(query: string, replacement: string, options: FindOptions = {}) { return this._replaceText(query, replacement, { ...options, all: true }); }
-  commit() { const old = this._dirty; this._defaultValue = this._value; this._dirty = false; this._dispatch("md-change", { value: this._value }); if (old) this._dispatch("md-dirty-change", { dirty: false }); }
-  reset() { this._setValueInternal(this._defaultValue, { source: "api", recordUndo: true }); this.setSelectionRange(0, 0); this._dirty = false; this._dispatch("md-dirty-change", { dirty: false }); }
+  commit() {
+    const oldDirty = this._dirty;
+    const revision = this.revision;
+    const value = this._value;
+    this._defaultValue = value;
+    this._dirty = false;
+    this._dispatch("md-value-sync", { value, defaultValue: value, revision });
+    if (this.revision !== revision || this._defaultValue !== value) return;
+    this._dispatch("md-change", { value, origin: { kind: "api" }, beforeRevision: revision, revision });
+    if (this.revision !== revision || this._defaultValue !== value) return;
+    if (oldDirty) this._dispatch("md-dirty-change", { dirty: false });
+  }
+  reset() {
+    this._nativeTextareaBridge?.valueChanged("reset");
+    const defaultValue = this._defaultValue;
+    const expectedRevision = this.revision + (this._value === defaultValue ? 0 : 1);
+    this._setValueInternal(defaultValue, { source: "api", recordUndo: true });
+    if (this.revision !== expectedRevision || this._defaultValue !== defaultValue) return;
+    this.setSelectionRange(0, 0);
+    if (this.revision !== expectedRevision || this._defaultValue !== defaultValue) return;
+    this._dirty = false;
+    this._dispatch("md-dirty-change", { dirty: false });
+  }
   checkValidity() { this._updateValidity(); return this._internals ? this._internals.checkValidity() : this._fallbackValidity().valid; }
   reportValidity() { this._validationVisible = true; this._updateValidity(); return this._internals ? this._internals.reportValidity() : this.checkValidity(); }
   setCustomValidity(message: string) { this._customValidityMessage = String(message ?? ""); this._updateValidity(); }
@@ -547,9 +633,12 @@ export class WritemarkEditorElement extends HTMLElement {
   }
 
   _bindEvents() {
+    this.addEventListener("focus", event => {
+      if (this._nativeTextareaBridge && event.composedPath()[0] === this && !this._shadow.activeElement) this._focusEditable({ preventScroll: true });
+    });
     this._sourceTextarea.addEventListener("beforeinput", event => this._onSourceBeforeInput(event));
     this._sourceTextarea.addEventListener("input", event => this._onSourceInput(event));
-    this._sourceTextarea.addEventListener("change", () => this._dispatch("md-change", { value: this._value }));
+    this._sourceTextarea.addEventListener("change", () => this._dispatch("md-change", { value: this._value, origin: { kind: "user" }, beforeRevision: this.revision, revision: this.revision }));
     this._sourceTextarea.addEventListener("keydown", event => this._onKeyDown(event));
     this._sourceTextarea.addEventListener("keyup", event => this._onNavigationKey(event));
     this._sourceTextarea.addEventListener("click", () => this._onSelectionChanged());
@@ -599,7 +688,11 @@ export class WritemarkEditorElement extends HTMLElement {
 
   _syncAttributesToControls() {
     if (!this._sourceTextarea) return;
-    if (this.disabled) {
+    if (this._nativeTextareaBridge) {
+      const tabIndex = this.disabled ? -1 : this._nativeTextareaBridge.tabIndex();
+      if (this.tabIndex !== tabIndex || !this.hasAttribute("tabindex")) this.tabIndex = tabIndex;
+      this._hostTabIndexBeforeDisable = undefined;
+    } else if (this.disabled) {
       if (this._hostTabIndexBeforeDisable === undefined) {
         this._hostTabIndexBeforeDisable = this.getAttribute("tabindex");
       }
@@ -622,8 +715,10 @@ export class WritemarkEditorElement extends HTMLElement {
       ? "false"
       : this._lineEditable();
     this._syncLiveEditingHosts();
-    this._liveEditor.tabIndex = this.disabled ? -1 : 0;
-    this._preview.tabIndex = this.disabled ? -1 : (this.mode === "preview" ? 0 : -1);
+    const tabIndex = this._nativeTextareaBridge?.tabIndex() ?? 0;
+    this._sourceTextarea.tabIndex = this.disabled ? -1 : tabIndex;
+    this._liveEditor.tabIndex = this.disabled ? -1 : tabIndex;
+    this._preview.tabIndex = this.disabled ? -1 : (this.mode === "preview" ? tabIndex : -1);
     const maxLength = parseLengthConstraint(this.getAttribute("maxlength"));
     const minLength = parseLengthConstraint(this.getAttribute("minlength"));
     maxLength != null ? this._sourceTextarea.maxLength = maxLength : this._sourceTextarea.removeAttribute("maxlength");
@@ -749,15 +844,37 @@ export class WritemarkEditorElement extends HTMLElement {
     };
   }
   _setValueInternal(next: string, opts: ValueChangeOptions = {}) {
+    const previousOrigin = this._activeOrigin;
+    this._activeOrigin = { kind: "api" };
     const previousValue = this._value;
     const value = normalizeLineEndings(next ?? ""); const before = this._snapshot(); const changed = value !== previousValue;
     if (changed) this._pendingFenceOpening = null;
     this._value = value; if (this._sourceTextarea && this._sourceTextarea.value !== value) this._sourceTextarea.value = value;
     if (!opts.preserveSelection) this._selection = { start: clamp(this._selection.start, 0, value.length), end: clamp(this._selection.end, 0, value.length), direction: "none" };
     if (opts.recordUndo && changed) this._recordUndo(before, this._snapshot(), opts.undoGroup || opts.source || "api", { coalesce: false });
-    if (changed || opts.force || !this._hasRenderedOnce) this._afterValueChanged({ source: opts.source || "api", silent: opts.silent, restoreSelection: opts.preserveSelection !== false, previousValue, changes: changed ? diffTextChange(previousValue, value) : [] });
+    if (changed || opts.force || !this._hasRenderedOnce) this._afterValueChanged({ source: opts.source || "api", silent: opts.silent, restoreSelection: opts.preserveSelection !== false && (this._isSourceActive() || this.matches(":focus-within")), previousValue, changes: changed ? opts.changes && applyTextChanges(previousValue, opts.changes) === value ? opts.changes : diffTextChanges(previousValue, value) : [] });
+    this._activeOrigin = previousOrigin;
   }
+  _lastChangeBeforeRevision = 0;
+  _activeOrigin: EditOrigin | null = null;
   _afterValueChanged({ source = "api", inputType = null, silent = false, restoreSelection = true, previousValue = null, changes = null, preserveLiveDom = false }: ValueChangeOptions = {}) {
+    const revision = this.revision;
+    const origin = this._activeOrigin ?? { kind: source === "user" ? "user" as const : source === "paste" ? "paste" as const : "api" as const };
+    const beforeRevision = previousValue !== this._value ? Math.max(0, revision - 1) : revision;
+    this._lastChangeBeforeRevision = beforeRevision;
+    if (previousValue !== this._value) this._nativeTextareaBridge?.valueChanged(source);
+    const restore = this._pendingPresenceRestore;
+    this._pendingPresenceRestore = null;
+    if (previousValue !== null && previousValue !== this._value) {
+      this._presenceController?.mapChanges(changes ?? diffTextChanges(previousValue, this._value));
+      this._presenceMappedValue = this._value;
+      if (restore) this._presenceController?.restoreAnchors(restore);
+      const after = this._pendingPresenceAfter;
+      this._pendingPresenceAfter = null;
+      if (after?.value === this._value) this._rememberPresenceSnapshot(after, true);
+    }
+    this._dispatch("md-value-sync", { value: this._value, defaultValue: this._defaultValue, revision });
+    if (this.revision !== revision) return;
     this._selectAllLevel = 0;
     this._structuredSelection = null;
     const tagChange = this._refreshTagIndex();
@@ -774,9 +891,12 @@ export class WritemarkEditorElement extends HTMLElement {
     } else {
       this._renderAll({ restoreSelection, previousValue, changes });
     }
+    if (this.revision !== revision) return;
     const oldDirty = this._dirty; this._dirty = this._value !== this._defaultValue; if (oldDirty !== this._dirty) this._dispatch("md-dirty-change", { dirty: this._dirty });
+    if (this.revision !== revision) return;
     if (!silent) {
-      this._dispatch("md-input", { value: this._value, source, inputType });
+      this._dispatch("md-input", { value: this._value, source, inputType, origin, beforeRevision, revision });
+      if (this.revision !== revision) return;
       if (tagChange) this._dispatch("md-tags-change", { ...tagChange, source, inputType });
     }
   }
@@ -793,7 +913,11 @@ export class WritemarkEditorElement extends HTMLElement {
       removed: previous.filter(tag => !newKeys.has(tag.key)).map(tag => tag.value),
     };
   }
-  _renderAll(...args: Parameters<typeof this._liveRenderer._renderAll>) { return this._liveRenderer._renderAll(...args); }
+  _renderAll(...args: Parameters<typeof this._liveRenderer._renderAll>) {
+    const result = this._liveRenderer._renderAll(...args);
+    this._presenceController?.refresh(false);
+    return result;
+  }
   _isLiveVisible(...args: Parameters<typeof this._liveRenderer._isLiveVisible>) { return this._liveRenderer._isLiveVisible(...args); }
   _isPreviewVisible(...args: Parameters<typeof this._liveRenderer._isPreviewVisible>) { return this._liveRenderer._isPreviewVisible(...args); }
   _renderDebounceMs(...args: Parameters<typeof this._liveRenderer._renderDebounceMs>) { return this._liveRenderer._renderDebounceMs(...args); }
@@ -1053,31 +1177,68 @@ export class WritemarkEditorElement extends HTMLElement {
   _textPositionInElement(...args: Parameters<typeof this._selectionController._textPositionInElement>) { return this._selectionController._textPositionInElement(...args); }
   _ensureEmptyLiveEditable(...args: Parameters<typeof this._selectionController._ensureEmptyLiveEditable>) { return this._selectionController._ensureEmptyLiveEditable(...args); }
 
-  _snapshot() { const sel = this._getCurrentSelection(); this._selection = sel; return makeSnapshot(this._value, sel.start, sel.end, sel.direction || "none"); }
-  _recordUndo(...args: Parameters<UndoHistory["record"]>) { this._history.record(...args); }
+  _snapshot() {
+    const sel = this._getCurrentSelection();
+    this._selection = sel;
+    const snapshot = makeSnapshot(this._value, sel.start, sel.end, sel.direction || "none");
+    this._rememberPresenceSnapshot(snapshot);
+    return snapshot;
+  }
+  _rememberPresenceSnapshot(snapshot: Snapshot, overwrite = false) {
+    if (!this._presenceController || !overwrite && this._presenceSnapshots.has(snapshot)) return;
+    let anchors = this._presenceController.captureAnchors();
+    if (this._presenceMappedValue !== snapshot.value) {
+      const changes = diffTextChanges(this._presenceMappedValue, snapshot.value);
+      anchors = anchors.map(anchor => {
+        const backward = anchor.anchor > anchor.head;
+        const selection = mapTransactionSelection({ start: Math.min(anchor.anchor, anchor.head), end: Math.max(anchor.anchor, anchor.head) }, changes);
+        const start = clamp(selection.start, 0, snapshot.value.length);
+        const end = clamp(selection.end, 0, snapshot.value.length);
+        return { ...anchor, anchor: backward ? end : start, head: backward ? start : end };
+      });
+    }
+    this._presenceSnapshots.set(snapshot, anchors);
+  }
+  _recordUndo(...args: Parameters<UndoHistory["record"]>) {
+    const [before, after] = args;
+    this._rememberPresenceSnapshot(before, this._presenceMappedValue === before.value);
+    this._rememberPresenceSnapshot(after, true);
+    if (this._presenceController && this._presenceMappedValue !== after.value) this._pendingPresenceAfter = after;
+    this._history.record(...args);
+  }
   _undoGroupForInput(inputType: string | null) { if (inputType?.startsWith("insert")) return "typing"; if (inputType?.startsWith("delete")) return "delete"; return inputType || "input"; }
   _undo({ source = "keyboard", inputType = null }: { source?: string; inputType?: string | null } = {}) {
     const current = this._snapshot();
+    const beforeRevision = this.revision;
+    const entry = this._undoStack.at(-1);
+    const changes = entry?.changes && entry.after.value === current.value ? invertTextChanges(entry.before.value, entry.changes) : undefined;
     const target = this._history.undo(current);
     if (!target) return false;
-    this._restoreSnapshot(target, "undo", inputType);
-    this._dispatch("md-action", { actionId: "history.undo", source, before: current, after: this._snapshot() });
+    this._restoreSnapshot(target, "undo", inputType, changes);
+    if (this.revision === beforeRevision + 1) this._dispatch("md-action", { actionId: "history.undo", source, before: current, after: this._snapshot(), beforeRevision, revision: this.revision, origin: { kind: "action", id: "history.undo" } });
     return true;
   }
   _redo({ source = "keyboard", inputType = null }: { source?: string; inputType?: string | null } = {}) {
     const current = this._snapshot();
+    const beforeRevision = this.revision;
+    const entry = this._redoStack.at(-1);
+    const changes = entry?.changes && entry.before.value === current.value ? entry.changes : undefined;
     const target = this._history.redo(current);
     if (!target) return false;
-    this._restoreSnapshot(target, "redo", inputType);
-    this._dispatch("md-action", { actionId: "history.redo", source, before: current, after: this._snapshot() });
+    this._restoreSnapshot(target, "redo", inputType, changes);
+    if (this.revision === beforeRevision + 1) this._dispatch("md-action", { actionId: "history.redo", source, before: current, after: this._snapshot(), beforeRevision, revision: this.revision, origin: { kind: "action", id: "history.redo" } });
     return true;
   }
-  _restoreSnapshot(snapshot: Snapshot, source: string, inputType: string | null = null) {
+  _restoreSnapshot(snapshot: Snapshot, source: string, inputType: string | null = null, changes?: TextChange[]) {
+    const previousOrigin = this._activeOrigin;
+    this._activeOrigin = { kind: "action", id: `history.${source}` };
     const previousValue = this._value;
     this._value = snapshot.value;
     this._selection = { ...snapshot.selection };
     this._redoStack = this._redoStack;
-    this._afterValueChanged({ source, inputType, restoreSelection: true, previousValue, changes: diffTextChange(previousValue, this._value) });
+    this._pendingPresenceRestore = this._presenceSnapshots.get(snapshot) ?? null;
+    this._afterValueChanged({ source, inputType, restoreSelection: true, previousValue, changes: changes ?? diffTextChanges(previousValue, this._value) });
+    this._activeOrigin = previousOrigin;
   }
 
   _onKeyDown(event: KeyboardEvent) {
@@ -1433,6 +1594,19 @@ export class WritemarkEditorElement extends HTMLElement {
   _tableCellInputEdit(cell: HTMLElement, raw: string, displayCursor: number | null = null) {
     const info = this._tableInfoForCell(cell);
     if (!info) return null;
+    const range = this._editableSourceRange(cell);
+    if (range && (info.row < 0 || info.row < info.block.rows.length)) {
+      const source = this._value.slice(range.from, range.to);
+      const edited = editTableCellDisplay(source, raw, displayCursor ?? raw.length);
+      return {
+        blockFrom: info.block.from,
+        blockTo: info.block.to + edited.text.length - source.length,
+        cellFrom: range.from,
+        cellTo: range.from + edited.text.length,
+        nextValue: this._value.slice(0, range.from) + edited.text + this._value.slice(range.to),
+        cursor: range.from + edited.cursor,
+      };
+    }
     const cols = info.cols;
     const header = this._tableCellTexts(info.block.header, cols);
     const delimiter = this._tableCellTexts(info.block.delimiter, cols);
@@ -1647,8 +1821,10 @@ export class WritemarkEditorElement extends HTMLElement {
     this._writeMarkdownClipboard(event, markdown);
     const ctx = this._getContext();
     const result = ok(tx(ctx, "editor.deleteSelection", [{ from: range.start, to: range.end, insert: "" }], { start: range.start, end: range.start, direction: "none" }, "cut"), "Cut.");
-    this._applyActionResult("editor.deleteSelection", result, { source: "keyboard" });
-    this._dispatch("md-cut", { markdown, start: range.start, end: range.end });
+    const beforeRevision = this.revision;
+    const applied = this._applyActionResult("editor.deleteSelection", result, { source: "keyboard" });
+    if (!applied.ok || this.revision !== beforeRevision + 1) return;
+    this._dispatch("md-cut", { markdown, start: range.start, end: range.end, origin: { kind: "user", id: "clipboard.cut" }, beforeRevision, revision: this.revision });
   }
 
   _serializeTableBlock(...args: Parameters<typeof serializeTableBlock>) { return serializeTableBlock(...args); }
@@ -1674,8 +1850,10 @@ export class WritemarkEditorElement extends HTMLElement {
   _insertPastedMarkdown(markdown: string, kind: string = "text") {
     const prepared = this._preparePastedMarkdown(markdown, kind);
     if (!prepared) return false;
-    this._runAction("editor.insertText", { text: prepared }, { source: "paste", apply: true });
-    this._dispatch("md-paste", { markdown: prepared, kind });
+    const beforeRevision = this.revision;
+    const result = this._runAction("editor.insertText", { text: prepared }, { source: "paste", apply: true });
+    if (!result.ok) return false;
+    if (this.revision <= beforeRevision + 1) this._dispatch("md-paste", { markdown: prepared, kind, beforeRevision, revision: this.revision, origin: { kind: "paste" } });
     return true;
   }
   _onPaste(event: ClipboardEvent & { readonly dataTransfer?: DataTransfer | null }) {
@@ -1686,7 +1864,10 @@ export class WritemarkEditorElement extends HTMLElement {
     const text = safeClipboardGet(clipboard, "text/plain");
     if (text && this.selectionStart !== this.selectionEnd && isProbablyUrl(text) && !safeClipboardGet(clipboard, "text/markdown") && !safeClipboardGet(clipboard, "text/html")) { event.preventDefault(); this._runAction("inline.link", { url: text.trim() }, { source: "paste", apply: true }); return; }
     const { markdown, kind } = markdownFromClipboardData(clipboard);
-    if (!markdown) return;
+    if (!markdown) {
+      if (["text/html", "text/markdown", "text/x-markdown", "text/plain"].some(type => safeClipboardGet(clipboard, type).length > 0)) event.preventDefault();
+      return;
+    }
     event.preventDefault();
     this._insertPastedMarkdown(markdown, kind);
   }
@@ -1716,21 +1897,34 @@ export class WritemarkEditorElement extends HTMLElement {
       if (result.announcement) this._announce(result.announcement);
       return result;
     }
-    if (result.transaction) { const t = { ...result.transaction, source: options.source || result.transaction.source || "api", actionId, timestamp: now() }; if (!this._applyTransaction(t, { source: t.source, inputType: options.inputType })) return fail("change-canceled", "Change blocked."); const after = this._snapshot(); this._dispatch("md-action", { actionId, args: t.args, source: t.source, before, after }); }
+    if (result.transaction) {
+      const beforeRevision = this.revision;
+      const t = { ...result.transaction, source: options.source || result.transaction.source || "api", actionId, timestamp: now() };
+      const origin: EditOrigin = t.origin ?? { kind: t.source === "paste" ? "paste" : t.source === "user" ? "user" : actionId === "completion.accept" ? "completion" : "action", id: actionId };
+      t.origin = origin;
+      const expectedRevision = beforeRevision + (applyTextChanges(before.value, t.changes) === before.value ? 0 : 1);
+      if (!this._applyTransaction(t, { source: t.source, inputType: options.inputType })) return fail("change-canceled", "Change blocked.");
+      if (this.revision === expectedRevision) this._dispatch("md-action", { actionId, args: t.args, source: t.source, before, after: this._snapshot(), origin, beforeRevision, revision: this.revision });
+    }
     else this._dispatch("md-action", { actionId, source: options.source || "api", before, after: this._snapshot() });
     if (result.announcement) this._announce(result.announcement); return result;
   }
-  _applyTransaction(transaction: Transaction, options: ActionOptions = {}) {
+  _applyTransaction(transaction: Transaction, options: ActionOptions & { restoreSelection?: boolean } = {}) {
     const before = this._snapshot();
+    const beforeRevision = this.revision;
     const nextValue = applyTextChanges(this._value, transaction.changes);
-    const proposedSelection = transaction.selectionAfter || { start: nextValue.length, end: nextValue.length, direction: "none" };
-    const beforeEvent = this._dispatch("md-before-change", { transaction, before, nextValue, selectionAfter: proposedSelection, source: options.source || transaction.source || "api" }, { cancelable: true });
+    const proposedSelection = { ...(transaction.selectionAfter || { start: nextValue.length, end: nextValue.length, direction: "none" as const }) };
+    const eventTransaction = Object.freeze({ ...transaction, changes: Object.freeze(transaction.changes.map(change => Object.freeze({ ...change }))), ...(transaction.origin ? { origin: Object.freeze({ ...transaction.origin }) } : {}) });
+    const beforeEvent = this._dispatch("md-before-change", { transaction: eventTransaction as Transaction, before: { value: before.value, selection: { ...before.selection } }, nextValue, selectionAfter: { ...proposedSelection }, source: options.source || transaction.source || "api" }, { cancelable: true });
+    if (this.revision !== beforeRevision) return false;
+    if (this.disabled || this.readonly || this._isComposing) return false;
     if (beforeEvent.defaultPrevented) { this._announce("Change blocked."); return false; }
+    if (nextValue === this._value) return true;
     this._value = nextValue;
     this._pendingFenceOpening = null;
     const sel = proposedSelection;
     this._selection = { start: clamp(sel.start, 0, nextValue.length), end: clamp(sel.end, 0, nextValue.length), direction: sel.direction || "none" }; this._structuredSelection = null;
-    const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction); this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false }); this._redoStack.length = 0; this._afterValueChanged({ source: options.source || transaction.source || "api", inputType: options.inputType, restoreSelection: true, previousValue: before.value, changes: transaction.changes }); this._scheduleCompletionUpdate();
+    const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction); this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false, changes: transaction.changes }); this._redoStack.length = 0; const previousOrigin = this._activeOrigin; this._activeOrigin = transaction.origin ?? { kind: transaction.source === "paste" ? "paste" : transaction.actionId === "completion.accept" ? "completion" : transaction.actionId ? "action" : "api", ...(transaction.actionId ? { id: transaction.actionId } : {}) }; this._afterValueChanged({ source: options.source || transaction.source || "api", inputType: options.inputType, restoreSelection: options.restoreSelection ?? true, previousValue: before.value, changes: transaction.changes }); this._activeOrigin = previousOrigin; this._scheduleCompletionUpdate();
     return true;
   }
 
@@ -1987,8 +2181,8 @@ export class WritemarkEditorElement extends HTMLElement {
 
   _updateFormValue() { if (!this._internals) return; this.disabled ? this._internals.setFormValue(null) : this._internals.setFormValue(this._value); }
   _fallbackValidity() { const flags = this._computeValidityFlags(); return { valid: Object.keys(flags).length === 0, valueMissing: Boolean(flags.valueMissing), tooShort: Boolean(flags.tooShort), tooLong: Boolean(flags.tooLong), customError: Boolean(flags.customError) }; }
-  _computeValidityFlags() { const flags: ValidityStateFlags = {}; const value = this._value; if (this._customValidityMessage) flags.customError = true; if (this.required) { const empty = DEFAULTS.emptyRequiredTrim ? value.trim().length === 0 : value.length === 0; if (empty) flags.valueMissing = true; } const min = parseLengthConstraint(this.getAttribute("minlength")); if (min != null && value.length > 0 && value.length < min) flags.tooShort = true; const max = parseLengthConstraint(this.getAttribute("maxlength")); if (max != null && value.length > max) flags.tooLong = true; return flags; }
-  _updateValidity() { if (!this._sourceTextarea) return; const flags = this._computeValidityFlags(); const min = parseLengthConstraint(this.getAttribute("minlength")); const max = parseLengthConstraint(this.getAttribute("maxlength")); let message = this._customValidityMessage || ""; if (!message) { if (flags.valueMissing) message = "Please fill out this field."; else if (flags.tooShort) message = `Please lengthen this text to at least ${min} characters.`; else if (flags.tooLong) message = `Please shorten this text to no more than ${max} characters.`; } const valid = Object.keys(flags).length === 0; if (valid) this._validationVisible = false; for (const el of [this._sourceTextarea, this._liveEditor]) el?.setAttribute("aria-invalid", valid ? "false" : "true"); this._validation.textContent = !valid && this._validationVisible ? message : ""; this._validationMessage = message; const anchor = this.mode === "source" || this.mode === "split" ? this._sourceTextarea : this.mode === "preview" ? this._preview : this._liveEditor; this._internals?.setValidity(flags, message, anchor); }
+  _computeValidityFlags() { if (this._nativeTextareaBridge) { const flags = { ...this._nativeTextareaBridge.validity(this._value).flags }; if (this._customValidityMessage) flags.customError = true; return flags; } const flags: ValidityStateFlags = {}; const value = this._value; if (this._customValidityMessage) flags.customError = true; if (this.required) { const empty = !this.hasAttribute("data-writemark-textarea") && DEFAULTS.emptyRequiredTrim ? value.trim().length === 0 : value.length === 0; if (empty) flags.valueMissing = true; } const min = parseLengthConstraint(this.getAttribute("minlength")); if (min != null && value.length > 0 && value.length < min) flags.tooShort = true; const max = parseLengthConstraint(this.getAttribute("maxlength")); if (max != null && value.length > max) flags.tooLong = true; return flags; }
+  _updateValidity() { if (!this._sourceTextarea) return; const flags = this._computeValidityFlags(); const min = parseLengthConstraint(this.getAttribute("minlength")); const max = parseLengthConstraint(this.getAttribute("maxlength")); let message = this._customValidityMessage || this._nativeTextareaBridge?.validity(this._value).message || ""; if (!message) { if (flags.valueMissing) message = "Please fill out this field."; else if (flags.tooShort) message = `Please lengthen this text to at least ${min} characters.`; else if (flags.tooLong) message = `Please shorten this text to no more than ${max} characters.`; } const valid = Object.keys(flags).length === 0; if (valid) this._validationVisible = false; for (const el of [this._sourceTextarea, this._liveEditor]) el?.setAttribute("aria-invalid", valid ? "false" : "true"); this._validation.textContent = !valid && this._validationVisible ? message : ""; this._validationMessage = message; const anchor = this.mode === "source" || this.mode === "split" ? this._sourceTextarea : this.mode === "preview" ? this._preview : this._liveEditor; this._internals?.setValidity(flags, message, anchor); }
   _emitSelectionChange() { this._dispatch("md-selection-change", { selectionStart: this._selection.start, selectionEnd: this._selection.end, selectionDirection: this._selection.direction || "none" }); }
   _announce(message: string | undefined) { if (!message || !this._status) return; this._status.textContent = ""; requestAnimationFrame(() => { this._status.textContent = message; }); }
   _debug(level: number, phase: string, detail: Record<string, unknown> = {}) {
@@ -2008,8 +2202,17 @@ export class WritemarkEditorElement extends HTMLElement {
     if (this.debugLog) globalThis.console?.debug?.("[writemark-editor]", payload);
     return event;
   }
-  _dispatch<K extends keyof WritemarkEventMap>(name: K, detail: EventDetail<K>, options: Pick<CustomEventInit<unknown>, "bubbles" | "composed" | "cancelable"> = {}): WritemarkEventMap[K] {
-    const event = new CustomEvent<EventDetail<K>>(name, { detail, bubbles: options.bubbles ?? true, composed: options.composed ?? true, cancelable: options.cancelable ?? false });
+  _dispatch<K extends keyof WritemarkEventMap>(name: K, detail: DispatchDetail<K>, options: Pick<CustomEventInit<unknown>, "bubbles" | "composed" | "cancelable"> = {}): WritemarkEventMap[K] {
+    let payload: unknown = detail;
+    if (["md-before-change", "md-input", "md-change", "md-action", "md-completion-accept", "md-paste", "md-cut"].includes(name)) {
+      const data = detail as Record<string, unknown>;
+      const transaction = data.transaction as Transaction | undefined;
+      const source = typeof data.source === "string" ? data.source : "api";
+      const kind = name === "md-completion-accept" ? "completion" : source === "paste" || name === "md-paste" ? "paste" : source === "user" ? "user" : data.actionId || transaction?.actionId ? "action" : "api";
+      const origin = (data.origin as EditOrigin | undefined) ?? transaction?.origin ?? this._activeOrigin ?? { kind, ...(typeof data.actionId === "string" ? { id: data.actionId } : typeof data.providerId === "string" ? { id: data.providerId } : {}) };
+      payload = { beforeRevision: (name === "md-before-change" || name === "md-change") ? this.revision : this._lastChangeBeforeRevision, revision: this.revision, ...data, origin: Object.freeze({ ...origin }) };
+    }
+    const event = new CustomEvent<unknown>(name, { detail: payload, bubbles: options.bubbles ?? true, composed: options.composed ?? true, cancelable: options.cancelable ?? false });
     this.dispatchEvent(event);
     return event as WritemarkEventMap[K];
   }

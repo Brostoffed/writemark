@@ -4,7 +4,8 @@ import type { TablePosition } from "./types.ts";
 import type { TableLine, LineInfo, ActionContext } from "../types.ts";
 import { clamp } from "../core/text.ts";
 import { fail, ok, tx } from "../core/transactions.ts";
-import { parseTableLineRanges, unescapeTableCellText } from "../markdown/tables.ts";
+import { escapeTableCellText, parseTableLineRanges, unescapeTableCellText } from "../markdown/tables.ts";
+export { escapeTableCellText } from "../markdown/tables.ts";
 
 export function serializeTableBlock(headerCells: string[], delimiterCells: string[], rows: string[][]) {
     const serialize = (cells: string[]) => tableRowSourceParts(cells).text;
@@ -85,10 +86,6 @@ export function tableRowSourceParts(cells: string[]) {
       text += index === escaped.length - 1 ? " |" : " | ";
     });
     return { text, offsets };
-  }
-
-export function escapeTableCellText(cell: string) {
-    return String(cell ?? "").replace(/\|/g, "\\|");
   }
 
 export function tableBlockSourceWithOffsets(headerCells: string[], delimiterCells: string[], rows: string[][]) {

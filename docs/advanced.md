@@ -529,9 +529,9 @@ Raise the budget for a deeper local pass:
 WRITEMARK_FUZZ_RUNS=5000 npm run test:fuzz
 ```
 
-The weekly `Markdown fuzz` workflow runs the same deep budget with a rotating,
-logged seed. See [`tests/README.md`](../tests/README.md) for replay controls and
-the corpus ownership rules.
+The weekly `Markdown fuzz` workflow uses a rotating seed and records it in the log.
+The workflow checks Markdown, clipboard, cursor history, and keyboard input.
+See the replay controls in the [browser test guide](../tests/README.md).
 
 ## Performance and large documents
 
@@ -581,8 +581,7 @@ Run the Chromium suite in a visible browser with:
 npm run test:browser:headed
 ```
 
-The current desktop suite registers 465 independent cases per browser project. It
-covers the public component contract, live and source editing, keyboard
+The desktop suite covers the public component contract, live and source editing, keyboard
 shortcuts, undo/redo, tasks, completion providers, tables, forms, validation,
 multiple instances, hostile rendering, property-based parser and sanitizer
 invariants, CommonMark differential behavior, performance, and the published
@@ -615,3 +614,57 @@ npm run build
 ```
 
 Do not edit files in `dist/` directly.
+
+## Remote cursor motion
+
+The remote cursor API accepts source positions, names, and colors.
+The host owns connection state and shared document positions.
+This follows the separate awareness model in the [Yjs guide](https://docs.yjs.dev/getting-started/adding-awareness).
+
+[Liveblocks compares transitions, springs, and splines](https://liveblocks.io/blog/how-to-animate-multiplayer-cursors) for remote pointer motion.
+It describes the tradeoff between smooth paths and added delay.
+Text carets also need exact columns and clear line changes.
+Writemark uses short travel only within the same visual row.
+The 90 millisecond duration and easing curve are Writemark design choices.
+They do not come from a platform standard.
+
+- Moves under 100 pixels use `cubic-bezier(0.2, 0, 0, 1)` without overshoot.
+- An interrupted move starts from its current visible position.
+- Line changes and large jumps place the caret directly.
+- Scroll, resize, and text layout changes place markers without travel.
+- Remote updates preserve the local selection, focus, and scroll position.
+- Names fade after 1.6 seconds of no cursor change.
+- Repeated positions do not revive names.
+- Four label lanes limit collisions without removing carets.
+- Labels use black or white text based on their background contrast.
+- Reduced motion disables cursor travel and label fades.
+- Hover near a caret to reveal its name.
+- Use `showNames: true` for a keyboard-operated host name control.
+- A screen-reader roster exposes full names without announcing every movement.
+
+Use `updateRemoteCursors()` when each connection supplies one peer update.
+Set an increasing `epoch` and `sequence` for each peer.
+Increase the epoch when a connection restarts its sequence.
+Identical versioned heartbeats refresh expiry without moving locally mapped positions.
+Choose `ttlMs` for the expected heartbeat interval.
+The default expiry is 30 seconds.
+The manual demo uses `ttlMs: 0` to retain its sample cursors.
+
+Local undo restores deleted anchors while their peer position generation still matches the saved snapshot.
+A later authoritative peer position invalidates that anchor snapshot.
+The host still owns shared document reconciliation and message authentication.
+
+The cursor performance page measures 64 cursors with short or document-length selections.
+Choose live or source mode on the [cursor performance page](../perf/presence.html).
+The results report update times, frame intervals, and selection node counts.
+Its exported measurements describe that browser and device only.
+The editor clips selection measurement to nearby text and reuses shared ranges within each update.
+The regression suite also runs seeded edits, cursor updates, mode changes, scrolling, and repeated lifecycle checks.
+
+[Figma uses explicit controls for view following](https://help.figma.com/hc/en-us/articles/360040322673-Present-to-collaborators-using-spotlight).
+This display API keeps view control with the local user.
+[W3C explains why users need control over animation](https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html).
+The display respects the system `prefers-reduced-motion` setting.
+
+Use `::part(remote-caret)`, `::part(remote-name)`, `::part(remote-selection)`, and `::part(remote-cursor)` to adjust the display.
+The [cursor demo](../demo/cursors/index.html) uses actual editor selections and manual cursor controls.

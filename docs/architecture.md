@@ -33,6 +33,7 @@ The event dispatcher checks each event payload against its event name.
 ## State
 
 `DocumentState` owns the Markdown value, reset value, source selection, and dirty flag.
+It also owns a monotonic revision for actual canonical Markdown changes.
 `UndoHistory` owns history records and returns snapshots for the component to apply.
 Parser results, tags, DOM nodes, and viewport measurements are derived data.
 They do not become another document value.
@@ -51,6 +52,30 @@ Host actions must supply nonoverlapping ranges.
 The transaction helper applies edits from the highest source position to the lowest.
 The helper keeps the existing range-clamping behavior.
 The resulting selection refers to the document after the change.
+
+The public transaction API validates external edits before it uses the existing change path.
+It rejects stale revisions, invalid ranges, overlaps, mismatched expected text, and invalid selections.
+It rechecks document revision and editing state after the cancelable event.
+Edit events include origin metadata and revision bounds.
+
+The cursor controller keeps display state separate from canonical Markdown and undo records.
+A weak map associates endpoint snapshots with existing undo snapshot objects.
+Position generations prevent undo from overwriting later authoritative cursor moves.
+History retains exact transaction ranges and composes known ranges when edits coalesce.
+Undo inverts those ranges instead of inferring edit locations from repeated text.
+The inverse keeps a boundary when both neighboring replacement ranges have width.
+Cursor removal and expiry do not add document history records.
+Batch geometry shares mirror preparation and mounted editable discovery.
+The batch limits long range measurements to nearby rows and reuses matching fragments.
+The controller reuses selection nodes and retains bounded version tombstones after removal.
+
+The textarea enhancement adapter retains the native textarea as the submitted control.
+The adapter synchronizes canonical editor changes through `md-value-sync`.
+The adapter maps native range edits through their exact source offsets when available.
+It restores the native control when initialization fails or the enhancement ends.
+Per-control observers track the control, its parent, and its fieldset ancestors.
+A shared document observer discovers opted-in controls and clears detached handles through weak references.
+Registered shadow roots receive separate observers.
 
 DOM selection and source selection can have different positions.
 `SelectionController` owns source mapping, browser selection, fallback selection, pointer state, and selection restoration.

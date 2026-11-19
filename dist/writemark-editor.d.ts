@@ -1,4 +1,4 @@
-import type { EditorConstructor, MarkdownOptions, MarkdownBlock, Tag, ListItem, Heading, Blockquote } from "./types.js";
+import type { EditorConstructor, MarkdownOptions, MarkdownBlock, Tag, ListItem, Heading, Blockquote, TextareaEnhancement } from "./types.js";
 export type * from "./types.js";
 export type WritemarkEditorElement = import("./types.js").WritemarkEditorElement;
 export type MdLiveEditorElement = import("./types.js").MdLiveEditorElement;
@@ -13,7 +13,9 @@ declare const parseHeading: (line: string) => Heading | null;
 declare const parseBlockquote: (line: string) => Blockquote | null;
 declare const htmlToMarkdown: (html: string) => string;
 declare const tsvToMarkdownTable: (text: string) => string | null;
-export { WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown, parseBlocks, parseTags, parseListItem, parseHeading, parseBlockquote, htmlToMarkdown, tsvToMarkdownTable };
+declare const enhanceTextarea: (textarea: HTMLTextAreaElement) => TextareaEnhancement;
+declare const enhanceTextareas: (root?: ParentNode) => TextareaEnhancement[];
+export { WritemarkEditorElement, MdLiveEditorElement, renderMarkdown, renderInlineMarkdown, parseBlocks, parseTags, parseListItem, parseHeading, parseBlockquote, htmlToMarkdown, tsvToMarkdownTable, enhanceTextarea, enhanceTextareas };
 
 declare global {
   interface HTMLElementTagNameMap {

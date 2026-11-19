@@ -1,7 +1,12 @@
 import type { SourceSelection } from "../types.ts";
 /** Canonical Markdown and source selection for one editor. */
 export class DocumentState {
-  declare value: string;
+  private _value = "";
+  revision = 0;
+  get value() { return this._value; }
+  set value(value: string) {
+    if (value !== this._value) { this._value = value; this.revision += 1; }
+  }
   declare defaultValue: string;
   declare selection: SourceSelection;
   declare dirty: boolean;

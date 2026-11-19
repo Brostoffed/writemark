@@ -28,3 +28,20 @@ if (!result.ok) {
   result.transaction;
 }
 void missingCapability; void brokenFence; void brokenRequest;
+
+import type { TransactionRequest, TransactionResult, WritemarkEditorElement } from "../../src/types.ts";
+declare const revisionEditor: WritemarkEditorElement;
+const externalRequest: TransactionRequest = {
+  baseRevision: revisionEditor.revision,
+  changes: [{ from: 0, to: 0, insert: "hello", expected: "" }],
+  origin: { kind: "external", id: "local-tool" },
+};
+const transactionResult: TransactionResult = revisionEditor.applyTransaction(externalRequest);
+if (transactionResult.ok) transactionResult.selection.start;
+else transactionResult.reason;
+revisionEditor.addEventListener("md-input", event => {
+  const revision: number = event.detail.revision;
+  const beforeRevision: number = event.detail.beforeRevision;
+  const origin: string = event.detail.origin.kind;
+  void revision; void beforeRevision; void origin;
+});

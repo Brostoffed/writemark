@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>&lt;writemark-editor&gt; v1.8.1 Live Inline Demo</title>
+  <title>&lt;writemark-editor&gt; v1.9.0 Live Inline Demo</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
     * { box-sizing: border-box; }
@@ -59,6 +59,22 @@
       .card-heading { display: block; }
       .status-row { margin-top: 10px; }
     }
+    .release-links { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; }
+    .release-links a { overflow-wrap: anywhere; }
+    .version-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .version-examples > section, .version-examples form { min-width: 0; }
+    .version-examples label { display: block; margin-bottom: 6px; }
+    .version-examples input[type="text"], .native-example textarea { width: 100%; min-width: 0; font: inherit; }
+    .native-example textarea { min-height: 110px; padding: 10px; border: 1px solid; border-radius: 8px; color: CanvasText; background: Canvas; }
+    .native-example writemark-editor { --md-editor-min-height: 130px; --md-editor-max-height: 220px; }
+    .version-examples .toolbar { margin-top: 10px; }
+    .version-examples pre { min-height: 0; overflow-wrap: anywhere; }
+    .version-examples output { overflow-wrap: anywhere; }
+    @media (max-width: 820px) { .version-examples { grid-template-columns: 1fr; } }
+    @media (max-width: 520px) {
+      .controls label { flex-wrap: wrap; max-width: 100%; }
+      .controls select { max-width: 100%; min-width: 0; }
+    }
     /* Active-line/cell focus outline is off by default. Re-enable with:
        writemark-editor { --md-editor-active-line-ring: inset 0 0 0 2px color-mix(in srgb, Highlight 35%, transparent); }
     */
@@ -70,6 +86,15 @@
       <h1>&lt;writemark-editor&gt; live inline editor</h1>
       <p>Dependency-free markdown web component. This demo opens directly from disk or through a local server. Inline/live is the primary editing surface: headings, inline formatting, tables, code blocks, task checkboxes, and lists render inside the editor itself while markdown source remains canonical. Source, split, preview-only, and optional companion-preview modes remain available when a host needs them. There is no built-in toolbar; use Markdown shortcuts, slash commands, keyboard shortcuts, or the public action API.</p>
       <p><strong>Mobile support:</strong> Live mode is experimental and unsupported on mobile browsers. For production editing on iOS, iPadOS, Android, and other mobile or software-keyboard environments, select <strong>source</strong> mode.</p>
+      <nav aria-label="New in 1.9.0">
+        <strong>New in 1.9.0</strong>
+        <div class="release-links">
+          <a id="cursor-demo-link" href="./cursors/index.html">Try the cursor demo</a>
+          <a href="#external-edits-title">Try checked external edits</a>
+          <a href="#native-example-title">Try textarea enhancement</a>
+          <a id="release-notes-link" href="../CHANGELOG.md#190---2026-11-19">Read the 1.9.0 release notes</a>
+        </div>
+      </nav>
     </header>
 
     <div class="controls" aria-label="Demo controls">
@@ -213,6 +238,41 @@
       <p><button type="submit">Submit form</button></p>
     </form>
 
+    <div class="version-examples">
+      <section class="demo-card" aria-labelledby="external-edits-title">
+        <h2 id="external-edits-title">External edits</h2>
+        <p>Select a position in the main editor. Apply an insertion at that saved selection.</p>
+        <p>Revision <output id="external-revision">0</output>. Last origin: <output id="external-origin">none</output>.</p>
+        <label for="external-insert-text">Text to insert</label>
+        <input id="external-insert-text" type="text" value=" [external]" autocomplete="off">
+        <div class="toolbar">
+          <button type="button" id="external-apply-current">Apply current edit</button>
+          <button type="button" id="external-save-request">Save request</button>
+          <button type="button" id="external-apply-saved" disabled>Apply saved request</button>
+        </div>
+        <p>Save a request. Change the main text. Apply the saved request to check its revision.</p>
+        <p id="external-saved-request" class="activity">No request saved.</p>
+        <p id="external-edit-status" class="activity" role="status" aria-live="polite"></p>
+      </section>
+      <section class="demo-card native-example" aria-labelledby="native-example-title">
+        <h2 id="native-example-title">Native textarea</h2>
+        <p>Enhance this textarea in source mode. Restore it to keep the latest text.</p>
+        <form id="native-demo-form">
+          <label for="native-demo-textarea">Native form text</label>
+          <textarea id="native-demo-textarea" name="nativeBody" data-writemark-mode="source" rows="4"># Native form
+Edit this text.</textarea>
+          <div class="toolbar">
+            <button type="button" id="native-demo-toggle" aria-pressed="false">Enhance textarea</button>
+            <button type="submit" id="native-demo-submit">Read form value</button>
+            <button type="reset">Reset form</button>
+          </div>
+        </form>
+        <p>Named fields: <output id="native-demo-count">1</output>.</p>
+        <pre id="native-demo-value" class="log" aria-label="Native FormData value"></pre>
+        <p id="native-demo-status" class="activity" role="status" aria-live="polite"></p>
+      </section>
+    </div>
+
     <div class="workspace-grid">
       <section class="demo-card" aria-labelledby="tags-title">
         <div class="card-heading">
@@ -268,6 +328,8 @@
           <dt>Occurrences</dt><dd id="state-occurrences">0 total</dd>
           <dt>Active marks</dt><dd id="state-marks">none</dd>
           <dt>Last action</dt><dd id="state-action">none</dd>
+          <dt>Revision</dt><dd id="state-revision">0</dd>
+          <dt>Last origin</dt><dd id="state-origin">none</dd>
         </dl>
         <h3 style="margin-top: 18px;">Try these flows</h3>
         <ul class="help-list">
@@ -644,6 +706,94 @@ print("hello")
     };
 
     let lastAction = 'none';
+    let lastOrigin = 'none';
+    let savedEditorSelection = { start: 0, end: 0, direction: 'none' };
+    let savedExternalRequest = null;
+    const externalInsertText = document.querySelector('#external-insert-text');
+    const externalSavedButton = document.querySelector('#external-apply-saved');
+
+    function editMetadata(event) {
+      const { beforeRevision, revision, origin } = event.detail;
+      return { beforeRevision, revision, origin };
+    }
+
+    function recordOrigin(event) {
+      const origin = event.detail.origin;
+      if (origin) lastOrigin = origin.id ? `${origin.kind}: ${origin.id}` : origin.kind;
+    }
+
+    function rememberEditorSelection(event) {
+      savedEditorSelection = {
+        start: editor.selectionStart,
+        end: editor.selectionEnd,
+        direction: event?.detail?.selectionDirection || savedEditorSelection.direction
+      };
+    }
+
+    function makeExternalRequest(id) {
+      const point = savedEditorSelection.direction === 'backward' ? savedEditorSelection.start : savedEditorSelection.end;
+      return {
+        baseRevision: editor.revision,
+        changes: [{ from: point, to: point, insert: externalInsertText.value }],
+        origin: { kind: 'external', id }
+      };
+    }
+
+    function applyExternalRequest(request) {
+      const result = editor.applyTransaction(request);
+      document.querySelector('#external-edit-status').textContent = result.ok
+        ? `Applied edit. Revision ${result.revision}.`
+        : `Rejected: ${result.reason}. Revision ${result.revision}.`;
+      writeLog('external edit result', result);
+      syncDemoState();
+    }
+
+    document.querySelector('#external-apply-current').addEventListener('click', () => applyExternalRequest(makeExternalRequest('demo.external-edit')));
+    document.querySelector('#external-save-request').addEventListener('click', () => {
+      savedExternalRequest = makeExternalRequest('demo.saved-edit');
+      document.querySelector('#external-saved-request').textContent = `Saved revision ${savedExternalRequest.baseRevision} at position ${savedExternalRequest.changes[0].from}.`;
+      externalSavedButton.disabled = editor.disabled || editor.readonly;
+    });
+    externalSavedButton.addEventListener('click', () => {
+      if (savedExternalRequest) applyExternalRequest(savedExternalRequest);
+    });
+
+    const nativeDemoForm = document.querySelector('#native-demo-form');
+    const nativeDemoTextarea = document.querySelector('#native-demo-textarea');
+    const nativeDemoToggle = document.querySelector('#native-demo-toggle');
+    let nativeDemoHandle = null;
+
+    function showNativeFormData() {
+      const values = new FormData(nativeDemoForm).getAll('nativeBody');
+      document.querySelector('#native-demo-count').textContent = String(values.length);
+      document.querySelector('#native-demo-value').textContent = JSON.stringify(values, null, 2);
+    }
+
+    nativeDemoToggle.addEventListener('click', () => {
+      if (nativeDemoHandle) {
+        nativeDemoHandle.editor.removeEventListener('md-value-sync', showNativeFormData);
+        nativeDemoHandle.destroy();
+        nativeDemoHandle = null;
+        document.querySelector('#native-demo-status').textContent = 'Restored the native textarea.';
+      } else {
+        try {
+          nativeDemoHandle = WritemarkEditor.enhanceTextarea(nativeDemoTextarea);
+          nativeDemoHandle.editor.mode = 'source';
+          nativeDemoHandle.editor.addEventListener('md-value-sync', showNativeFormData);
+          document.querySelector('#native-demo-status').textContent = 'Enhanced the textarea in source mode.';
+        } catch {
+          document.querySelector('#native-demo-status').textContent = 'The native textarea remains available.';
+        }
+      }
+      nativeDemoToggle.textContent = nativeDemoHandle ? 'Restore textarea' : 'Enhance textarea';
+      nativeDemoToggle.setAttribute('aria-pressed', String(Boolean(nativeDemoHandle)));
+      showNativeFormData();
+    });
+    nativeDemoForm.addEventListener('input', showNativeFormData);
+    nativeDemoForm.addEventListener('change', showNativeFormData);
+    nativeDemoForm.addEventListener('reset', () => setTimeout(showNativeFormData, 0));
+    nativeDemoForm.addEventListener('submit', event => { event.preventDefault(); showNativeFormData(); });
+    showNativeFormData();
 
     function syncActionToolbar() {
       const activeMarks = new Set(editor.getActiveMarks());
@@ -682,6 +832,13 @@ print("hello")
       document.querySelector('#state-occurrences').textContent = `${occurrences} total`;
       document.querySelector('#state-marks').textContent = activeMarks.length ? activeMarks.join(', ') : 'none';
       document.querySelector('#state-action').textContent = lastAction;
+      document.querySelector('#state-revision').textContent = String(editor.revision);
+      document.querySelector('#external-revision').textContent = String(editor.revision);
+      document.querySelector('#state-origin').textContent = lastOrigin;
+      document.querySelector('#external-origin').textContent = lastOrigin;
+      document.querySelector('#external-apply-current').disabled = editor.disabled || editor.readonly;
+      document.querySelector('#external-save-request').disabled = editor.disabled || editor.readonly;
+      externalSavedButton.disabled = !savedExternalRequest || editor.disabled || editor.readonly;
       syncActionToolbar();
     }
 
@@ -825,20 +982,24 @@ print("hello")
       debugCopyStatus.textContent = 'Debug log cleared.';
     });
 
-    editor.addEventListener('md-before-change', event => writeLog('md-before-change', { actionId: event.detail.transaction?.actionId, nextLength: event.detail.nextValue.length }));
+    editor.addEventListener('md-before-change', event => writeLog('md-before-change', { actionId: event.detail.transaction?.actionId, nextLength: event.detail.nextValue.length, ...editMetadata(event) }));
     editor.addEventListener('md-copy', event => writeLog('md-copy', { length: event.detail.markdown.length }));
-    editor.addEventListener('md-cut', event => writeLog('md-cut', { length: event.detail.markdown.length }));
-    editor.addEventListener('md-paste', event => writeLog('md-paste', { kind: event.detail.kind, length: event.detail.markdown.length }));
+    editor.addEventListener('md-cut', event => writeLog('md-cut', { length: event.detail.markdown.length, ...editMetadata(event) }));
+    editor.addEventListener('md-paste', event => writeLog('md-paste', { kind: event.detail.kind, length: event.detail.markdown.length, ...editMetadata(event) }));
     editor.addEventListener('md-input', event => {
-      writeLog('md-input', { length: event.detail.value.length, source: event.detail.source });
+      recordOrigin(event);
+      rememberEditorSelection();
+      writeLog('md-input', { length: event.detail.value.length, source: event.detail.source, ...editMetadata(event) });
       syncDemoState();
     });
-    editor.addEventListener('md-selection-change', syncDemoState);
+    editor.addEventListener('md-selection-change', event => { rememberEditorSelection(event); syncDemoState(); });
+    editor.addEventListener('md-value-sync', () => queueMicrotask(() => { rememberEditorSelection(); syncDemoState(); }));
     editor.addEventListener('md-dirty-change', syncDemoState);
-    editor.addEventListener('md-change', syncDemoState);
+    editor.addEventListener('md-change', event => { recordOrigin(event); writeLog('md-change', editMetadata(event)); syncDemoState(); });
     editor.addEventListener('md-action', event => {
       lastAction = event.detail.actionId;
-      writeLog('md-action', { actionId: event.detail.actionId, source: event.detail.source });
+      recordOrigin(event);
+      writeLog('md-action', { actionId: event.detail.actionId, source: event.detail.source, ...editMetadata(event) });
       syncDemoState();
     });
     editor.addEventListener('md-completion-accept', event => {
@@ -846,7 +1007,7 @@ print("hello")
         const tag = addCatalogTag(event.detail.item.value);
         if (tag) tagActivity.textContent = `Added #${tag.value} to the autocomplete catalog.`;
       }
-      writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label });
+      writeLog('md-completion-accept', { providerId: event.detail.providerId, label: event.detail.item.label, ...editMetadata(event) });
     });
     editor.addEventListener('md-tags-change', event => {
       renderDocumentTags(event.detail.current);

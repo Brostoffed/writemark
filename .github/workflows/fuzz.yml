@@ -42,10 +42,32 @@ jobs:
         run: |
           seed=$(( (GITHUB_RUN_ID % 2147483646) + 1 ))
           echo "WRITEMARK_FUZZ_SEED=${seed}" >> "${GITHUB_ENV}"
+          echo "WRITEMARK_PRESENCE_SEED=${seed}" >> "${GITHUB_ENV}"
+          echo "WRITEMARK_INVERSE_SEED=${seed}" >> "${GITHUB_ENV}"
+          echo "SHIFT_ENTER_FUZZ_SEED=${seed}" >> "${GITHUB_ENV}"
           echo "Running ${WRITEMARK_FUZZ_RUNS} cases per property with seed ${seed}"
 
       - name: Run deep Markdown fuzzing
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: output/playwright/report/markdown
         run: npm run test:fuzz
+
+      - name: Run clipboard, cursor, and keyboard checks
+        env:
+          WRITEMARK_PRESENCE_STEPS: "5000"
+          WRITEMARK_INVERSE_RUNS: "500"
+          SHIFT_ENTER_FUZZ_RUNS: "200"
+          PLAYWRIGHT_HTML_OUTPUT_DIR: output/playwright/report/clipboard-cursor-keyboard
+        run: >-
+          npx playwright test
+          tests/clipboard-corpus.spec.js
+          tests/presence-chaos.spec.js
+          tests/presence-history.spec.js
+          tests/input-native-mapping.spec.js
+          tests/input-contract.spec.js
+          tests/navigation.spec.js
+          tests/shift-enter.spec.js
+          --project=chromium --workers=2 --timeout=300000 --grep-invert @cursor-timing
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}

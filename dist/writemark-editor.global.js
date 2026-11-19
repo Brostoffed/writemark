@@ -1,4 +1,4 @@
-/*! Writemark v1.8.1
+/*! Writemark v1.9.0
 MIT License
 
 Copyright (c) 2026
@@ -48,6 +48,8 @@ var __writemark = (() => {
   __export(writemark_editor_exports, {
     MdLiveEditorElement: () => MdLiveEditorElement3,
     WritemarkEditorElement: () => WritemarkEditorElement3,
+    enhanceTextarea: () => enhanceTextarea2,
+    enhanceTextareas: () => enhanceTextareas2,
     htmlToMarkdown: () => htmlToMarkdown2,
     parseBlockquote: () => parseBlockquote3,
     parseBlocks: () => parseBlocks3,
@@ -314,6 +316,818 @@ var __writemark = (() => {
     return { start, end, text: source.slice(start, end) };
   }
   __name(getLineRange, "getLineRange");
+
+  // src/markdown/inline.ts
+  var ESCAPABLE_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+  function isEscapablePunctuation(char) {
+    return char != null && ESCAPABLE_PUNCTUATION.includes(char);
+  }
+  __name(isEscapablePunctuation, "isEscapablePunctuation");
+  function placeholderPrefix(source) {
+    let longestRun = 0;
+    for (const match of String(source ?? "").matchAll(/\uE000+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
+    return "\uE000".repeat(longestRun + 1);
+  }
+  __name(placeholderPrefix, "placeholderPrefix");
+  function isBackslashEscaped(source, index) {
+    let slashes = 0;
+    for (let i = index - 1; i >= 0 && source[i] === "\\"; i -= 1) slashes += 1;
+    return slashes % 2 === 1;
+  }
+  __name(isBackslashEscaped, "isBackslashEscaped");
+  function matchingBrackets(source) {
+    const matches = new Int32Array(source.length).fill(-1);
+    const openers = [];
+    let escaped = false;
+    for (let i = 0; i < source.length; i += 1) {
+      const char = source[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === "[") openers.push(i);
+      else if (char === "]" && openers.length) {
+        const opener = openers.pop();
+        if (opener != null) matches[opener] = i;
+      }
+    }
+    return matches;
+  }
+  __name(matchingBrackets, "matchingBrackets");
+  function parseCodeSpanAt(source, index) {
+    if (source[index] !== "`" || source[index - 1] === "`" || isBackslashEscaped(source, index)) return null;
+    let markerLength = 1;
+    while (source[index + markerLength] === "`") markerLength += 1;
+    let cursor = index + markerLength;
+    while (cursor < source.length) {
+      if (source[cursor] !== "`") {
+        cursor += 1;
+        continue;
+      }
+      let closingLength = 1;
+      while (source[cursor + closingLength] === "`") closingLength += 1;
+      if (closingLength === markerLength) {
+        return {
+          from: index,
+          to: cursor + closingLength,
+          marker: source.slice(index, index + markerLength),
+          content: source.slice(index + markerLength, cursor),
+          contentStart: index + markerLength,
+          contentEnd: cursor
+        };
+      }
+      cursor += closingLength;
+    }
+    return null;
+  }
+  __name(parseCodeSpanAt, "parseCodeSpanAt");
+  function normalizeCodeSpanContent(content) {
+    let value = String(content ?? "").replace(/\n/g, " ");
+    if (/^\s[\s\S]*\s$/.test(value) && /\S/.test(value)) value = value.slice(1, -1);
+    return value;
+  }
+  __name(normalizeCodeSpanContent, "normalizeCodeSpanContent");
+  function codeSpanMarkdown(content) {
+    const value = String(content ?? "");
+    let longestRun = 0;
+    for (const match of value.matchAll(/`+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
+    const marker = "`".repeat(longestRun + 1);
+    const padded = value && (value.startsWith("`") || value.endsWith("`") || value.startsWith(" ") && value.endsWith(" ")) ? ` ${value} ` : value;
+    return `${marker}${padded}${marker}`;
+  }
+  __name(codeSpanMarkdown, "codeSpanMarkdown");
+  function splitLinkDestinationAndTitle(raw) {
+    const value = String(raw ?? "").trim();
+    if (!value) return { url: "", title: "" };
+    const angle = /^<([^<>\n]*)>(?:\s+(["'])(.*?)\2)?\s*$/.exec(value);
+    if (angle) return { url: angle[1] ?? "", title: angle[3] || "" };
+    const quoted = /^(.*?)\s+(["'])(.*?)\2\s*$/.exec(value);
+    if (quoted && (quoted[1] ?? "").trim()) return { url: (quoted[1] ?? "").trim(), title: quoted[3] ?? "" };
+    return { url: value, title: "" };
+  }
+  __name(splitLinkDestinationAndTitle, "splitLinkDestinationAndTitle");
+  function parseInlineLinkAt(text, start = 0, brackets = null) {
+    const source = String(text ?? "");
+    if (isBackslashEscaped(source, start)) return null;
+    const bang = source[start] === "!" ? "!" : "";
+    let i = start + bang.length;
+    if (source[i] !== "[" || isBackslashEscaped(source, i)) return null;
+    let escaped = false;
+    let labelEnd = brackets ? brackets[i] ?? -1 : -1;
+    if (!brackets) {
+      let labelDepth = 1;
+      for (let j = i + 1; j < source.length; j += 1) {
+        const ch = source[j];
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === "[") {
+          labelDepth += 1;
+          continue;
+        }
+        if (ch === "]") {
+          labelDepth -= 1;
+          if (labelDepth === 0) {
+            labelEnd = j;
+            break;
+          }
+        }
+      }
+    }
+    if (labelEnd === -1 || source[labelEnd + 1] !== "(") return null;
+    const label = source.slice(i + 1, labelEnd);
+    const destStart = labelEnd + 2;
+    let depth = 0;
+    let quote = "";
+    let angle = false;
+    escaped = false;
+    for (let j = destStart; j < source.length; j += 1) {
+      const ch = source[j];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "<" && j === destStart) {
+        angle = true;
+        continue;
+      }
+      if (angle) {
+        if (ch === ">") angle = false;
+        continue;
+      }
+      if (quote) {
+        if (ch === quote) quote = "";
+        continue;
+      }
+      if ((ch === '"' || ch === "'") && depth === 0 && /\s/.test(source[j - 1] || "")) {
+        quote = ch;
+        continue;
+      }
+      if (ch === "(") {
+        depth += 1;
+        continue;
+      }
+      if (ch === ")") {
+        if (depth > 0) {
+          depth -= 1;
+          continue;
+        }
+        const destination = splitLinkDestinationAndTitle(source.slice(destStart, j));
+        return {
+          bang,
+          label,
+          url: destination.url,
+          title: destination.title,
+          from: start,
+          to: j + 1,
+          labelStart: i + 1,
+          labelEnd,
+          full: source.slice(start, j + 1)
+        };
+      }
+    }
+    return null;
+  }
+  __name(parseInlineLinkAt, "parseInlineLinkAt");
+  function normalizeReferenceLabel(label) {
+    return String(label ?? "").replace(/\\([!-/:-@[-`{-~])/g, "$1").trim().replace(/\s+/g, " ").toLowerCase();
+  }
+  __name(normalizeReferenceLabel, "normalizeReferenceLabel");
+  function parseReferenceLinkAt(text, references, start = 0, brackets = null) {
+    if (!(references instanceof Map) || references.size === 0) return null;
+    const source = String(text ?? "");
+    if (isBackslashEscaped(source, start)) return null;
+    const bang = source[start] === "!" ? "!" : "";
+    const labelStartMarker = start + bang.length;
+    if (source[labelStartMarker] !== "[" || isBackslashEscaped(source, labelStartMarker)) return null;
+    let labelEnd = brackets ? brackets[labelStartMarker] ?? -1 : -1;
+    if (!brackets) {
+      let escaped = false;
+      let depth = 1;
+      for (let i = labelStartMarker + 1; i < source.length; i += 1) {
+        const char = source[i];
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (char === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (char === "[") {
+          depth += 1;
+          continue;
+        }
+        if (char !== "]") continue;
+        depth -= 1;
+        if (depth === 0) {
+          labelEnd = i;
+          break;
+        }
+      }
+    }
+    if (labelEnd === -1 || source[labelEnd + 1] === "(") return null;
+    const label = source.slice(labelStartMarker + 1, labelEnd);
+    let referenceLabel = label;
+    let to = labelEnd + 1;
+    if (source[to] === "[") {
+      const referenceEnd = source.indexOf("]", to + 1);
+      if (referenceEnd === -1 || isBackslashEscaped(source, referenceEnd)) return null;
+      referenceLabel = source.slice(to + 1, referenceEnd) || label;
+      to = referenceEnd + 1;
+    }
+    const reference = references.get(normalizeReferenceLabel(referenceLabel));
+    if (!reference) return null;
+    return {
+      bang,
+      label,
+      url: reference.url,
+      title: reference.title,
+      from: start,
+      to,
+      labelStart: labelStartMarker + 1,
+      labelEnd,
+      full: source.slice(start, to)
+    };
+  }
+  __name(parseReferenceLinkAt, "parseReferenceLinkAt");
+  function isInlineWhitespace(char) {
+    return !char || /\s/u.test(char);
+  }
+  __name(isInlineWhitespace, "isInlineWhitespace");
+  function isInlinePunctuation(char) {
+    return char != null && /[\p{P}\p{S}]/u.test(char);
+  }
+  __name(isInlinePunctuation, "isInlinePunctuation");
+  function emphasisDelimiterRuns(source) {
+    const runs = [];
+    for (let i = 0; i < source.length; i += 1) {
+      const marker = source[i];
+      if (marker !== "*" && marker !== "_" || isBackslashEscaped(source, i)) continue;
+      let length = 1;
+      while (source[i + length] === marker) length += 1;
+      const before = source[i - 1] || "";
+      const after = source[i + length] || "";
+      const beforeWhitespace = isInlineWhitespace(before);
+      const afterWhitespace = isInlineWhitespace(after);
+      const beforePunctuation = isInlinePunctuation(before);
+      const afterPunctuation = isInlinePunctuation(after);
+      const leftFlanking = !afterWhitespace && (!afterPunctuation || beforeWhitespace || beforePunctuation);
+      const rightFlanking = !beforeWhitespace && (!beforePunctuation || afterWhitespace || afterPunctuation);
+      const canOpen = marker === "*" ? leftFlanking : leftFlanking && (!rightFlanking || beforePunctuation);
+      const canClose = marker === "*" ? rightFlanking : rightFlanking && (!leftFlanking || afterPunctuation);
+      runs.push({
+        start: i,
+        length,
+        marker,
+        canOpen,
+        canClose,
+        leftUsed: 0,
+        rightUsed: 0,
+        get remaining() {
+          return this.length - this.leftUsed - this.rightUsed;
+        }
+      });
+      i += length - 1;
+    }
+    return runs;
+  }
+  __name(emphasisDelimiterRuns, "emphasisDelimiterRuns");
+  function emphasisPairs(source) {
+    const runs = emphasisDelimiterRuns(source);
+    const pairs = [];
+    const openers = { "*": [], "_": [] };
+    for (const closer of runs) {
+      if (closer.canClose) {
+        while (closer.remaining > 0) {
+          const candidates = openers[closer.marker];
+          while (candidates.length && (candidates.at(-1)?.remaining ?? 0) <= 0) candidates.pop();
+          let opener = null;
+          for (let openerIndex = candidates.length - 1; openerIndex >= 0; openerIndex -= 1) {
+            const candidate = candidates[openerIndex];
+            if (!candidate) continue;
+            ;
+            if (candidate.remaining <= 0) continue;
+            const blockedByRuleOfThree = (candidate.canClose || closer.canOpen) && (candidate.remaining + closer.remaining) % 3 === 0 && (candidate.remaining % 3 !== 0 || closer.remaining % 3 !== 0);
+            if (blockedByRuleOfThree) continue;
+            opener = candidate;
+            break;
+          }
+          if (!opener) break;
+          const use = opener.remaining >= 2 && closer.remaining >= 2 ? 2 : 1;
+          const openEnd = opener.start + opener.length - opener.rightUsed;
+          const openStart = openEnd - use;
+          const closeStart = closer.start + closer.leftUsed;
+          const closeEnd = closeStart + use;
+          opener.rightUsed += use;
+          closer.leftUsed += use;
+          pairs.push({
+            openStart,
+            openEnd,
+            closeStart,
+            closeEnd,
+            marker: source.slice(openStart, openEnd),
+            tag: use === 2 ? "strong" : "em"
+          });
+        }
+      }
+      if (closer.canOpen && closer.remaining > 0) openers[closer.marker].push(closer);
+    }
+    return pairs;
+  }
+  __name(emphasisPairs, "emphasisPairs");
+  function collectInlineMarkdownRanges(source) {
+    const ranges = [];
+    const addMatches = /* @__PURE__ */ __name((regex, openLength, closeLength, labelGroup = 1, markerOffsetGroup = null) => {
+      regex.lastIndex = 0;
+      let match;
+      while (match = regex.exec(source)) {
+        const label = match[labelGroup] ?? "";
+        const markerOffset = markerOffsetGroup == null ? 0 : (match[markerOffsetGroup] ?? "")?.length ?? 0;
+        const from = match.index + markerOffset;
+        const to = match.index + (match[0] ?? "").length;
+        const innerFrom = from + openLength;
+        const innerTo = to - closeLength;
+        if (isBackslashEscaped(source, from) || isBackslashEscaped(source, to - closeLength)) continue;
+        if (innerTo >= innerFrom && label.length >= 0) ranges.push({ from, to, innerFrom, innerTo });
+        if (match.index === regex.lastIndex) regex.lastIndex += 1;
+      }
+    }, "addMatches");
+    addMatches(/\*\*([^*]+)\*\*/g, 2, 2);
+    addMatches(/__([^_]+)__/g, 2, 2);
+    addMatches(/~~([^~]+)~~/g, 2, 2);
+    addMatches(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, 1, 1, 2, 1);
+    addMatches(/(^|[^_])_([^_\n]+)_(?!_)/g, 1, 1, 2, 1);
+    for (let i = 0; i < source.length; i += 1) {
+      const code = parseCodeSpanAt(source, i);
+      if (!code) continue;
+      ranges.push({ from: code.from, to: code.to, innerFrom: code.contentStart, innerTo: code.contentEnd });
+      i = code.to - 1;
+    }
+    const brackets = matchingBrackets(source);
+    for (let i = 0; i < source.length; i += 1) {
+      const link = parseInlineLinkAt(source, i, brackets);
+      if (!link) continue;
+      ranges.push({ from: link.from, to: link.to, innerFrom: link.labelStart, innerTo: link.labelEnd });
+      i = link.to - 1;
+    }
+    return ranges.sort((a, b) => a.to - a.from - (b.to - b.from));
+  }
+  __name(collectInlineMarkdownRanges, "collectInlineMarkdownRanges");
+
+  // src/core/transactions.ts
+  function applyTextChanges(value, changes) {
+    const sorted = [...changes].sort((a, b) => b.from - a.from);
+    let out = value;
+    for (const c of sorted) {
+      const from = clamp(c.from, 0, out.length);
+      const to = clamp(c.to, from, out.length);
+      out = out.slice(0, from) + normalizeLineEndings(c.insert ?? "") + out.slice(to);
+    }
+    return out;
+  }
+  __name(applyTextChanges, "applyTextChanges");
+  function diffTextChange(before, after) {
+    const oldValue = normalizeLineEndings(before ?? "");
+    const newValue = normalizeLineEndings(after ?? "");
+    if (oldValue === newValue) return [];
+    let start = 0;
+    const maxStart = Math.min(oldValue.length, newValue.length);
+    while (start < maxStart && oldValue[start] === newValue[start]) start += 1;
+    let oldEnd = oldValue.length;
+    let newEnd = newValue.length;
+    while (oldEnd > start && newEnd > start && oldValue[oldEnd - 1] === newValue[newEnd - 1]) {
+      oldEnd -= 1;
+      newEnd -= 1;
+    }
+    return [{ from: start, to: oldEnd, insert: newValue.slice(start, newEnd) }];
+  }
+  __name(diffTextChange, "diffTextChange");
+  function diffTextChanges(before, after) {
+    const fallback = diffTextChange(before, after);
+    const span = fallback[0];
+    if (!span || span.from === span.to || !span.insert.length) return fallback;
+    const oldText = normalizeLineEndings(before).slice(span.from, span.to);
+    const newText = span.insert;
+    const frontier = /* @__PURE__ */ new Map([[1, 0]]);
+    const trace = [];
+    let work = 0;
+    const limit = Math.min(128, oldText.length + newText.length);
+    for (let distance = 0; distance <= limit; distance += 1) {
+      trace.push(new Map(frontier));
+      for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
+        if (++work > 2e5) return fallback;
+        const left = frontier.get(diagonal - 1) ?? -Infinity;
+        const right = frontier.get(diagonal + 1) ?? -Infinity;
+        let x = diagonal === -distance || diagonal !== distance && left < right ? right : left + 1;
+        if (!Number.isFinite(x)) x = 0;
+        let y = x - diagonal;
+        while (x < oldText.length && y < newText.length && oldText[x] === newText[y]) {
+          x += 1;
+          y += 1;
+          if (++work > 2e5) return fallback;
+        }
+        frontier.set(diagonal, x);
+        if (x < oldText.length || y < newText.length) continue;
+        const operations = [];
+        for (let level = distance; level >= 0; level -= 1) {
+          const previous = trace[level];
+          if (!previous) return fallback;
+          const currentDiagonal = x - y;
+          const previousLeft = previous.get(currentDiagonal - 1) ?? -Infinity;
+          const previousRight = previous.get(currentDiagonal + 1) ?? -Infinity;
+          const previousDiagonal = currentDiagonal === -level || currentDiagonal !== level && previousLeft < previousRight ? currentDiagonal + 1 : currentDiagonal - 1;
+          const previousX = previous.get(previousDiagonal) ?? 0;
+          const previousY = previousX - previousDiagonal;
+          while (x > previousX && y > previousY) {
+            operations.push({ kind: "equal", text: oldText[x - 1] ?? "" });
+            x -= 1;
+            y -= 1;
+          }
+          if (!level) break;
+          if (x === previousX) {
+            operations.push({ kind: "insert", text: newText[y - 1] ?? "" });
+            y -= 1;
+          } else {
+            operations.push({ kind: "delete", text: oldText[x - 1] ?? "" });
+            x -= 1;
+          }
+        }
+        const changes = [];
+        let offset = span.from;
+        let pending = null;
+        for (const operation of operations.reverse()) {
+          if (operation.kind === "equal") {
+            if (pending) {
+              changes.push(pending);
+              pending = null;
+            }
+            offset += 1;
+          } else {
+            pending ??= { from: offset, to: offset, insert: "" };
+            if (operation.kind === "delete") {
+              offset += 1;
+              pending.to = offset;
+            } else pending.insert += operation.text;
+          }
+        }
+        if (pending) changes.push(pending);
+        return changes;
+      }
+    }
+    return fallback;
+  }
+  __name(diffTextChanges, "diffTextChanges");
+  function normalizeChanges(changes = []) {
+    return [...changes].map((change) => ({
+      from: Number(change.from) || 0,
+      to: Number(change.to) || Number(change.from) || 0,
+      insert: normalizeLineEndings(change.insert ?? "")
+    })).sort((a, b) => a.from - b.from || a.to - b.to);
+  }
+  __name(normalizeChanges, "normalizeChanges");
+  function changedSpans(changes = []) {
+    const sorted = normalizeChanges(changes);
+    if (!sorted.length) return null;
+    let oldStart = Infinity;
+    let oldEnd = -Infinity;
+    let newStart = Infinity;
+    let newEnd = -Infinity;
+    let shift = 0;
+    for (const change of sorted) {
+      oldStart = Math.min(oldStart, change.from);
+      oldEnd = Math.max(oldEnd, change.to);
+      const newFrom = change.from + shift;
+      const newTo = newFrom + change.insert.length;
+      newStart = Math.min(newStart, newFrom);
+      newEnd = Math.max(newEnd, newTo);
+      shift += change.insert.length - (change.to - change.from);
+    }
+    return { oldStart, oldEnd, newStart, newEnd, delta: shift };
+  }
+  __name(changedSpans, "changedSpans");
+  function sameSelection(a, b) {
+    return Boolean(a && b && a.start === b.start && a.end === b.end && (a.direction || "none") === (b.direction || "none"));
+  }
+  __name(sameSelection, "sameSelection");
+  function makeSnapshot(value, selectionStart, selectionEnd, direction = "none") {
+    return { value, selection: { start: selectionStart, end: selectionEnd, direction } };
+  }
+  __name(makeSnapshot, "makeSnapshot");
+  function tx(ctx, actionId, changes, selectionAfter, undoGroup = actionId) {
+    return { changes, selectionBefore: { start: ctx.selectionStart, end: ctx.selectionEnd, direction: ctx.selectionDirection ?? "none" }, selectionAfter, source: "api", actionId, undoGroup, timestamp: now() };
+  }
+  __name(tx, "tx");
+  function ok(transaction, announcement) {
+    return { ok: true, transaction, announcement };
+  }
+  __name(ok, "ok");
+  function okNoop(announcement, preventDefault = false) {
+    return { ok: true, announcement, preventDefault };
+  }
+  __name(okNoop, "okNoop");
+  function fail(reason, message) {
+    return { ok: false, reason, message };
+  }
+  __name(fail, "fail");
+  function insertionTransaction(ctx, actionId, insert, selectionOffset = insert.length, undoGroup = actionId) {
+    const from = ctx.selectionStart;
+    const to = ctx.selectionEnd;
+    const cursor = from + selectionOffset;
+    return ok(tx(ctx, actionId, [{ from, to, insert }], { start: cursor, end: cursor, direction: "none" }, undoGroup));
+  }
+  __name(insertionTransaction, "insertionTransaction");
+  function removePrefixFromLine(ctx, actionId, prefixEndOffset, announcement) {
+    const from = ctx.currentLine.start;
+    const to = ctx.currentLine.start + prefixEndOffset;
+    return ok(tx(ctx, actionId, [{ from, to, insert: "" }], { start: from, end: from, direction: "none" }, actionId), announcement);
+  }
+  __name(removePrefixFromLine, "removePrefixFromLine");
+  function validateTransactionRequest(value, request, currentRevision) {
+    try {
+      if (!request || typeof request !== "object" || Array.isArray(request)) return { ok: false, reason: "invalid-request" };
+      const input = request;
+      const baseRevision = input.baseRevision;
+      if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) return { ok: false, reason: "invalid-request" };
+      if (currentRevision !== void 0 && baseRevision !== currentRevision) return { ok: false, reason: "stale-revision" };
+      const inputChanges = input.changes;
+      if (!Array.isArray(inputChanges)) return { ok: false, reason: "invalid-request" };
+      const inputCount = inputChanges.length;
+      if (!Number.isSafeInteger(inputCount) || inputCount < 0) return { ok: false, reason: "invalid-request" };
+      const origin = input.origin;
+      let copiedOrigin;
+      if (origin !== void 0) {
+        if (!origin || typeof origin !== "object") return { ok: false, reason: "invalid-request" };
+        const o = origin;
+        const kind = o.kind;
+        const id = o.id;
+        if (typeof kind !== "string" || !["user", "paste", "action", "completion", "external", "api"].includes(kind) || id !== void 0 && typeof id !== "string") return { ok: false, reason: "invalid-request" };
+        copiedOrigin = { kind, ...id === void 0 ? {} : { id } };
+      }
+      const changes = [];
+      const items = inputChanges;
+      for (let index = 0; index < inputCount; index += 1) {
+        const item = items[index];
+        if (!item || typeof item !== "object") return { ok: false, reason: "invalid-change" };
+        const c = item;
+        const from = c.from;
+        const to = c.to;
+        const insert = c.insert;
+        const expected = c.expected;
+        if (typeof from !== "number" || typeof to !== "number" || !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to > value.length || typeof insert !== "string" || expected !== void 0 && typeof expected !== "string") return { ok: false, reason: "invalid-change" };
+        if (expected !== void 0 && expected !== value.slice(from, to)) return { ok: false, reason: "expected-mismatch" };
+        changes.push({ from, to, insert: normalizeLineEndings(insert) });
+      }
+      changes.sort((a, b) => a.from - b.from || a.to - b.to);
+      for (let i = 1; i < changes.length; i += 1) {
+        const previous = changes[i - 1];
+        const current = changes[i];
+        if (current.from < previous.to || current.from === previous.to && (current.from === current.to || previous.from === previous.to)) return { ok: false, reason: "overlapping-changes" };
+      }
+      const nextValue = applyTextChanges(value, changes);
+      const selection = input.selectionAfter;
+      let copiedSelection;
+      if (selection !== void 0) {
+        if (!selection || typeof selection !== "object") return { ok: false, reason: "invalid-selection" };
+        const sel = selection;
+        const start = sel.start;
+        const end = sel.end;
+        const direction = sel.direction;
+        if (typeof start !== "number" || typeof end !== "number" || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > nextValue.length || direction !== void 0 && (typeof direction !== "string" || !["none", "forward", "backward"].includes(direction))) return { ok: false, reason: "invalid-selection" };
+        copiedSelection = { start, end, direction: direction ?? "none" };
+      }
+      const copy = {
+        baseRevision,
+        changes,
+        ...copiedOrigin ? { origin: { kind: copiedOrigin.kind, ...copiedOrigin.id === void 0 ? {} : { id: copiedOrigin.id } } } : {},
+        ...copiedSelection ? { selectionAfter: { start: copiedSelection.start, end: copiedSelection.end, direction: copiedSelection.direction ?? "none" } } : {}
+      };
+      return { ok: true, request: copy, value: nextValue, changes };
+    } catch {
+      return { ok: false, reason: "invalid-request" };
+    }
+  }
+  __name(validateTransactionRequest, "validateTransactionRequest");
+  function mapTransactionSelection(selection, changes) {
+    const collapsed = selection.start === selection.end;
+    const map = /* @__PURE__ */ __name((offset, affinity) => {
+      let shift = 0;
+      for (const c of changes) {
+        if (offset < c.from) break;
+        if (offset <= c.to) return c.from + shift + (affinity === "right" || offset === c.to && c.from !== c.to ? c.insert.length : 0);
+        shift += c.insert.length - (c.to - c.from);
+      }
+      return offset + shift;
+    }, "map");
+    return { start: map(selection.start, collapsed ? "right" : "left"), end: map(selection.end, "right"), direction: selection.direction ?? "none" };
+  }
+  __name(mapTransactionSelection, "mapTransactionSelection");
+  function invertTextChanges(before, changes) {
+    const inverse = [];
+    let shift = 0;
+    for (const change of [...changes].sort((a, b) => a.from - b.from || a.to - b.to)) {
+      const inserted = normalizeLineEndings(change.insert);
+      const from = change.from + shift;
+      const next = { from, to: from + inserted.length, insert: before.slice(change.from, change.to) };
+      shift += inserted.length - (change.to - change.from);
+      if (next.from === next.to && !next.insert.length) continue;
+      const previous = inverse.at(-1);
+      if (previous && previous.to === next.from && (previous.from === previous.to || next.from === next.to)) {
+        previous.to = next.to;
+        previous.insert += next.insert;
+      } else inverse.push(next);
+    }
+    return inverse;
+  }
+  __name(invertTextChanges, "invertTextChanges");
+
+  // src/markdown/tables.ts
+  function splitTableRow(line) {
+    let row = String(line ?? "").trim();
+    if (row.startsWith("|")) row = row.slice(1);
+    if (row.endsWith("|")) row = row.slice(0, -1);
+    const cells = [];
+    let current = "";
+    let escaped = false;
+    for (const char of row) {
+      if (escaped) {
+        current += char;
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        current += char;
+        escaped = true;
+        continue;
+      }
+      if (char === "|") {
+        cells.push(current.trim());
+        current = "";
+        continue;
+      }
+      current += char;
+    }
+    cells.push(current.trim());
+    return cells;
+  }
+  __name(splitTableRow, "splitTableRow");
+  function hasTablePipe(text) {
+    let escaped = false;
+    for (const character of text) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (character === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (character === "|") return true;
+    }
+    return false;
+  }
+  __name(hasTablePipe, "hasTablePipe");
+  function isTableDelimiter(line) {
+    const t = String(line ?? "").trim();
+    if (!hasTablePipe(t)) return false;
+    const cells = splitTableRow(t);
+    return cells.length >= 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  }
+  __name(isTableDelimiter, "isTableDelimiter");
+  function isLikelyTableRow(line) {
+    const t = String(line ?? "").trim();
+    return hasTablePipe(t) && splitTableRow(t).length >= 1;
+  }
+  __name(isLikelyTableRow, "isLikelyTableRow");
+  function parseTableLineRanges(line, absoluteStart, preserveWhitespace = false) {
+    const raw = String(line ?? "");
+    const cells = [];
+    let start = 0;
+    let end = raw.length;
+    if (raw[start] === "|") start += 1;
+    if (raw[end - 1] === "|") end -= 1;
+    let cellStart = start;
+    let escaped = false;
+    for (let i = start; i <= end; i += 1) {
+      const atEnd = i === end;
+      const ch = raw[i];
+      if (!atEnd && escaped) {
+        escaped = false;
+        continue;
+      }
+      if (!atEnd && ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (atEnd || ch === "|") {
+        const rawCellStart = cellStart;
+        const rawCellEnd = i;
+        let from = cellStart;
+        let to = i;
+        while (from < to && raw[from] === " ") {
+          from += 1;
+          if (preserveWhitespace) break;
+        }
+        while (to > from && raw[to - 1] === " ") {
+          to -= 1;
+          if (preserveWhitespace) break;
+        }
+        if (from === to && rawCellEnd > rawCellStart && raw[rawCellStart] === " ") {
+          from = Math.min(rawCellStart + 1, rawCellEnd);
+          to = from;
+        }
+        cells.push({ text: raw.slice(from, to), from: absoluteStart + from, to: absoluteStart + to });
+        cellStart = i + 1;
+      }
+    }
+    return cells;
+  }
+  __name(parseTableLineRanges, "parseTableLineRanges");
+  function tableAlignmentFromDelimiter(cellText) {
+    const value = String(cellText ?? "").trim();
+    const left = value.startsWith(":");
+    const right = value.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    if (left) return "left";
+    return "";
+  }
+  __name(tableAlignmentFromDelimiter, "tableAlignmentFromDelimiter");
+  function tableAlignmentStyle(alignment) {
+    return alignment ? ` style="text-align:${alignment}"` : "";
+  }
+  __name(tableAlignmentStyle, "tableAlignmentStyle");
+  function unescapeTableCellText(cellText) {
+    return String(cellText ?? "").replace(/\\([\\|])/g, "$1");
+  }
+  __name(unescapeTableCellText, "unescapeTableCellText");
+  function escapeTableCellText(cellText) {
+    return String(cellText ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+  }
+  __name(escapeTableCellText, "escapeTableCellText");
+  function tableCellDisplayMap(raw) {
+    let inline = "";
+    const tableOffsets = [0];
+    for (let index = 0; index < raw.length; ) {
+      if (raw[index] === "\\" && (raw[index + 1] === "\\" || raw[index + 1] === "|")) {
+        inline += raw[index + 1];
+        index += 2;
+      } else {
+        inline += raw[index];
+        index += 1;
+      }
+      tableOffsets.push(index);
+    }
+    let text = "";
+    const sourceOffsets = [0];
+    for (let index = 0; index < inline.length; ) {
+      const code = inline[index] === "`" ? parseCodeSpanAt(inline, index) : null;
+      if (code) {
+        while (index < code.to) {
+          text += inline[index];
+          index += 1;
+          sourceOffsets.push(tableOffsets[index] ?? raw.length);
+        }
+      } else if (inline[index] === "\\" && isEscapablePunctuation(inline[index + 1])) {
+        text += inline[index + 1];
+        index += 2;
+        sourceOffsets.push(tableOffsets[index] ?? raw.length);
+      } else {
+        text += inline[index];
+        index += 1;
+        sourceOffsets.push(tableOffsets[index] ?? raw.length);
+      }
+    }
+    return { text, sourceOffsets };
+  }
+  __name(tableCellDisplayMap, "tableCellDisplayMap");
+  function editTableCellDisplay(raw, nextText, displayCursor) {
+    const before = tableCellDisplayMap(raw);
+    const change = diffTextChange(before.text, nextText)[0];
+    let text = raw;
+    if (change) {
+      const from = before.sourceOffsets[change.from] ?? raw.length;
+      const to = before.sourceOffsets[change.to] ?? raw.length;
+      text = raw.slice(0, from) + escapeTableCellText(change.insert) + raw.slice(to);
+    }
+    const after = tableCellDisplayMap(text);
+    const cursor = after.sourceOffsets[Math.max(0, Math.min(after.text.length, displayCursor))] ?? text.length;
+    return { text, cursor };
+  }
+  __name(editTableCellDisplay, "editTableCellDisplay");
 
   // src/browser/selection.ts
   var SelectionController = class {
@@ -784,17 +1598,9 @@ var __writemark = (() => {
       const raw = this._cellRawSource(editable);
       const rel = clamp(Number(sourceOffset) - range.from, 0, range.to - range.from);
       if (raw == null) return clamp(rel, 0, this._plainText(editable).length);
+      const map = tableCellDisplayMap(raw);
       let display = 0;
-      for (let i = 0; i < raw.length && i < rel; ) {
-        if (raw[i] === "\\" && (raw[i + 1] === "|" || raw[i + 1] === "\\")) {
-          if (rel <= i + 1) return display;
-          display += 1;
-          i += 2;
-        } else {
-          display += 1;
-          i += 1;
-        }
-      }
+      while (display < map.text.length && (map.sourceOffsets[display + 1] ?? raw.length) <= rel) display += 1;
       return clamp(display, 0, this._plainText(editable).length);
     }
     _sourceOffsetFromDisplayOffset(editable, displayOffset) {
@@ -803,20 +1609,7 @@ var __writemark = (() => {
       const raw = this._cellRawSource(editable);
       const target = clamp(Number(displayOffset) || 0, 0, this._plainText(editable).length);
       if (raw == null) return clamp(range.from + target, range.from, Math.max(range.to, range.from + this._plainText(editable).length));
-      let display = 0;
-      for (let i = 0; i < raw.length; ) {
-        if (display >= target) return range.from + i;
-        if (raw[i] === "\\" && (raw[i + 1] === "|" || raw[i + 1] === "\\")) {
-          if (display + 1 >= target) return range.from + i + 2;
-          display += 1;
-          i += 2;
-        } else {
-          if (display + 1 >= target) return range.from + i + 1;
-          display += 1;
-          i += 1;
-        }
-      }
-      return range.to;
+      return range.from + (tableCellDisplayMap(raw).sourceOffsets[target] ?? raw.length);
     }
     _getCurrentSelection() {
       if (this._isSourceActive() && this._sourceTextarea) return { start: this._sourceTextarea.selectionStart, end: this._sourceTextarea.selectionEnd, direction: this._sourceTextarea.selectionDirection || "none" };
@@ -1269,110 +2062,1066 @@ var __writemark = (() => {
     }
   };
 
-  // src/markdown/tables.ts
-  function splitTableRow(line) {
-    let row = String(line ?? "").trim();
-    if (row.startsWith("|")) row = row.slice(1);
-    if (row.endsWith("|")) row = row.slice(0, -1);
-    const cells = [];
-    let current = "";
-    let escaped = false;
-    for (const char of row) {
-      if (escaped) {
-        current += char;
-        escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        current += char;
-        escaped = true;
-        continue;
-      }
-      if (char === "|") {
-        cells.push(current.trim());
-        current = "";
-        continue;
-      }
-      current += char;
+  // src/browser/presence-geometry.ts
+  var mirrorProperties = [
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "font-stretch",
+    "font-variant",
+    "font-kerning",
+    "font-feature-settings",
+    "font-variation-settings",
+    "line-height",
+    "letter-spacing",
+    "word-spacing",
+    "text-align",
+    "text-indent",
+    "text-transform",
+    "text-rendering",
+    "direction",
+    "unicode-bidi",
+    "tab-size",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "word-break",
+    "overflow-wrap",
+    "white-space",
+    "writing-mode"
+  ];
+  var longRangeLength = 1024;
+  function intersect(a, b) {
+    const left = Math.max(a.left, b.left);
+    const top = Math.max(a.top, b.top);
+    const right = Math.min(a.left + a.width, b.left + b.width);
+    const bottom = Math.min(a.top + a.height, b.top + b.height);
+    return right > left && bottom > top ? { left, top, width: right - left, height: bottom - top } : null;
+  }
+  __name(intersect, "intersect");
+  function firstCaretRect(range) {
+    for (const rect of range.getClientRects()) {
+      if (rect.height > 0) return rect;
     }
-    cells.push(current.trim());
-    return cells;
+    return void 0;
   }
-  __name(splitTableRow, "splitTableRow");
-  function isTableDelimiter(line) {
-    const t = String(line ?? "").trim();
-    if (!t.includes("|")) return false;
-    const cells = splitTableRow(t);
-    return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  __name(firstCaretRect, "firstCaretRect");
+  function visibleSelectionRects(range, viewport, translate) {
+    const selection = [];
+    for (const bounds of range.getClientRects()) {
+      const clipped = intersect(translate ? translate(bounds) : bounds, viewport);
+      if (clipped) selection.push(clipped);
+    }
+    return selection;
   }
-  __name(isTableDelimiter, "isTableDelimiter");
-  function isLikelyTableRow(line) {
-    const t = String(line ?? "").trim();
-    return t.includes("|") && splitTableRow(t).length >= 2;
-  }
-  __name(isLikelyTableRow, "isLikelyTableRow");
-  function parseTableLineRanges(line, absoluteStart, preserveWhitespace = false) {
-    const raw = String(line ?? "");
-    const cells = [];
-    let start = 0;
-    let end = raw.length;
-    if (raw[start] === "|") start += 1;
-    if (raw[end - 1] === "|") end -= 1;
-    let cellStart = start;
-    let escaped = false;
-    for (let i = start; i <= end; i += 1) {
-      const atEnd = i === end;
-      const ch = raw[i];
-      if (!atEnd && escaped) {
-        escaped = false;
-        continue;
+  __name(visibleSelectionRects, "visibleSelectionRects");
+  function visibleOffsetWindow(viewport, offsets, rectAt) {
+    const { top, height } = viewport;
+    const findOffset = /* @__PURE__ */ __name((atOrAfter) => {
+      let low = offsets.from;
+      let high = offsets.to;
+      while (low < high) {
+        const mid = Math.floor((low + high) / 2);
+        const rect = rectAt(mid);
+        if (!rect) return null;
+        if (atOrAfter(rect)) high = mid;
+        else low = mid + 1;
       }
-      if (!atEnd && ch === "\\") {
-        escaped = true;
-        continue;
+      return low;
+    }, "findOffset");
+    const from = findOffset((rect) => rect.top + rect.height >= top - height);
+    const to = findOffset((rect) => rect.top >= top + 2 * height);
+    return from === null || to === null ? null : { from, to };
+  }
+  __name(visibleOffsetWindow, "visibleOffsetWindow");
+  var PresenceGeometry = class {
+    static {
+      __name(this, "PresenceGeometry");
+    }
+    options;
+    mirror = null;
+    mirrorText = null;
+    mirrorEnd = null;
+    mirrorStyle = "";
+    stopped = false;
+    constructor(options) {
+      this.options = options;
+    }
+    disconnect() {
+      this.stopped = true;
+      this.mirror?.remove();
+      this.mirror = null;
+      this.mirrorText = null;
+      this.mirrorEnd = null;
+    }
+    measure(anchor, head) {
+      return this.measureBatch([{ anchor, head }])[0] ?? null;
+    }
+    measureBatch(cursors) {
+      if (!cursors.length) return [];
+      const prepared = this.prepare();
+      const source = prepared?.source;
+      if (prepared && source && prepared.value.length > longRangeLength && (cursors.length > 16 || cursors.some((cursor) => Math.abs(cursor.head - cursor.anchor) > longRangeLength))) {
+        this.sourceVisibleOffsets(prepared, source);
       }
-      if (atEnd || ch === "|") {
-        const rawCellStart = cellStart;
-        const rawCellEnd = i;
-        let from = cellStart;
-        let to = i;
-        while (from < to && raw[from] === " ") {
-          from += 1;
-          if (preserveWhitespace) break;
+      return cursors.map((cursor) => prepared ? this.measurePrepared(prepared, cursor.anchor, cursor.head) : null);
+    }
+    prepare() {
+      const { host, shell, source, live, getMode, getValue } = this.options;
+      if (this.stopped || !host.isConnected || !shell.isConnected) return null;
+      const mode = getMode();
+      if (mode === "preview") return null;
+      const surface = mode === "source" || mode === "split" ? source : live;
+      if (!surface.isConnected || !surface.getClientRects().length) return null;
+      const view = host.ownerDocument.defaultView;
+      if (!view) return null;
+      const shellBounds = shell.getBoundingClientRect();
+      const bounds = surface.getBoundingClientRect();
+      const scaleX = surface.offsetWidth ? bounds.width / surface.offsetWidth : 1;
+      const scaleY = surface.offsetHeight ? bounds.height / surface.offsetHeight : 1;
+      const shellScaleX = shell.offsetWidth ? shellBounds.width / shell.offsetWidth : 1;
+      const shellScaleY = shell.offsetHeight ? shellBounds.height / shell.offsetHeight : 1;
+      if (!(scaleX > 0 && scaleY > 0 && shellScaleX > 0 && shellScaleY > 0)) return null;
+      let viewport = intersect({
+        left: bounds.left + surface.clientLeft * scaleX,
+        top: bounds.top + surface.clientTop * scaleY,
+        width: surface.clientWidth * scaleX,
+        height: surface.clientHeight * scaleY
+      }, shellBounds);
+      if (viewport) viewport = intersect(viewport, { left: 0, top: 0, width: view.innerWidth, height: view.innerHeight });
+      let ancestor = surface.parentElement ?? surface.getRootNode().host;
+      while (viewport && ancestor) {
+        const style = view.getComputedStyle(ancestor);
+        const clipX = /^(auto|scroll|hidden|clip)$/.test(style.overflowX);
+        const clipY = /^(auto|scroll|hidden|clip)$/.test(style.overflowY);
+        if (clipX || clipY) {
+          const rect = ancestor.getBoundingClientRect();
+          const xScale = ancestor.offsetWidth ? rect.width / ancestor.offsetWidth : 1;
+          const yScale = ancestor.offsetHeight ? rect.height / ancestor.offsetHeight : 1;
+          viewport = intersect(viewport, {
+            left: clipX ? rect.left + ancestor.clientLeft * xScale : viewport.left,
+            top: clipY ? rect.top + ancestor.clientTop * yScale : viewport.top,
+            width: clipX ? ancestor.clientWidth * xScale : viewport.width,
+            height: clipY ? ancestor.clientHeight * yScale : viewport.height
+          });
         }
-        while (to > from && raw[to - 1] === " ") {
-          to -= 1;
-          if (preserveWhitespace) break;
+        ancestor = ancestor.parentElement ?? ancestor.getRootNode().host;
+      }
+      if (!viewport) return null;
+      const value = getValue();
+      const sourceGeometry = surface === source ? this.prepareSource(value, bounds, scaleX, scaleY) : null;
+      if (surface === source && !sourceGeometry) return null;
+      const editables = [];
+      if (surface === live) {
+        const top = viewport.top - viewport.height;
+        const bottom = viewport.top + 2 * viewport.height;
+        for (const element of live.querySelectorAll("[data-editable]")) {
+          const from = Number(element.dataset.from);
+          const to = Number(element.dataset.to);
+          if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from) continue;
+          const rect = element.getBoundingClientRect();
+          if (rect.bottom >= top && rect.top <= bottom && (rect.width || rect.height)) {
+            editables.push({
+              element,
+              from,
+              to,
+              spansViewport: rect.height > 3 * viewport.height,
+              visibleOffsets: void 0,
+              selections: /* @__PURE__ */ new Map()
+            });
+          }
         }
-        if (from === to && rawCellEnd > rawCellStart && raw[rawCellStart] === " ") {
-          from = Math.min(rawCellStart + 1, rawCellEnd);
-          to = from;
+      }
+      return {
+        value,
+        viewport,
+        source: sourceGeometry,
+        editables,
+        range: host.ownerDocument.createRange(),
+        positions: /* @__PURE__ */ new Map(),
+        carets: /* @__PURE__ */ new Map(),
+        relative: /* @__PURE__ */ __name((rect) => ({ left: (rect.left - shellBounds.left) / shellScaleX, top: (rect.top - shellBounds.top) / shellScaleY, width: rect.width / shellScaleX, height: rect.height / shellScaleY }), "relative")
+      };
+    }
+    measurePrepared(prepared, anchor, head) {
+      if (!Number.isSafeInteger(anchor) || !Number.isSafeInteger(head) || anchor < 0 || head < 0 || anchor > prepared.value.length || head > prepared.value.length) return null;
+      const source = prepared.source;
+      const visible = source?.visibleOffsets;
+      let bounds = null;
+      if (!source) bounds = this.liveCaret(prepared, head);
+      else if (!visible || head >= visible.from && head <= visible.to) bounds = this.sourceCaret(prepared, source, head);
+      const caret = bounds ? intersect({ left: bounds.left, top: bounds.top, width: Math.max(1, bounds.width), height: bounds.height }, prepared.viewport) : null;
+      const from = Math.min(anchor, head);
+      const to = Math.max(anchor, head);
+      const selection = from === to ? [] : source ? this.sourceSelection(prepared, source, from, to) : this.liveSelection(prepared, from, to);
+      if (!caret && !selection.length) return null;
+      return { caret: caret ? prepared.relative(caret) : null, selection: selection.map(prepared.relative), viewport: prepared.relative(prepared.viewport) };
+    }
+    prepareSource(value, sourceBounds, scaleX, scaleY) {
+      const { source, host } = this.options;
+      const doc = host.ownerDocument;
+      const view = doc.defaultView;
+      if (!view || !doc.body) return null;
+      if (!this.mirror) {
+        this.mirror = doc.createElement("div");
+        this.mirror.setAttribute("aria-hidden", "true");
+        this.mirror.inert = true;
+        this.mirrorText = doc.createTextNode("");
+        this.mirrorEnd = doc.createElement("span");
+        this.mirrorEnd.textContent = "\u200B";
+        this.mirror.append(this.mirrorText, this.mirrorEnd);
+        doc.body.append(this.mirror);
+      }
+      const mirror = this.mirror;
+      const text = this.mirrorText;
+      const end = this.mirrorEnd;
+      if (!text || !end) return null;
+      const style = view.getComputedStyle(source);
+      const signature = [source.clientWidth, source.wrap, ...mirrorProperties.map((property) => style.getPropertyValue(property))].join("");
+      if (signature !== this.mirrorStyle) {
+        mirror.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none;box-sizing:border-box;border:0;margin:0;height:auto;min-height:0;max-height:none;overflow:visible;";
+        for (const property of mirrorProperties) mirror.style.setProperty(property, style.getPropertyValue(property));
+        mirror.style.width = `${source.clientWidth}px`;
+        mirror.style.whiteSpace = source.wrap === "off" ? "pre" : "pre-wrap";
+        mirror.style.overflowWrap = source.wrap === "off" ? "normal" : "break-word";
+        this.mirrorStyle = signature;
+      }
+      if (text.data !== value) text.data = value;
+      const mirrorBounds = mirror.getBoundingClientRect();
+      const mirrorScaleX = mirror.offsetWidth ? mirrorBounds.width / mirror.offsetWidth : 1;
+      const mirrorScaleY = mirror.offsetHeight ? mirrorBounds.height / mirror.offsetHeight : 1;
+      const left = sourceBounds.left + (source.clientLeft - source.scrollLeft) * scaleX;
+      const top = sourceBounds.top + (source.clientTop - source.scrollTop) * scaleY;
+      return {
+        text,
+        end,
+        horizontal: style.writingMode === "horizontal-tb",
+        visibleOffsets: void 0,
+        selections: /* @__PURE__ */ new Map(),
+        translate: /* @__PURE__ */ __name((rect) => ({
+          left: left + (rect.left - mirrorBounds.left) / mirrorScaleX * scaleX,
+          top: top + (rect.top - mirrorBounds.top) / mirrorScaleY * scaleY,
+          width: rect.width / mirrorScaleX * scaleX,
+          height: rect.height / mirrorScaleY * scaleY
+        }), "translate")
+      };
+    }
+    sourceCaret(prepared, source, offset) {
+      const previous = prepared.carets.get(offset);
+      if (previous !== void 0) return previous;
+      prepared.range.setStart(source.text, offset);
+      prepared.range.collapse(true);
+      const bounds = offset === prepared.value.length ? source.end.getBoundingClientRect() : firstCaretRect(prepared.range);
+      const caret = bounds && bounds.height > 0 ? source.translate(bounds) : null;
+      prepared.carets.set(offset, caret);
+      return caret;
+    }
+    sourceVisibleOffsets(prepared, source) {
+      if (source.visibleOffsets !== void 0) return source.visibleOffsets;
+      if (!source.horizontal) {
+        source.visibleOffsets = null;
+        return null;
+      }
+      source.visibleOffsets = visibleOffsetWindow(
+        prepared.viewport,
+        { from: 0, to: prepared.value.length },
+        (offset) => this.sourceCaret(prepared, source, offset) ?? this.sourceRow(prepared.range, source, offset)
+      );
+      return source.visibleOffsets;
+    }
+    sourceRow(range, source, offset) {
+      range.setStart(source.text, offset);
+      range.setEnd(source.text, offset + 1);
+      const bounds = firstCaretRect(range);
+      return bounds ? source.translate(bounds) : null;
+    }
+    sourceSelection(prepared, source, from, to) {
+      if (source.visibleOffsets) {
+        from = Math.max(from, source.visibleOffsets.from);
+        to = Math.min(to, source.visibleOffsets.to);
+      }
+      if (to <= from) return [];
+      const key = `${from}:${to}`;
+      const previous = source.selections.get(key);
+      if (previous !== void 0) return previous;
+      prepared.range.setStart(source.text, from);
+      prepared.range.setEnd(source.text, to);
+      const selection = visibleSelectionRects(prepared.range, prepared.viewport, source.translate);
+      source.selections.set(key, selection);
+      return selection;
+    }
+    position(prepared, offset, editable) {
+      const mounted = editable ?? prepared.editables.find((item) => {
+        const offsets = item.visibleOffsets ?? item;
+        return offset >= offsets.from && offset <= offsets.to;
+      });
+      if (!mounted) return null;
+      let position = prepared.positions.get(offset);
+      if (position === void 0) {
+        position = this.options.domPositionFromSource(offset);
+        prepared.positions.set(offset, position);
+      }
+      if (position && position.node.isConnected && this.options.live.contains(position.node) && (!editable || editable.element.contains(position.node))) return position;
+      if (editable && (offset === editable.from || offset === editable.to)) {
+        return { node: editable.element, offset: offset === editable.from ? 0 : editable.element.childNodes.length, editable: editable.element };
+      }
+      return null;
+    }
+    liveCaret(prepared, head) {
+      const previous = prepared.carets.get(head);
+      if (previous !== void 0) return previous;
+      const focus = this.position(prepared, head);
+      let caret = null;
+      if (focus) {
+        let bounds = this.collapsedLiveRect(prepared.range, focus);
+        if (!bounds && !focus.editable.textContent) bounds = focus.editable.querySelector("br")?.getBoundingClientRect() ?? null;
+        if (bounds && bounds.height > 0) caret = bounds;
+      }
+      prepared.carets.set(head, caret);
+      return caret;
+    }
+    liveSelection(prepared, from, to) {
+      const selection = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const editable of prepared.editables) {
+        let start = Math.max(from, editable.from);
+        let end = Math.min(to, editable.to);
+        if (editable.spansViewport && end - start > longRangeLength && editable.visibleOffsets === void 0) {
+          const style = editable.element.ownerDocument.defaultView?.getComputedStyle(editable.element);
+          editable.visibleOffsets = style?.writingMode === "horizontal-tb" ? visibleOffsetWindow(prepared.viewport, editable, (offset) => {
+            const position = this.position(prepared, offset, editable);
+            return position ? this.collapsedLiveRect(prepared.range, position) : null;
+          }) : null;
         }
-        cells.push({ text: raw.slice(from, to), from: absoluteStart + from, to: absoluteStart + to });
-        cellStart = i + 1;
+        if (editable.visibleOffsets) {
+          start = Math.max(start, editable.visibleOffsets.from);
+          end = Math.min(end, editable.visibleOffsets.to);
+        }
+        if (end <= start) continue;
+        for (const rect of this.liveSelectionFragment(prepared, editable, start, end)) {
+          const key = `${rect.left}:${rect.top}:${rect.width}:${rect.height}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          selection.push(rect);
+        }
+      }
+      return selection;
+    }
+    collapsedLiveRect(range, position) {
+      try {
+        range.setStart(position.node, position.offset);
+        range.collapse(true);
+        return firstCaretRect(range) ?? null;
+      } catch {
+        return null;
       }
     }
-    return cells;
+    liveSelectionFragment(prepared, editable, start, end) {
+      const key = `${start}:${end}`;
+      const previous = editable.selections.get(key);
+      if (previous !== void 0) return previous;
+      const first = this.position(prepared, start, editable);
+      const last = this.position(prepared, end, editable);
+      let selection = [];
+      if (first && last) {
+        try {
+          prepared.range.setStart(first.node, first.offset);
+          prepared.range.setEnd(last.node, last.offset);
+          selection = visibleSelectionRects(prepared.range, prepared.viewport);
+        } catch {
+        }
+      }
+      editable.selections.set(key, selection);
+      return selection;
+    }
+  };
+
+  // src/browser/presence.ts
+  var labelLifetime = 1600;
+  var motionDuration = 90;
+  var defaultTtl = 3e4;
+  var maximumTtl = 3e5;
+  var tombstoneLifetime = 3e5;
+  var tombstoneLimit = 256;
+  function failure(reason, id) {
+    return { ok: false, reason, ...id === void 0 ? {} : { id } };
   }
-  __name(parseTableLineRanges, "parseTableLineRanges");
-  function tableAlignmentFromDelimiter(cellText) {
-    const value = String(cellText ?? "").trim();
-    const left = value.startsWith(":");
-    const right = value.endsWith(":");
-    if (left && right) return "center";
-    if (right) return "right";
-    if (left) return "left";
-    return "";
+  __name(failure, "failure");
+  function validId(value) {
+    return typeof value === "string" && Boolean(value.trim()) && value.length <= 128 && !/[\u0000-\u001f\u007f]/.test(value);
   }
-  __name(tableAlignmentFromDelimiter, "tableAlignmentFromDelimiter");
-  function tableAlignmentStyle(alignment) {
-    return alignment ? ` style="text-align:${alignment}"` : "";
+  __name(validId, "validId");
+  function parseCursorBatch(input, length) {
+    try {
+      if (!Array.isArray(input)) return { ok: false, reason: "invalid-cursor" };
+      const items = input;
+      const count = items.length;
+      if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return { ok: false, reason: "invalid-cursor" };
+      if (count > 64) return { ok: false, reason: "capacity-exceeded" };
+      const ids = /* @__PURE__ */ new Set();
+      const result = [];
+      for (let index = 0; index < count; index++) {
+        const item = items[index];
+        if (!item || typeof item !== "object") return { ok: false, reason: "invalid-cursor" };
+        const value = item;
+        const { id, name, color, anchor, head, active, epoch, sequence, ttlMs } = value;
+        if (!validId(id)) return { ok: false, reason: "invalid-cursor" };
+        if (ids.has(id)) return { ok: false, reason: "duplicate-id", id };
+        const invalid = /* @__PURE__ */ __name(() => ({ ok: false, reason: "invalid-cursor", id }), "invalid");
+        if (typeof name !== "string" || !name.trim() || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) return invalid();
+        if (typeof color !== "string" || !/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(color)) return invalid();
+        if (typeof anchor !== "number" || typeof head !== "number" || !Number.isSafeInteger(anchor) || !Number.isSafeInteger(head) || anchor < 0 || head < 0 || anchor > length || head > length) return invalid();
+        if (active !== void 0 && typeof active !== "boolean") return invalid();
+        if (epoch === void 0 !== (sequence === void 0)) return invalid();
+        if (epoch !== void 0 && (typeof epoch !== "number" || !Number.isSafeInteger(epoch) || epoch < 0 || typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence < 0)) return invalid();
+        if (ttlMs !== void 0 && (typeof ttlMs !== "number" || !Number.isSafeInteger(ttlMs) || ttlMs < 0 || ttlMs > maximumTtl)) return invalid();
+        ids.add(id);
+        result.push({ id, name, color, anchor, head, ...active === void 0 ? {} : { active }, ...epoch === void 0 ? {} : { epoch, sequence }, ...ttlMs === void 0 ? {} : { ttlMs } });
+      }
+      if (items.length !== count) return { ok: false, reason: "invalid-cursor" };
+      return { ok: true, cursors: result };
+    } catch {
+      return { ok: false, reason: "invalid-cursor" };
+    }
   }
-  __name(tableAlignmentStyle, "tableAlignmentStyle");
-  function unescapeTableCellText(cellText) {
-    return String(cellText ?? "").replace(/\\([\\|])/g, "$1");
+  __name(parseCursorBatch, "parseCursorBatch");
+  function sameContent(a, b) {
+    return a.id === b.id && a.name === b.name && a.color === b.color && a.anchor === b.anchor && a.head === b.head && a.active !== false === (b.active !== false) && (a.ttlMs ?? defaultTtl) === (b.ttlMs ?? defaultTtl);
   }
-  __name(unescapeTableCellText, "unescapeTableCellText");
+  __name(sameContent, "sameContent");
+  function sameVersion(a, b) {
+    return a.epoch === b.epoch && a.sequence === b.sequence;
+  }
+  __name(sameVersion, "sameVersion");
+  function orderCursor(cursor, reference, removed) {
+    if (reference.epoch === void 0) return null;
+    if (cursor.epoch === void 0 || cursor.sequence === void 0) return "stale-cursor";
+    const order = cursor.epoch - reference.epoch || cursor.sequence - (reference.sequence ?? 0);
+    if (order < 0 || order === 0 && removed) return "stale-cursor";
+    if (order === 0 && !sameContent(cursor, reference)) return "version-conflict";
+    return null;
+  }
+  __name(orderCursor, "orderCursor");
+  function mapRemoteCursors(cursors, changes, length) {
+    return cursors.map((cursor) => {
+      const backward = cursor.anchor > cursor.head;
+      const mapped = mapTransactionSelection({
+        start: Math.min(cursor.anchor, cursor.head),
+        end: Math.max(cursor.anchor, cursor.head),
+        direction: backward ? "backward" : cursor.anchor === cursor.head ? "none" : "forward"
+      }, changes);
+      const start = Math.min(length, Math.max(0, mapped.start));
+      const end = Math.min(length, Math.max(0, mapped.end));
+      return { ...cursor, anchor: backward ? end : start, head: backward ? start : end };
+    });
+  }
+  __name(mapRemoteCursors, "mapRemoteCursors");
+  function presenceEase(progress) {
+    const x = Math.min(1, Math.max(0, progress));
+    if (x === 0 || x === 1) return x;
+    let lower = 0;
+    let upper = 1;
+    for (let index = 0; index < 18; index++) {
+      const t2 = (lower + upper) / 2;
+      const curveX = 0.6 * (1 - t2) * (1 - t2) * t2 + t2 * t2 * t2;
+      if (curveX < x) lower = t2;
+      else upper = t2;
+    }
+    const t = (lower + upper) / 2;
+    return 3 * (1 - t) * t * t + t * t * t;
+  }
+  __name(presenceEase, "presenceEase");
+  function presenceLabelForeground(color) {
+    const digits = color.length === 4 ? color.slice(1).split("").map((character) => character + character).join("") : color.slice(1);
+    const channel = /* @__PURE__ */ __name((offset) => {
+      const value = Number.parseInt(digits.slice(offset, offset + 2), 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    }, "channel");
+    const luminance = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+    return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? "#000000" : "#ffffff";
+  }
+  __name(presenceLabelForeground, "presenceLabelForeground");
+  function sameViewport(a, b) {
+    return a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
+  }
+  __name(sameViewport, "sameViewport");
+  function overlap(a, b) {
+    return a.left < b.left + b.width + 4 && a.left + a.width + 4 > b.left && a.top < b.top + b.height + 2 && a.top + a.height + 2 > b.top;
+  }
+  __name(overlap, "overlap");
+  var PresenceController = class {
+    static {
+      __name(this, "PresenceController");
+    }
+    geometry;
+    geometryStopped = false;
+    hooks;
+    overlay;
+    roster;
+    entries = /* @__PURE__ */ new Map();
+    tombstones = /* @__PURE__ */ new Map();
+    view;
+    reducedMotion;
+    cleanups = [];
+    resizeObserver = null;
+    mutationObserver = null;
+    frame = null;
+    layoutFrame = null;
+    fadeTimer = null;
+    expiryTimer = null;
+    connected = false;
+    lastMode = "";
+    generation = 0;
+    anchorClock = 0;
+    showNames = false;
+    hovered = null;
+    lineValue = null;
+    lineStarts = [0];
+    constructor(hooks) {
+      this.hooks = hooks;
+      const view = hooks.host.ownerDocument.defaultView;
+      if (!view) throw new Error("Presence needs a window.");
+      this.view = view;
+      this.geometry = new PresenceGeometry(hooks);
+      const doc = hooks.host.ownerDocument;
+      this.overlay = doc.createElement("div");
+      this.overlay.className = "remote-presence";
+      this.overlay.setAttribute("aria-hidden", "true");
+      Object.assign(this.overlay.style, { position: "absolute", inset: "0", pointerEvents: "none", overflow: "hidden" });
+      this.roster = doc.createElement("ul");
+      this.roster.className = "remote-presence-roster";
+      this.roster.setAttribute("aria-label", "Remote cursors");
+      this.reducedMotion = view.matchMedia("(prefers-reduced-motion: reduce)");
+    }
+    set(cursors, options = {}) {
+      return this.apply(() => {
+        if (!options || typeof options !== "object" || Array.isArray(options)) return null;
+        return { cursors, replace: true, baseRevision: options.baseRevision, animate: options.animate, showNames: options.showNames };
+      }).ok;
+    }
+    update(update) {
+      return this.apply(() => update);
+    }
+    apply(read) {
+      const revision = this.hooks.getRevision();
+      const generation = this.generation;
+      const length = this.hooks.getValue().length;
+      let parsed = { ok: false, reason: "invalid-update" };
+      let remove = [];
+      let replace;
+      let baseRevision;
+      let animate;
+      let showNames;
+      let invalid = null;
+      try {
+        const input = read();
+        if (!input || typeof input !== "object" || Array.isArray(input)) invalid = failure("invalid-update");
+        else {
+          const value = input;
+          const cursors = value.cursors;
+          const removals = value.remove;
+          replace = value.replace;
+          baseRevision = value.baseRevision;
+          animate = value.animate;
+          showNames = value.showNames;
+          parsed = parseCursorBatch(cursors, Number.MAX_SAFE_INTEGER);
+          if (removals !== void 0) {
+            if (!Array.isArray(removals)) invalid = failure("invalid-remove");
+            else {
+              const ids2 = removals;
+              const count2 = ids2.length;
+              if (typeof count2 !== "number" || !Number.isSafeInteger(count2) || count2 < 0 || count2 > 64) invalid = failure("invalid-remove");
+              else {
+                const seen = /* @__PURE__ */ new Set();
+                for (let index = 0; index < count2; index++) {
+                  const id = ids2[index];
+                  if (!validId(id) || seen.has(id)) {
+                    invalid = failure("invalid-remove", typeof id === "string" ? id : void 0);
+                    break;
+                  }
+                  seen.add(id);
+                  remove.push(id);
+                }
+                if (ids2.length !== count2) invalid = failure("invalid-remove");
+              }
+            }
+          }
+        }
+      } catch {
+        invalid = failure("invalid-update");
+      }
+      if (this.generation !== generation || this.hooks.getRevision() !== revision) return failure("reentrant-change");
+      if (invalid) return invalid;
+      if (!parsed.ok) return failure(parsed.reason, parsed.id);
+      if (replace !== void 0 && typeof replace !== "boolean" || animate !== void 0 && typeof animate !== "boolean" || showNames !== void 0 && typeof showNames !== "boolean") return failure("invalid-update");
+      if (baseRevision !== void 0 && (typeof baseRevision !== "number" || !Number.isSafeInteger(baseRevision) || baseRevision < 0)) return failure("invalid-update");
+      if (baseRevision !== void 0 && baseRevision !== revision) return failure("stale-revision");
+      if (!this.hooks.host.isConnected) return failure("not-connected");
+      const now2 = this.now();
+      const incoming = parsed.cursors;
+      const ids = new Set(incoming.map((cursor) => cursor.id));
+      for (const id of remove) if (ids.has(id)) return failure("invalid-update", id);
+      let count = replace ? 0 : Array.from(this.entries.values()).filter((entry) => entry.expiresAt > now2 && !remove.includes(entry.data.id)).length;
+      for (const cursor of incoming) {
+        const current = this.entries.get(cursor.id);
+        const tombstone = this.tombstones.get(cursor.id);
+        const expired = Boolean(current && current.expiresAt <= now2);
+        const reference = (current && (!expired || now2 - current.expiresAt < tombstoneLifetime) ? current.wire : null) ?? (tombstone && now2 - tombstone.removedAt < tombstoneLifetime ? tombstone.wire : null);
+        if (reference) {
+          const reason = orderCursor(cursor, reference, expired || !current);
+          if (reason) return failure(reason, cursor.id);
+        }
+        const heartbeat = cursor.epoch !== void 0 && current && !expired && sameVersion(cursor, current.wire) && sameContent(cursor, current.wire);
+        if ((cursor.anchor > length || cursor.head > length) && !heartbeat) return failure("invalid-cursor", cursor.id);
+        if (replace || !current || expired || remove.includes(cursor.id)) count += 1;
+      }
+      if (count > 64) return failure("capacity-exceeded");
+      this.generation += 1;
+      this.pruneTombstones(now2);
+      let changed = this.expireEntries(now2);
+      let moved = false;
+      for (const [id] of this.entries) {
+        if (remove.includes(id) || replace === true && !ids.has(id)) {
+          this.removeEntry(id, now2);
+          changed = true;
+        }
+      }
+      for (const cursor of incoming) {
+        const current = this.entries.get(cursor.id);
+        if (!current) {
+          this.tombstones.delete(cursor.id);
+          this.entries.set(cursor.id, this.createEntry(cursor, now2));
+          changed = true;
+          moved = true;
+        } else {
+          const heartbeat = cursor.epoch !== void 0 && sameVersion(cursor, current.wire) && sameContent(cursor, current.wire);
+          current.expiresAt = this.expiry(cursor, now2);
+          if (heartbeat) {
+            current.data = { ...cursor, anchor: current.data.anchor, head: current.data.head };
+            current.wire = { ...cursor };
+            continue;
+          }
+          const positionChanged = current.data.anchor !== cursor.anchor || current.data.head !== cursor.head;
+          if (positionChanged && this.hovered === cursor.id) this.hovered = null;
+          const nameChanged = current.data.name !== cursor.name;
+          const identityChanged = nameChanged || current.data.color !== cursor.color;
+          const activeChanged = current.data.active !== false !== (cursor.active !== false);
+          const revealed = current.data.active === false && cursor.active !== false || identityChanged;
+          if (positionChanged || !sameVersion(cursor, current.wire)) current.anchorGeneration = ++this.anchorClock;
+          if (positionChanged || revealed) {
+            current.changedAt = now2;
+            moved = true;
+          }
+          changed = changed || positionChanged || identityChanged || activeChanged;
+          current.data = { ...cursor };
+          current.wire = { ...cursor };
+          if (nameChanged || activeChanged) current.rosterItem.textContent = cursor.name + (cursor.active === false ? " (inactive)" : "");
+        }
+      }
+      const namesChanged = showNames !== void 0 && showNames !== this.showNames;
+      if (typeof showNames === "boolean") this.showNames = showNames;
+      if (!this.entries.size) {
+        this.disconnect();
+        return { ok: true, count: 0 };
+      }
+      if (!this.connected) this.connect();
+      else if (changed) this.refresh(moved && animate !== false);
+      else if (namesChanged) {
+        this.paint(now2);
+        this.armFade(now2);
+      }
+      this.armExpiry(now2);
+      return { ok: true, count: this.entries.size };
+    }
+    get() {
+      if (this.expireEntries(this.now()) && this.entries.size) this.scheduleLayout();
+      return Array.from(this.entries.values(), (entry) => ({ ...entry.data }));
+    }
+    captureAnchors() {
+      return Array.from(this.entries.values(), (entry) => ({ id: entry.data.id, anchor: entry.data.anchor, head: entry.data.head, generation: entry.anchorGeneration }));
+    }
+    restoreAnchors(snapshot) {
+      const length = this.hooks.getValue().length;
+      let changed = false;
+      for (const saved of snapshot) {
+        const entry = this.entries.get(saved.id);
+        if (!entry || entry.anchorGeneration !== saved.generation) continue;
+        const anchor = Math.max(0, Math.min(length, saved.anchor));
+        const head = Math.max(0, Math.min(length, saved.head));
+        if (entry.data.anchor === anchor && entry.data.head === head) continue;
+        entry.data = { ...entry.data, anchor, head };
+        if (this.hovered === entry.data.id) this.hovered = null;
+        entry.motion = null;
+        changed = true;
+      }
+      if (changed) this.generation += 1;
+    }
+    mapChanges(changes) {
+      this.generation += 1;
+      const mapped = mapRemoteCursors(Array.from(this.entries.values(), (entry) => entry.data), changes, this.hooks.getValue().length);
+      for (const cursor of mapped) {
+        const entry = this.entries.get(cursor.id);
+        if (entry) {
+          if (this.hovered === cursor.id && (entry.data.anchor !== cursor.anchor || entry.data.head !== cursor.head)) this.hovered = null;
+          entry.data = cursor;
+          entry.motion = null;
+        }
+      }
+    }
+    connect() {
+      if (this.connected || !this.entries.size || !this.hooks.host.isConnected) return;
+      this.expireEntries(this.now());
+      if (!this.entries.size) return;
+      this.connected = true;
+      if (this.geometryStopped) {
+        this.geometry = new PresenceGeometry(this.hooks);
+        this.geometryStopped = false;
+      }
+      this.hooks.shell.append(this.overlay, this.roster);
+      const schedule = /* @__PURE__ */ __name(() => this.scheduleLayout(), "schedule");
+      const listen = /* @__PURE__ */ __name((target, type, callback, capture = false) => {
+        target.addEventListener(type, callback, capture);
+        this.cleanups.push(() => target.removeEventListener(type, callback, capture));
+      }, "listen");
+      const doc = this.hooks.host.ownerDocument;
+      listen(this.hooks.shell, "scroll", schedule, true);
+      listen(doc, "scroll", schedule, true);
+      listen(this.view, "scroll", schedule, true);
+      listen(this.view, "resize", schedule);
+      listen(doc.fonts, "loadingdone", schedule);
+      listen(doc, "visibilitychange", () => {
+        if (!doc.hidden) {
+          schedule();
+          return;
+        }
+        this.stopMotion();
+        if (this.layoutFrame !== null) this.view.cancelAnimationFrame(this.layoutFrame);
+        this.layoutFrame = null;
+      });
+      listen(this.reducedMotion, "change", schedule);
+      listen(this.hooks.shell, "pointermove", (event) => this.hover(event));
+      listen(this.hooks.shell, "pointerleave", () => {
+        if (this.hovered !== null) {
+          this.hovered = null;
+          this.paint(this.now());
+        }
+      });
+      if (this.view.visualViewport) {
+        listen(this.view.visualViewport, "resize", schedule);
+        listen(this.view.visualViewport, "scroll", schedule);
+      }
+      this.resizeObserver = new ResizeObserver(schedule);
+      for (const node of [this.hooks.shell, this.hooks.source, this.hooks.live]) this.resizeObserver.observe(node);
+      this.mutationObserver = new MutationObserver(schedule);
+      this.mutationObserver.observe(this.hooks.live, { childList: true, subtree: true, characterData: true });
+      this.mutationObserver.observe(this.hooks.host, { attributes: true, attributeFilter: ["mode", "class", "style", "disabled", "hidden", "dir"] });
+      for (let ancestor = this.hooks.host.parentNode; ancestor; ancestor = ancestor.parentNode ?? (ancestor instanceof ShadowRoot ? ancestor.host : null)) {
+        listen(ancestor, "scroll", schedule, true);
+        if (ancestor instanceof Element) {
+          this.resizeObserver.observe(ancestor);
+          this.mutationObserver.observe(ancestor, { attributes: true, attributeFilter: ["class", "style", "hidden", "dir"] });
+        }
+      }
+      this.refresh(false);
+      this.armExpiry(this.now());
+    }
+    disconnect() {
+      this.connected = false;
+      this.geometry.disconnect();
+      this.geometryStopped = true;
+      this.cleanups.splice(0).forEach((cleanup) => cleanup());
+      this.resizeObserver?.disconnect();
+      this.mutationObserver?.disconnect();
+      this.resizeObserver = null;
+      this.mutationObserver = null;
+      this.stopMotion();
+      if (this.layoutFrame !== null) this.view.cancelAnimationFrame(this.layoutFrame);
+      if (this.fadeTimer !== null) this.view.clearTimeout(this.fadeTimer);
+      if (this.expiryTimer !== null) this.view.clearTimeout(this.expiryTimer);
+      this.layoutFrame = null;
+      this.fadeTimer = null;
+      this.expiryTimer = null;
+      this.hovered = null;
+      this.lineValue = null;
+      this.lineStarts = [0];
+      this.overlay.remove();
+      this.roster.remove();
+    }
+    refresh(animate = false) {
+      if (!this.connected) return;
+      const now2 = this.now();
+      this.expireEntries(now2);
+      if (!this.entries.size) return;
+      const layoutPending = this.layoutFrame !== null;
+      if (this.layoutFrame !== null) this.view.cancelAnimationFrame(this.layoutFrame);
+      this.layoutFrame = null;
+      const mode = this.hooks.getMode();
+      const mayAnimate = animate && !layoutPending && !this.reducedMotion.matches && this.lastMode === mode;
+      this.lastMode = mode;
+      const entries = Array.from(this.entries.values());
+      const measurements = this.geometry.measureBatch(entries.map((entry) => entry.data));
+      const labelMetrics = [];
+      this.indexLines(this.hooks.getValue());
+      for (let index = 0; index < entries.length; index++) {
+        const entry = entries[index];
+        this.advance(entry, now2);
+        const previous = entry.measurement;
+        const measurement = measurements[index] ?? null;
+        entry.measurement = measurement;
+        const caret = measurement?.caret;
+        if (this.hovered === entry.data.id && (!caret || !previous?.caret || Math.abs(caret.left - previous.caret.left) > 0.5 || Math.abs(caret.top - previous.caret.top) > 0.5 || measurement && !sameViewport(previous.viewport, measurement.viewport))) this.hovered = null;
+        entry.cursor.hidden = !caret;
+        const color = entry.data.color.length === 4 ? "#" + entry.data.color.slice(1).split("").map((character) => character + character).join("") : entry.data.color;
+        entry.cursor.style.setProperty("--remote-color", color);
+        entry.cursor.style.setProperty("--remote-label-fg", presenceLabelForeground(color));
+        entry.cursor.style.opacity = entry.data.active === false ? "0.4" : "1";
+        const rectangles = measurement?.selection.slice(0, 256) ?? [];
+        this.syncSelections(entry, rectangles, color, previous?.selection);
+        if (!measurement || !caret) {
+          entry.motion = null;
+          entry.label.style.visibility = "hidden";
+          entry.label.style.opacity = "0";
+          continue;
+        }
+        entry.caret.style.height = `${caret.height}px`;
+        if (entry.label.textContent !== entry.data.name) entry.label.textContent = entry.data.name;
+        entry.label.style.maxWidth = `${Math.max(0, Math.min(140, measurement.viewport.width))}px`;
+        entry.label.style.transition = this.reducedMotion.matches ? "none" : "opacity 120ms linear";
+        labelMetrics.push(entry);
+        const logicalRow = this.logicalRow(entry.data.head);
+        const sameRow = previous?.caret && logicalRow === entry.logicalRow && Math.abs(previous.caret.top - caret.top) <= 1 && Math.abs(previous.caret.height - caret.height) <= 1 && sameViewport(previous.viewport, measurement.viewport);
+        entry.logicalRow = logicalRow;
+        const distance = Math.abs(entry.x - caret.left);
+        entry.y = caret.top;
+        if (mayAnimate && sameRow && distance > 0.5 && distance < 100) entry.motion = { from: entry.x, to: caret.left, started: now2 };
+        else {
+          entry.x = caret.left;
+          entry.motion = null;
+        }
+      }
+      for (const entry of labelMetrics) {
+        entry.labelWidth = entry.label.offsetWidth || 100;
+        entry.labelHeight = entry.label.offsetHeight || 19;
+      }
+      this.paint(now2);
+      this.armFade(now2);
+      this.armFrame();
+    }
+    now() {
+      return this.view.performance.now();
+    }
+    expiry(cursor, now2) {
+      return cursor.ttlMs === 0 ? Infinity : now2 + (cursor.ttlMs ?? defaultTtl);
+    }
+    createEntry(data, now2) {
+      const doc = this.overlay.ownerDocument;
+      const cursor = doc.createElement("div");
+      cursor.className = "remote-presence-cursor";
+      cursor.setAttribute("part", "remote-cursor");
+      Object.assign(cursor.style, { position: "absolute", pointerEvents: "none", left: "0", top: "0" });
+      const caret = doc.createElement("div");
+      caret.className = "remote-presence-caret";
+      caret.setAttribute("part", "remote-caret");
+      Object.assign(caret.style, { position: "absolute", width: "2px", left: "0", top: "0" });
+      const label = doc.createElement("span");
+      label.className = "remote-presence-name";
+      label.setAttribute("part", "remote-name");
+      Object.assign(label.style, { position: "absolute", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", pointerEvents: "none", opacity: "0", visibility: "hidden" });
+      const rosterItem = doc.createElement("li");
+      rosterItem.textContent = data.name + (data.active === false ? " (inactive)" : "");
+      this.roster.append(rosterItem);
+      cursor.append(caret, label);
+      this.overlay.append(cursor);
+      return { data: { ...data }, wire: { ...data }, cursor, caret, label, rosterItem, selections: [], changedAt: now2, expiresAt: this.expiry(data, now2), anchorGeneration: ++this.anchorClock, measurement: null, x: 0, y: 0, motion: null, logicalRow: -1, labelWidth: 100, labelHeight: 19 };
+    }
+    syncSelections(entry, rectangles, color, previous) {
+      const tint = color + (entry.data.active === false ? "14" : "24");
+      for (let index = 0; index < Math.max(rectangles.length, entry.selections.length); index++) {
+        const rectangle = rectangles[index];
+        let node = entry.selections[index];
+        if (!node && rectangle) {
+          node = this.overlay.ownerDocument.createElement("div");
+          node.className = "remote-presence-selection";
+          node.setAttribute("part", "remote-selection");
+          Object.assign(node.style, { position: "absolute", pointerEvents: "none" });
+          this.overlay.insertBefore(node, this.overlay.firstChild);
+          entry.selections.push(node);
+        }
+        if (!node) continue;
+        const hidden = !rectangle;
+        if (node.hidden !== hidden) node.hidden = hidden;
+        if (!rectangle) continue;
+        if (node.style.getPropertyValue("--remote-selection-color") !== tint) node.style.setProperty("--remote-selection-color", tint);
+        const old = previous?.[index];
+        if (old && old.left === rectangle.left && old.top === rectangle.top && old.width === rectangle.width && old.height === rectangle.height) continue;
+        Object.assign(node.style, { left: `${rectangle.left}px`, top: `${rectangle.top}px`, width: `${rectangle.width}px`, height: `${rectangle.height}px` });
+      }
+    }
+    indexLines(value) {
+      if (value === this.lineValue) return;
+      this.lineValue = value;
+      this.lineStarts = [0];
+      for (let offset = value.indexOf("\n"); offset !== -1; offset = value.indexOf("\n", offset + 1)) this.lineStarts.push(offset + 1);
+    }
+    logicalRow(offset) {
+      let lower = 0;
+      let upper = this.lineStarts.length;
+      while (lower < upper) {
+        const middle = lower + upper >>> 1;
+        if (this.lineStarts[middle] <= offset) lower = middle + 1;
+        else upper = middle;
+      }
+      return lower;
+    }
+    advance(entry, now2) {
+      if (!entry.motion) return;
+      const progress = (now2 - entry.motion.started) / motionDuration;
+      entry.x = entry.motion.from + (entry.motion.to - entry.motion.from) * presenceEase(progress);
+      if (progress >= 1) {
+        entry.x = entry.motion.to;
+        entry.motion = null;
+      }
+    }
+    paint(now2) {
+      const occupied = [];
+      const sorted = Array.from(this.entries.values()).sort((a, b) => Number(b.data.id === this.hovered) - Number(a.data.id === this.hovered) || Number(a.data.active === false) - Number(b.data.active === false) || (a.data.id < b.data.id ? -1 : a.data.id > b.data.id ? 1 : 0));
+      for (const entry of sorted) {
+        const measured = entry.measurement;
+        if (!measured?.caret) continue;
+        this.advance(entry, now2);
+        entry.cursor.style.transform = `translate3d(${entry.x}px, ${entry.y}px, 0)`;
+        const visible = this.showNames || this.hovered === entry.data.id || entry.data.active !== false && now2 - entry.changedAt < labelLifetime;
+        const width = Math.min(measured.viewport.width, entry.labelWidth);
+        const height = Math.min(measured.viewport.height, entry.labelHeight);
+        const left = Math.max(measured.viewport.left, Math.min(entry.x, measured.viewport.left + measured.viewport.width - width));
+        let chosen = null;
+        if (visible && width > 0 && height > 0) {
+          for (let lane = 0; lane < 4; lane++) {
+            const top = Math.max(measured.viewport.top, entry.y - height - 2 - lane * (height + 2));
+            const candidate = { left, top, width, height };
+            if (top + height <= measured.viewport.top + measured.viewport.height && !occupied.some((rect) => overlap(rect, candidate))) {
+              chosen = candidate;
+              break;
+            }
+          }
+        }
+        if (chosen) {
+          occupied.push(chosen);
+          entry.label.style.left = `${chosen.left - entry.x}px`;
+          entry.label.style.top = `${chosen.top - entry.y}px`;
+          entry.label.style.visibility = "visible";
+          entry.label.style.opacity = "1";
+        } else {
+          if (visible || entry.data.active === false) entry.label.style.visibility = "hidden";
+          entry.label.style.opacity = "0";
+        }
+      }
+    }
+    hover(event) {
+      const bounds = this.hooks.shell.getBoundingClientRect();
+      const scaleX = bounds.width ? this.hooks.shell.offsetWidth / bounds.width : 1;
+      const scaleY = bounds.height ? this.hooks.shell.offsetHeight / bounds.height : 1;
+      const x = (event.clientX - bounds.left) * scaleX;
+      const y = (event.clientY - bounds.top) * scaleY;
+      let found = null;
+      let nearest = Infinity;
+      for (const entry of this.entries.values()) {
+        const caret = entry.measurement?.caret;
+        if (!caret) continue;
+        const distance = Math.abs(x - entry.x);
+        if (distance <= 7 && y >= entry.y - 4 && y <= entry.y + caret.height + 4 && distance < nearest) {
+          nearest = distance;
+          found = entry.data.id;
+        }
+      }
+      if (found === this.hovered) return;
+      this.hovered = found;
+      this.paint(this.now());
+    }
+    armFrame() {
+      if (this.frame !== null || !this.connected || !Array.from(this.entries.values()).some((entry) => entry.motion)) return;
+      this.frame = this.view.requestAnimationFrame(() => {
+        this.frame = null;
+        this.paint(this.now());
+        this.armFrame();
+      });
+    }
+    armFade(now2) {
+      if (this.fadeTimer !== null) this.view.clearTimeout(this.fadeTimer);
+      this.fadeTimer = null;
+      if (this.showNames) return;
+      const remaining = Array.from(this.entries.values()).filter((entry) => entry.data.active !== false).map((entry) => entry.changedAt + labelLifetime - now2).filter((delay) => delay > 0);
+      if (!remaining.length) return;
+      this.fadeTimer = this.view.setTimeout(() => {
+        this.fadeTimer = null;
+        this.paint(this.now());
+        this.armFade(this.now());
+      }, Math.min(...remaining) + 1);
+    }
+    armExpiry(now2) {
+      if (this.expiryTimer !== null) this.view.clearTimeout(this.expiryTimer);
+      this.expiryTimer = null;
+      if (!this.connected) return;
+      const remaining = Array.from(this.entries.values()).map((entry) => entry.expiresAt - now2).filter(Number.isFinite);
+      if (!remaining.length) return;
+      this.expiryTimer = this.view.setTimeout(() => {
+        this.expiryTimer = null;
+        const changed = this.expireEntries(this.now());
+        if (changed && this.entries.size) this.refresh(false);
+        this.armExpiry(this.now());
+      }, Math.max(0, Math.min(...remaining)) + 1);
+    }
+    removeEntry(id, now2) {
+      const entry = this.entries.get(id);
+      if (!entry) return;
+      if (entry.wire.epoch !== void 0) {
+        this.tombstones.delete(id);
+        this.tombstones.set(id, { wire: { ...entry.wire }, removedAt: now2 });
+      }
+      entry.cursor.remove();
+      entry.rosterItem.remove();
+      entry.selections.forEach((rectangle) => rectangle.remove());
+      this.entries.delete(id);
+      if (this.hovered === id) this.hovered = null;
+      this.pruneTombstones(now2);
+    }
+    pruneTombstones(now2) {
+      for (const [id, tombstone] of this.tombstones) if (now2 - tombstone.removedAt >= tombstoneLifetime) this.tombstones.delete(id);
+      while (this.tombstones.size > tombstoneLimit) {
+        const oldest = this.tombstones.keys().next().value;
+        if (oldest === void 0) break;
+        this.tombstones.delete(oldest);
+      }
+    }
+    expireEntries(now2) {
+      let changed = false;
+      for (const [id, entry] of this.entries) if (entry.expiresAt <= now2) {
+        this.removeEntry(id, Math.min(now2, entry.expiresAt));
+        changed = true;
+      }
+      if (!changed) return false;
+      this.generation += 1;
+      if (!this.entries.size) this.disconnect();
+      return true;
+    }
+    stopMotion() {
+      if (this.frame !== null) this.view.cancelAnimationFrame(this.frame);
+      this.frame = null;
+      for (const entry of this.entries.values()) entry.motion = null;
+    }
+    scheduleLayout() {
+      if (!this.connected) return;
+      this.stopMotion();
+      this.hovered = null;
+      if (this.layoutFrame !== null) return;
+      this.layoutFrame = this.view.requestAnimationFrame(() => {
+        this.layoutFrame = null;
+        this.refresh(false);
+      });
+    }
+  };
 
   // src/markdown/block-syntax.ts
   function getSelectedLineRanges(value, selectionStart, selectionEnd, opts = {}) {
@@ -1627,377 +3376,6 @@ var __writemark = (() => {
   }
   __name(parseBlocks, "parseBlocks");
 
-  // src/markdown/inline.ts
-  var ESCAPABLE_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-  function isEscapablePunctuation(char) {
-    return char != null && ESCAPABLE_PUNCTUATION.includes(char);
-  }
-  __name(isEscapablePunctuation, "isEscapablePunctuation");
-  function placeholderPrefix(source) {
-    let longestRun = 0;
-    for (const match of String(source ?? "").matchAll(/\uE000+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
-    return "\uE000".repeat(longestRun + 1);
-  }
-  __name(placeholderPrefix, "placeholderPrefix");
-  function isBackslashEscaped(source, index) {
-    let slashes = 0;
-    for (let i = index - 1; i >= 0 && source[i] === "\\"; i -= 1) slashes += 1;
-    return slashes % 2 === 1;
-  }
-  __name(isBackslashEscaped, "isBackslashEscaped");
-  function matchingBrackets(source) {
-    const matches = new Int32Array(source.length).fill(-1);
-    const openers = [];
-    let escaped = false;
-    for (let i = 0; i < source.length; i += 1) {
-      const char = source[i];
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (char === "[") openers.push(i);
-      else if (char === "]" && openers.length) {
-        const opener = openers.pop();
-        if (opener != null) matches[opener] = i;
-      }
-    }
-    return matches;
-  }
-  __name(matchingBrackets, "matchingBrackets");
-  function parseCodeSpanAt(source, index) {
-    if (source[index] !== "`" || source[index - 1] === "`" || isBackslashEscaped(source, index)) return null;
-    let markerLength = 1;
-    while (source[index + markerLength] === "`") markerLength += 1;
-    let cursor = index + markerLength;
-    while (cursor < source.length) {
-      if (source[cursor] !== "`") {
-        cursor += 1;
-        continue;
-      }
-      let closingLength = 1;
-      while (source[cursor + closingLength] === "`") closingLength += 1;
-      if (closingLength === markerLength) {
-        return {
-          from: index,
-          to: cursor + closingLength,
-          marker: source.slice(index, index + markerLength),
-          content: source.slice(index + markerLength, cursor),
-          contentStart: index + markerLength,
-          contentEnd: cursor
-        };
-      }
-      cursor += closingLength;
-    }
-    return null;
-  }
-  __name(parseCodeSpanAt, "parseCodeSpanAt");
-  function normalizeCodeSpanContent(content) {
-    let value = String(content ?? "").replace(/\n/g, " ");
-    if (/^\s[\s\S]*\s$/.test(value) && /\S/.test(value)) value = value.slice(1, -1);
-    return value;
-  }
-  __name(normalizeCodeSpanContent, "normalizeCodeSpanContent");
-  function codeSpanMarkdown(content) {
-    const value = String(content ?? "");
-    let longestRun = 0;
-    for (const match of value.matchAll(/`+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
-    const marker = "`".repeat(longestRun + 1);
-    const padded = value && (value.startsWith("`") || value.endsWith("`") || value.startsWith(" ") && value.endsWith(" ")) ? ` ${value} ` : value;
-    return `${marker}${padded}${marker}`;
-  }
-  __name(codeSpanMarkdown, "codeSpanMarkdown");
-  function splitLinkDestinationAndTitle(raw) {
-    const value = String(raw ?? "").trim();
-    if (!value) return { url: "", title: "" };
-    const angle = /^<([^<>\n]*)>(?:\s+(["'])(.*?)\2)?\s*$/.exec(value);
-    if (angle) return { url: angle[1] ?? "", title: angle[3] || "" };
-    const quoted = /^(.*?)\s+(["'])(.*?)\2\s*$/.exec(value);
-    if (quoted && (quoted[1] ?? "").trim()) return { url: (quoted[1] ?? "").trim(), title: quoted[3] ?? "" };
-    return { url: value, title: "" };
-  }
-  __name(splitLinkDestinationAndTitle, "splitLinkDestinationAndTitle");
-  function parseInlineLinkAt(text, start = 0, brackets = null) {
-    const source = String(text ?? "");
-    if (isBackslashEscaped(source, start)) return null;
-    const bang = source[start] === "!" ? "!" : "";
-    let i = start + bang.length;
-    if (source[i] !== "[" || isBackslashEscaped(source, i)) return null;
-    let escaped = false;
-    let labelEnd = brackets ? brackets[i] ?? -1 : -1;
-    if (!brackets) {
-      let labelDepth = 1;
-      for (let j = i + 1; j < source.length; j += 1) {
-        const ch = source[j];
-        if (escaped) {
-          escaped = false;
-          continue;
-        }
-        if (ch === "\\") {
-          escaped = true;
-          continue;
-        }
-        if (ch === "[") {
-          labelDepth += 1;
-          continue;
-        }
-        if (ch === "]") {
-          labelDepth -= 1;
-          if (labelDepth === 0) {
-            labelEnd = j;
-            break;
-          }
-        }
-      }
-    }
-    if (labelEnd === -1 || source[labelEnd + 1] !== "(") return null;
-    const label = source.slice(i + 1, labelEnd);
-    const destStart = labelEnd + 2;
-    let depth = 0;
-    let quote = "";
-    let angle = false;
-    escaped = false;
-    for (let j = destStart; j < source.length; j += 1) {
-      const ch = source[j];
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (ch === "<" && j === destStart) {
-        angle = true;
-        continue;
-      }
-      if (angle) {
-        if (ch === ">") angle = false;
-        continue;
-      }
-      if (quote) {
-        if (ch === quote) quote = "";
-        continue;
-      }
-      if ((ch === '"' || ch === "'") && depth === 0 && /\s/.test(source[j - 1] || "")) {
-        quote = ch;
-        continue;
-      }
-      if (ch === "(") {
-        depth += 1;
-        continue;
-      }
-      if (ch === ")") {
-        if (depth > 0) {
-          depth -= 1;
-          continue;
-        }
-        const destination = splitLinkDestinationAndTitle(source.slice(destStart, j));
-        return {
-          bang,
-          label,
-          url: destination.url,
-          title: destination.title,
-          from: start,
-          to: j + 1,
-          labelStart: i + 1,
-          labelEnd,
-          full: source.slice(start, j + 1)
-        };
-      }
-    }
-    return null;
-  }
-  __name(parseInlineLinkAt, "parseInlineLinkAt");
-  function normalizeReferenceLabel(label) {
-    return String(label ?? "").replace(/\\([!-/:-@[-`{-~])/g, "$1").trim().replace(/\s+/g, " ").toLowerCase();
-  }
-  __name(normalizeReferenceLabel, "normalizeReferenceLabel");
-  function parseReferenceLinkAt(text, references, start = 0, brackets = null) {
-    if (!(references instanceof Map) || references.size === 0) return null;
-    const source = String(text ?? "");
-    if (isBackslashEscaped(source, start)) return null;
-    const bang = source[start] === "!" ? "!" : "";
-    const labelStartMarker = start + bang.length;
-    if (source[labelStartMarker] !== "[" || isBackslashEscaped(source, labelStartMarker)) return null;
-    let labelEnd = brackets ? brackets[labelStartMarker] ?? -1 : -1;
-    if (!brackets) {
-      let escaped = false;
-      let depth = 1;
-      for (let i = labelStartMarker + 1; i < source.length; i += 1) {
-        const char = source[i];
-        if (escaped) {
-          escaped = false;
-          continue;
-        }
-        if (char === "\\") {
-          escaped = true;
-          continue;
-        }
-        if (char === "[") {
-          depth += 1;
-          continue;
-        }
-        if (char !== "]") continue;
-        depth -= 1;
-        if (depth === 0) {
-          labelEnd = i;
-          break;
-        }
-      }
-    }
-    if (labelEnd === -1 || source[labelEnd + 1] === "(") return null;
-    const label = source.slice(labelStartMarker + 1, labelEnd);
-    let referenceLabel = label;
-    let to = labelEnd + 1;
-    if (source[to] === "[") {
-      const referenceEnd = source.indexOf("]", to + 1);
-      if (referenceEnd === -1 || isBackslashEscaped(source, referenceEnd)) return null;
-      referenceLabel = source.slice(to + 1, referenceEnd) || label;
-      to = referenceEnd + 1;
-    }
-    const reference = references.get(normalizeReferenceLabel(referenceLabel));
-    if (!reference) return null;
-    return {
-      bang,
-      label,
-      url: reference.url,
-      title: reference.title,
-      from: start,
-      to,
-      labelStart: labelStartMarker + 1,
-      labelEnd,
-      full: source.slice(start, to)
-    };
-  }
-  __name(parseReferenceLinkAt, "parseReferenceLinkAt");
-  function isInlineWhitespace(char) {
-    return !char || /\s/u.test(char);
-  }
-  __name(isInlineWhitespace, "isInlineWhitespace");
-  function isInlinePunctuation(char) {
-    return char != null && /[\p{P}\p{S}]/u.test(char);
-  }
-  __name(isInlinePunctuation, "isInlinePunctuation");
-  function emphasisDelimiterRuns(source) {
-    const runs = [];
-    for (let i = 0; i < source.length; i += 1) {
-      const marker = source[i];
-      if (marker !== "*" && marker !== "_" || isBackslashEscaped(source, i)) continue;
-      let length = 1;
-      while (source[i + length] === marker) length += 1;
-      const before = source[i - 1] || "";
-      const after = source[i + length] || "";
-      const beforeWhitespace = isInlineWhitespace(before);
-      const afterWhitespace = isInlineWhitespace(after);
-      const beforePunctuation = isInlinePunctuation(before);
-      const afterPunctuation = isInlinePunctuation(after);
-      const leftFlanking = !afterWhitespace && (!afterPunctuation || beforeWhitespace || beforePunctuation);
-      const rightFlanking = !beforeWhitespace && (!beforePunctuation || afterWhitespace || afterPunctuation);
-      const canOpen = marker === "*" ? leftFlanking : leftFlanking && (!rightFlanking || beforePunctuation);
-      const canClose = marker === "*" ? rightFlanking : rightFlanking && (!leftFlanking || afterPunctuation);
-      runs.push({
-        start: i,
-        length,
-        marker,
-        canOpen,
-        canClose,
-        leftUsed: 0,
-        rightUsed: 0,
-        get remaining() {
-          return this.length - this.leftUsed - this.rightUsed;
-        }
-      });
-      i += length - 1;
-    }
-    return runs;
-  }
-  __name(emphasisDelimiterRuns, "emphasisDelimiterRuns");
-  function emphasisPairs(source) {
-    const runs = emphasisDelimiterRuns(source);
-    const pairs = [];
-    const openers = { "*": [], "_": [] };
-    for (const closer of runs) {
-      if (closer.canClose) {
-        while (closer.remaining > 0) {
-          const candidates = openers[closer.marker];
-          while (candidates.length && (candidates.at(-1)?.remaining ?? 0) <= 0) candidates.pop();
-          let opener = null;
-          for (let openerIndex = candidates.length - 1; openerIndex >= 0; openerIndex -= 1) {
-            const candidate = candidates[openerIndex];
-            if (!candidate) continue;
-            ;
-            if (candidate.remaining <= 0) continue;
-            const blockedByRuleOfThree = (candidate.canClose || closer.canOpen) && (candidate.remaining + closer.remaining) % 3 === 0 && (candidate.remaining % 3 !== 0 || closer.remaining % 3 !== 0);
-            if (blockedByRuleOfThree) continue;
-            opener = candidate;
-            break;
-          }
-          if (!opener) break;
-          const use = opener.remaining >= 2 && closer.remaining >= 2 ? 2 : 1;
-          const openEnd = opener.start + opener.length - opener.rightUsed;
-          const openStart = openEnd - use;
-          const closeStart = closer.start + closer.leftUsed;
-          const closeEnd = closeStart + use;
-          opener.rightUsed += use;
-          closer.leftUsed += use;
-          pairs.push({
-            openStart,
-            openEnd,
-            closeStart,
-            closeEnd,
-            marker: source.slice(openStart, openEnd),
-            tag: use === 2 ? "strong" : "em"
-          });
-        }
-      }
-      if (closer.canOpen && closer.remaining > 0) openers[closer.marker].push(closer);
-    }
-    return pairs;
-  }
-  __name(emphasisPairs, "emphasisPairs");
-  function collectInlineMarkdownRanges(source) {
-    const ranges = [];
-    const addMatches = /* @__PURE__ */ __name((regex, openLength, closeLength, labelGroup = 1, markerOffsetGroup = null) => {
-      regex.lastIndex = 0;
-      let match;
-      while (match = regex.exec(source)) {
-        const label = match[labelGroup] ?? "";
-        const markerOffset = markerOffsetGroup == null ? 0 : (match[markerOffsetGroup] ?? "")?.length ?? 0;
-        const from = match.index + markerOffset;
-        const to = match.index + (match[0] ?? "").length;
-        const innerFrom = from + openLength;
-        const innerTo = to - closeLength;
-        if (isBackslashEscaped(source, from) || isBackslashEscaped(source, to - closeLength)) continue;
-        if (innerTo >= innerFrom && label.length >= 0) ranges.push({ from, to, innerFrom, innerTo });
-        if (match.index === regex.lastIndex) regex.lastIndex += 1;
-      }
-    }, "addMatches");
-    addMatches(/\*\*([^*]+)\*\*/g, 2, 2);
-    addMatches(/__([^_]+)__/g, 2, 2);
-    addMatches(/~~([^~]+)~~/g, 2, 2);
-    addMatches(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, 1, 1, 2, 1);
-    addMatches(/(^|[^_])_([^_\n]+)_(?!_)/g, 1, 1, 2, 1);
-    for (let i = 0; i < source.length; i += 1) {
-      const code = parseCodeSpanAt(source, i);
-      if (!code) continue;
-      ranges.push({ from: code.from, to: code.to, innerFrom: code.contentStart, innerTo: code.contentEnd });
-      i = code.to - 1;
-    }
-    const brackets = matchingBrackets(source);
-    for (let i = 0; i < source.length; i += 1) {
-      const link = parseInlineLinkAt(source, i, brackets);
-      if (!link) continue;
-      ranges.push({ from: link.from, to: link.to, innerFrom: link.labelStart, innerTo: link.labelEnd });
-      i = link.to - 1;
-    }
-    return ranges.sort((a, b) => a.to - a.from - (b.to - b.from));
-  }
-  __name(collectInlineMarkdownRanges, "collectInlineMarkdownRanges");
-
   // src/markdown/references.ts
   function parseReferenceDefinition(line) {
     const match = /^ {0,3}\[([^\]\n]+)\]:[ \t]*(.+?)\s*$/.exec(String(line ?? ""));
@@ -2251,7 +3629,7 @@ var __writemark = (() => {
         }
       }
       if (text[i] === "\\" && isEscapablePunctuation(text[i + 1])) {
-        prepared += reserve(token("\\") + escapeHtml(text[i + 1]));
+        prepared += reserve((opts.hideEscapes ? "" : token("\\")) + escapeHtml(text[i + 1]));
         i += 2;
         i -= 1;
         continue;
@@ -2366,53 +3744,119 @@ var __writemark = (() => {
     return template.content.textContent ?? "";
   }
   __name(stripHtml, "stripHtml");
+  function escapeClipboardText(text, inTable) {
+    const literal = text.replace(/[\\`*_{}\[\]()#+\-.!>~]/g, "\\$&");
+    return inTable ? literal : literal.replace(/\|/g, "\\|");
+  }
+  __name(escapeClipboardText, "escapeClipboardText");
   function htmlToMarkdown(html) {
     const template = document.createElement("template");
-    template.innerHTML = String(html ?? "");
-    const escapeMd = /* @__PURE__ */ __name((text) => String(text ?? "").replace(/\u00a0/g, " ").replace(/[\\`*_{}\[\]()#+\-.!>~|]/g, "\\$&"), "escapeMd");
-    const walk = /* @__PURE__ */ __name((node) => {
-      if (node.nodeType === Node.TEXT_NODE) return escapeMd(node.nodeValue);
+    const source = String(html ?? "");
+    template.innerHTML = source;
+    const escapeMd = /* @__PURE__ */ __name((text, inTable) => escapeClipboardText((text ?? "").replace(/\u00a0/g, " "), inTable), "escapeMd");
+    const mark = /* @__PURE__ */ __name((content, delimiter) => {
+      const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(content);
+      if (!match?.[2]) return content;
+      return `${match[1] || ""}${delimiter}${match[2]}${delimiter}${match[3] || ""}`;
+    }, "mark");
+    const codeBlocks = [];
+    const namespaces = /* @__PURE__ */ new Set();
+    for (const text of [source, template.content.textContent ?? ""]) {
+      for (const match of text.matchAll(/\uE000writemark-code-(\d+)-/g)) {
+        if (match[1]) namespaces.add(match[1]);
+      }
+    }
+    let namespace = 0;
+    while (namespaces.has(String(namespace))) namespace += 1;
+    const codePrefix = `\uE000writemark-code-${namespace}-`;
+    const walk = /* @__PURE__ */ __name((node, depth = 0, inTable = false) => {
+      if (node.nodeType === Node.TEXT_NODE) return escapeMd(node.nodeValue?.replace(/[\t\r\n ]+/g, " ") ?? "", inTable);
+      if (depth > 256) {
+        const reader = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        const text = [];
+        while (reader.nextNode()) {
+          if (!reader.currentNode.parentElement?.closest("script,style,iframe,template,object,embed,svg,math,head")) text.push(escapeMd(reader.currentNode.nodeValue, inTable));
+        }
+        return text.join("");
+      }
       if (!(node instanceof Element)) return "";
       const tag = node.tagName.toLowerCase();
-      const children = /* @__PURE__ */ __name(() => Array.from(node.childNodes).map(walk).join(""), "children");
+      const children = /* @__PURE__ */ __name(() => Array.from(node.childNodes).map((child) => walk(child, depth + 1, inTable)).join(""), "children");
       const block = /* @__PURE__ */ __name((text) => `
 
 ${text.trim()}
 
 `, "block");
-      if (["script", "style", "iframe", "template"].includes(tag)) return "";
-      if (tag === "br") return "\n";
+      if (["script", "style", "iframe", "template", "object", "embed", "svg", "math", "head"].includes(tag)) return "";
+      if (/mso-list\s*:\s*ignore/i.test(node.getAttribute("style") || "")) return "";
+      if (tag === "br") return node.classList.contains("Apple-interchange-newline") ? "" : "  \n";
       if (/^h[1-6]$/.test(tag)) return block(`${"#".repeat(Number(tag[1]))} ${children().trim()}`);
-      if (tag === "strong" || tag === "b") return `**${children()}**`;
-      if (tag === "em" || tag === "i") return `*${children()}*`;
-      if (tag === "code" && node.parentElement?.tagName?.toLowerCase() !== "pre") return codeSpanMarkdown(node.textContent || "");
+      const weight = node instanceof HTMLElement ? node.style.fontWeight : "";
+      if (tag === "strong" || tag === "b") {
+        const content2 = weight === "normal" || weight === "400" ? children() : mark(children(), "**");
+        return node instanceof HTMLElement && node.style.fontStyle === "italic" ? mark(content2, "*") : content2;
+      }
+      if (tag === "em" || tag === "i") return mark(children(), "*");
+      if (tag === "del" || tag === "s") return mark(children(), "~~");
+      if (tag === "hr") return block("---");
+      if (tag === "code" && node.parentElement?.tagName?.toLowerCase() !== "pre") {
+        return codeSpanMarkdown(node.textContent || "");
+      }
       if (tag === "pre") {
-        const content = normalizeLineEndings(node.textContent);
+        const content2 = normalizeLineEndings(node.textContent);
+        if (inTable) return codeSpanMarkdown(content2.replace(/\s*\n\s*/g, " "));
         let longestRun = 2;
-        for (const match of content.matchAll(/`+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
+        for (const match of content2.matchAll(/`+/g)) longestRun = Math.max(longestRun, (match[0] ?? "").length);
         const fence = "`".repeat(longestRun + 1);
-        return block(`${fence}
-${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
+        codeBlocks.push(`${fence}
+${content2}${content2.endsWith("\n") ? "" : "\n"}${fence}`);
+        return block(`${codePrefix}${codeBlocks.length - 1}\uE001`);
       }
       if (tag === "blockquote") return block(children().trim().split("\n").map((line) => `> ${line}`).join("\n"));
       if (tag === "a") {
         const href = node.getAttribute("href") || "";
-        const label = children().trim() || escapeMd(href);
+        const content2 = children();
+        const label = content2.trim() || escapeMd(href, inTable);
         const destination = markdownLinkDestination(href);
-        return href && destination != null && isSafeUrl(href) ? `[${label}](${destination})` : label;
+        if (!href || destination == null || !isSafeUrl(href)) return content2 || label;
+        const leading = /^\s*/.exec(content2)?.[0] || "";
+        const trailing = /\s*$/.exec(content2)?.[0] || "";
+        return `${leading}[${label}](${destination})${trailing}`;
       }
       if (tag === "img") {
         const src = node.getAttribute("src") || "";
         const alt = node.getAttribute("alt") || "";
         const destination = markdownLinkDestination(src);
-        return src && destination != null && isSafeUrl(src, { allowDataImage: false }) ? `![${escapeMarkdownLabel(alt)}](${destination})` : escapeMd(alt);
+        return src && destination != null && isSafeUrl(src, { allowDataImage: false }) ? `![${escapeMarkdownLabel(alt)}](${destination})` : escapeMd(alt, inTable);
       }
       if (tag === "ul" || tag === "ol") {
-        const items = Array.from(node.children).filter((el) => el.tagName.toLowerCase() === "li");
-        return block(items.map((li, i) => `${tag === "ol" ? `${i + 1}.` : "-"} ${Array.from(li.childNodes).map(walk).join("").trim()}`).join("\n"));
+        const start = Number.parseInt(node.getAttribute("start") || "1", 10);
+        let index = Number.isFinite(start) ? start : 1;
+        const lines = [];
+        for (const item of Array.from(node.children)) {
+          const itemTag = item.tagName.toLowerCase();
+          if (itemTag === "ul" || itemTag === "ol") {
+            lines.push(walk(item, depth + 1, inTable).trim().split("\n").map((line) => `   ${line}`).join("\n"));
+          } else if (itemTag === "li") {
+            const marker = tag === "ol" ? `${index++}.` : "-";
+            const content2 = Array.from(item.childNodes).map((child) => {
+              if (child instanceof Element && /^(UL|OL)$/.test(child.tagName)) {
+                return "\n" + walk(child, depth + 1, inTable).trim() + "\n\n";
+              }
+              return walk(child, depth + 1, inTable);
+            }).join("").trim();
+            const listContent = content2.startsWith(codePrefix) ? "\n" + content2 : content2;
+            const [first = "", ...rest] = listContent.split("\n");
+            lines.push(`${marker} ${first}` + rest.map((line) => "\n" + (line ? " ".repeat(marker.length + 1) + line : "")).join(""));
+          }
+        }
+        return block(lines.join("\n"));
       }
       if (tag === "table") {
-        const rows = Array.from(node.querySelectorAll("tr")).map((tr) => Array.from(tr.children).map((cell) => Array.from(cell.childNodes).map(walk).join("").trim()));
+        const rows = Array.from(node.querySelectorAll("tr")).filter((tr) => tr.closest("table") === node).map((tr) => Array.from(tr.children).filter((cell) => /^(TD|TH)$/.test(cell.tagName)).map((cell) => {
+          const inline = Array.from(cell.childNodes).map((child) => walk(child, depth + 1, true)).join("");
+          return escapeTableCellText(inline.trim().replace(/\s*\n\s*/g, " "));
+        }));
         if (!rows.length) return "";
         const cols = Math.max(...rows.map((r) => r.length));
         const pad = /* @__PURE__ */ __name((r) => Array.from({ length: cols }, (_, i) => r[i] || ""), "pad");
@@ -2420,14 +3864,27 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
         const body = rows.slice(1).map(pad);
         return block([`| ${header.join(" | ")} |`, `| ${Array.from({ length: cols }, () => "---").join(" | ")} |`, ...body.map((r) => `| ${r.join(" | ")} |`)].join("\n"));
       }
+      if (tag === "p" && /mso-list\s*:/i.test(node.getAttribute("style") || "")) {
+        const style = node.getAttribute("style") || "";
+        const level = Number(/level(\d+)/i.exec(style)?.[1] || "1");
+        const label = node.querySelector('[style*="mso-list:Ignore"], [style*="mso-list: Ignore"]')?.textContent?.trim() || "";
+        const marker = /^[\dA-Za-z]+[.)]/.test(label) ? `${/^\d+/.exec(label)?.[0] || "1"}.` : "-";
+        return `
+${"   ".repeat(Math.min(20, Math.max(0, level - 1)))}${marker} ${children().trim()}
+`;
+      }
       if (["p", "div", "section", "article"].includes(tag)) return block(children());
-      return children();
+      let content = children();
+      if (weight === "bold" || Number(weight) >= 600) content = mark(content, "**");
+      if (node instanceof HTMLElement && node.style.fontStyle === "italic") content = mark(content, "*");
+      return content;
     }, "walk");
-    return Array.from(template.content.childNodes).map(walk).join("").trim();
+    return Array.from(template.content.childNodes).map((child) => walk(child)).join("").replace(/\n[ \t]+\n/g, "\n\n").replace(/\n{3,}/g, "\n\n").trim().replace(new RegExp(`(^[ >]*)${codePrefix}(\\d+)\uE001`, "gm"), (_match, prefix, index) => (codeBlocks[Number(index)] || "").split("\n").map((line) => prefix + line).join("\n"));
   }
   __name(htmlToMarkdown, "htmlToMarkdown");
   function tsvToMarkdownTable(text) {
-    const rows = normalizeLineEndings(text).split("\n").filter((row) => row.length > 0).map((row) => row.split("	").map((cell) => cell.replace(/\|/g, "\\|").trim()));
+    const literalCell = /* @__PURE__ */ __name((cell) => escapeTableCellText(escapeClipboardText(cell.trim(), true)), "literalCell");
+    const rows = normalizeLineEndings(text).split("\n").filter((row) => row.length > 0).map((row) => row.split("	").map(literalCell));
     if (rows.length < 2 || rows.every((row) => row.length < 2)) return null;
     const cols = Math.max(...rows.map((row) => row.length));
     const pad = /* @__PURE__ */ __name((row) => Array.from({ length: cols }, (_, i) => row[i] || ""), "pad");
@@ -2555,100 +4012,6 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
     return lines.join("\n");
   }
   __name(textFromMarkdown, "textFromMarkdown");
-
-  // src/core/transactions.ts
-  function applyTextChanges(value, changes) {
-    const sorted = [...changes].sort((a, b) => b.from - a.from);
-    let out = value;
-    for (const c of sorted) {
-      const from = clamp(c.from, 0, out.length);
-      const to = clamp(c.to, from, out.length);
-      out = out.slice(0, from) + normalizeLineEndings(c.insert ?? "") + out.slice(to);
-    }
-    return out;
-  }
-  __name(applyTextChanges, "applyTextChanges");
-  function diffTextChange(before, after) {
-    const oldValue = normalizeLineEndings(before ?? "");
-    const newValue = normalizeLineEndings(after ?? "");
-    if (oldValue === newValue) return [];
-    let start = 0;
-    const maxStart = Math.min(oldValue.length, newValue.length);
-    while (start < maxStart && oldValue[start] === newValue[start]) start += 1;
-    let oldEnd = oldValue.length;
-    let newEnd = newValue.length;
-    while (oldEnd > start && newEnd > start && oldValue[oldEnd - 1] === newValue[newEnd - 1]) {
-      oldEnd -= 1;
-      newEnd -= 1;
-    }
-    return [{ from: start, to: oldEnd, insert: newValue.slice(start, newEnd) }];
-  }
-  __name(diffTextChange, "diffTextChange");
-  function normalizeChanges(changes = []) {
-    return [...changes].map((change) => ({
-      from: Number(change.from) || 0,
-      to: Number(change.to) || Number(change.from) || 0,
-      insert: normalizeLineEndings(change.insert ?? "")
-    })).sort((a, b) => a.from - b.from || a.to - b.to);
-  }
-  __name(normalizeChanges, "normalizeChanges");
-  function changedSpans(changes = []) {
-    const sorted = normalizeChanges(changes);
-    if (!sorted.length) return null;
-    let oldStart = Infinity;
-    let oldEnd = -Infinity;
-    let newStart = Infinity;
-    let newEnd = -Infinity;
-    let shift = 0;
-    for (const change of sorted) {
-      oldStart = Math.min(oldStart, change.from);
-      oldEnd = Math.max(oldEnd, change.to);
-      const newFrom = change.from + shift;
-      const newTo = newFrom + change.insert.length;
-      newStart = Math.min(newStart, newFrom);
-      newEnd = Math.max(newEnd, newTo);
-      shift += change.insert.length - (change.to - change.from);
-    }
-    return { oldStart, oldEnd, newStart, newEnd, delta: shift };
-  }
-  __name(changedSpans, "changedSpans");
-  function sameSelection(a, b) {
-    return Boolean(a && b && a.start === b.start && a.end === b.end && (a.direction || "none") === (b.direction || "none"));
-  }
-  __name(sameSelection, "sameSelection");
-  function makeSnapshot(value, selectionStart, selectionEnd, direction = "none") {
-    return { value, selection: { start: selectionStart, end: selectionEnd, direction } };
-  }
-  __name(makeSnapshot, "makeSnapshot");
-  function tx(ctx, actionId, changes, selectionAfter, undoGroup = actionId) {
-    return { changes, selectionBefore: { start: ctx.selectionStart, end: ctx.selectionEnd, direction: ctx.selectionDirection ?? "none" }, selectionAfter, source: "api", actionId, undoGroup, timestamp: now() };
-  }
-  __name(tx, "tx");
-  function ok(transaction, announcement) {
-    return { ok: true, transaction, announcement };
-  }
-  __name(ok, "ok");
-  function okNoop(announcement, preventDefault = false) {
-    return { ok: true, announcement, preventDefault };
-  }
-  __name(okNoop, "okNoop");
-  function fail(reason, message) {
-    return { ok: false, reason, message };
-  }
-  __name(fail, "fail");
-  function insertionTransaction(ctx, actionId, insert, selectionOffset = insert.length, undoGroup = actionId) {
-    const from = ctx.selectionStart;
-    const to = ctx.selectionEnd;
-    const cursor = from + selectionOffset;
-    return ok(tx(ctx, actionId, [{ from, to, insert }], { start: cursor, end: cursor, direction: "none" }, undoGroup));
-  }
-  __name(insertionTransaction, "insertionTransaction");
-  function removePrefixFromLine(ctx, actionId, prefixEndOffset, announcement) {
-    const from = ctx.currentLine.start;
-    const to = ctx.currentLine.start + prefixEndOffset;
-    return ok(tx(ctx, actionId, [{ from, to, insert: "" }], { start: from, end: from, direction: "none" }, actionId), announcement);
-  }
-  __name(removePrefixFromLine, "removePrefixFromLine");
 
   // src/render/live.ts
   var LiveRenderer = class {
@@ -3247,7 +4610,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       const cols = Math.max(block.header.cells.length, ...block.rows.map((r) => r.cells.length), 1);
       const alignments = Array.from({ length: cols }, (_, i) => tableAlignmentFromDelimiter(block.delimiter.cells[i]?.text || ""));
       const editableAttribute = this._liveDescendantEditableAttribute();
-      const renderCell = /* @__PURE__ */ __name((cell, tag, row, col) => `<${tag}${tableAlignmentStyle(alignments[col] || "")}><div class="md-cell" part="table-cell" data-editable="cell" data-row="${row}" data-col="${col}" data-from="${cell?.from ?? block.to}" data-to="${cell?.to ?? block.to}"${editableAttribute} spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${decorateInline(unescapeTableCellText(cell?.text ?? ""), this.api._rendererOptions())}</div></${tag}>`, "renderCell");
+      const renderCell = /* @__PURE__ */ __name((cell, tag, row, col) => `<${tag}${tableAlignmentStyle(alignments[col] || "")}><div class="md-cell" part="table-cell" data-editable="cell" data-row="${row}" data-col="${col}" data-from="${cell?.from ?? block.to}" data-to="${cell?.to ?? block.to}"${editableAttribute} spellcheck="${this._sourceTextarea?.spellcheck ? "true" : "false"}">${decorateInline(unescapeTableCellText(cell?.text ?? ""), { ...this.api._rendererOptions(), hideEscapes: true })}</div></${tag}>`, "renderCell");
       const headerCells = parseTableLineRanges(block.header.text, block.header.start, true);
       const header = `<thead><tr>${Array.from({ length: cols }, (_, i) => renderCell(headerCells[i] ?? { text: "", from: block.header.end, to: block.header.end }, "th", -1, i)).join("")}</tr></thead>`;
       const bodyRows = block.rows.length ? block.rows.map((row) => ({ ...row, cells: parseTableLineRanges(row.text, row.start, true) })) : [{ end: block.delimiter.end, cells: Array.from({ length: cols }, () => ({ text: "", from: block.delimiter.end, to: block.delimiter.end })) }];
@@ -3257,11 +4620,102 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
     }
   };
 
+  // src/core/text-edits.ts
+  var lengthOf = /* @__PURE__ */ __name((piece) => piece.kind === "source" ? piece.to - piece.from : piece.text.length, "lengthOf");
+  function slicePieces(pieces, from, to) {
+    const result = [];
+    let offset = 0;
+    for (const piece of pieces) {
+      const length = lengthOf(piece);
+      const start = Math.max(0, from - offset);
+      const end = Math.min(length, to - offset);
+      if (start < end) {
+        result.push(piece.kind === "source" ? { kind: "source", from: piece.from + start, to: piece.from + end } : { kind: "insert", text: piece.text.slice(start, end) });
+      }
+      offset += length;
+      if (offset >= to) break;
+    }
+    return result;
+  }
+  __name(slicePieces, "slicePieces");
+  function applyPieces(initial, changes) {
+    let pieces = [...initial];
+    let length = pieces.reduce((total, piece) => total + lengthOf(piece), 0);
+    for (const change of [...changes].sort((a, b) => b.from - a.from)) {
+      const from = clamp(change.from, 0, length);
+      const to = clamp(change.to, from, length);
+      const insert = normalizeLineEndings(change.insert);
+      pieces = [...slicePieces(pieces, 0, from), ...insert ? [{ kind: "insert", text: insert }] : [], ...slicePieces(pieces, to, length)];
+      length += insert.length - (to - from);
+    }
+    return pieces;
+  }
+  __name(applyPieces, "applyPieces");
+  function composeTextChanges(before, first, second) {
+    const initial = before.length ? [{ kind: "source", from: 0, to: before.length }] : [];
+    const pieces = applyPieces(applyPieces(initial, first), second);
+    const result = [];
+    let from = 0;
+    let inserted = [];
+    for (const piece of pieces) {
+      if (piece.kind === "insert") {
+        inserted.push(piece.text);
+        continue;
+      }
+      if (piece.from !== from || inserted.length) {
+        result.push({ from, to: piece.from, insert: inserted.join("") });
+        inserted = [];
+      }
+      from = piece.to;
+    }
+    if (from !== before.length || inserted.length) result.push({ from, to: before.length, insert: inserted.join("") });
+    return result;
+  }
+  __name(composeTextChanges, "composeTextChanges");
+  function inferSourceTextChanges(before, after, selection, inputType, data, selectionAfter) {
+    if (before === after) return [];
+    const start = selection.start;
+    const end = selection.end;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > before.length) return null;
+    const candidate = /* @__PURE__ */ __name((from, to, insert) => {
+      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to > before.length) return null;
+      return before.slice(0, from) + insert + before.slice(to) === after ? [{ from, to, insert }] : null;
+    }, "candidate");
+    if (inputType.startsWith("delete")) {
+      if (start !== end) return candidate(start, end, "");
+      const removed = before.length - after.length;
+      if (removed <= 0) return null;
+      if (inputType.endsWith("Backward")) return candidate(start - removed, start, "");
+      if (inputType.endsWith("Forward")) return candidate(start, start + removed, "");
+      const from = selectionAfter.start;
+      if (selectionAfter.start === selectionAfter.end && from <= start && from + removed >= start) return candidate(from, from + removed, "");
+      return null;
+    }
+    if (!inputType.startsWith("insert")) return null;
+    const supplied = data === null ? null : normalizeLineEndings(data);
+    const insertedLength = after.length - before.length + end - start;
+    if (insertedLength >= 0) {
+      const insert = supplied ?? after.slice(start, start + insertedLength);
+      const direct = candidate(start, end, insert);
+      if (direct) return direct;
+    }
+    if (supplied !== null && selectionAfter.start === selectionAfter.end) {
+      const from = selectionAfter.end - supplied.length;
+      const to = from + before.length + supplied.length - after.length;
+      if (from <= start && to >= end) return candidate(from, to, supplied);
+    }
+    return null;
+  }
+  __name(inferSourceTextChanges, "inferSourceTextChanges");
+
   // src/browser/input.ts
   var InputController = class {
     static {
       __name(this, "InputController");
     }
+    _sourceInputIntent = null;
+    _compositionChanges = null;
+    _compositionValue = null;
     constructor(api) {
       this.api = Object.freeze(api);
       this._beforeInputSnapshot = null;
@@ -3336,20 +4790,25 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
     }
     _onSourceBeforeInput(event) {
       this._beforeInputSnapshot = null;
+      this._sourceInputIntent = null;
       if (this.disabled || this.readonly) {
         event.preventDefault();
         return;
       }
-      if (this._isComposing || event?.isComposing) return;
-      const inputType = event?.inputType || "";
-      if (inputType === "historyUndo" || inputType === "historyRedo") {
+      const composing = this._isComposing || event.isComposing;
+      const inputType = event.inputType || "";
+      if (!composing && (inputType === "historyUndo" || inputType === "historyRedo")) {
         event.preventDefault();
         inputType === "historyUndo" ? this.api._undo({ source: "user", inputType }) : this.api._redo({ source: "user", inputType });
         return;
       }
-      this._beforeInputSnapshot = this.api._snapshot();
+      const snapshot = this.api._snapshot();
+      this._sourceInputIntent = { snapshot, inputType, data: event.data };
+      if (!composing) this._beforeInputSnapshot = snapshot;
     }
     _onSourceInput(event) {
+      const intent = this._sourceInputIntent;
+      this._sourceInputIntent = null;
       if (this.disabled || this.readonly) {
         this._sourceTextarea.value = this._value;
         this._sourceTextarea.setSelectionRange(
@@ -3358,6 +4817,7 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
           this._selection.direction
         );
         this._beforeInputSnapshot = null;
+        this._sourceInputIntent = null;
         return;
       }
       const composing = this._isComposing || event?.isComposing;
@@ -3373,19 +4833,27 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       if (this._sourceTextarea.value !== this._value) this._sourceTextarea.value = this._value;
       this._selection = { start: this._sourceTextarea.selectionStart, end: this._sourceTextarea.selectionEnd, direction: this._sourceTextarea.selectionDirection || "none" };
       const after = this.api._snapshot();
+      const inputType = event?.inputType || intent?.inputType || "";
+      const inferred = intent?.snapshot.value === previousValue ? inferSourceTextChanges(previousValue, this._value, intent.snapshot.selection, inputType, event?.data ?? intent.data, after.selection) : null;
+      const changes = inferred ?? diffTextChange(previousValue, this._value);
       this._beforeInputSnapshot = null;
       if (previousValue === this._value) {
         if (!this._isComposing) this.api._scheduleCompletionUpdate();
         return;
       }
-      if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+      if (composing && inferred === null) this._compositionChanges = null;
+      this._trackCompositionChanges(previousValue, this._value, changes);
+      if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward", changes });
       this._redoStack.length = 0;
-      this.api._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: false, previousValue, changes: diffTextChange(previousValue, this._value) });
+      this.api._afterValueChanged({ source: "user", inputType: event?.inputType, restoreSelection: false, previousValue, changes });
       if (!this._isComposing) this.api._scheduleCompletionUpdate();
     }
     _onCompositionStart() {
       if (this.disabled || this.readonly || this._isComposing) return;
       this._compositionSnapshot = this.api._snapshot();
+      this._compositionChanges = [];
+      this._compositionValue = this._value;
+      this._sourceInputIntent = null;
       this._beforeInputSnapshot = null;
       this._beforeInputTarget = null;
       this._isComposing = true;
@@ -3395,21 +4863,36 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
       if (!this._isComposing) return;
       const before = this._compositionSnapshot;
       const after = this.api._snapshot();
+      const changes = before && this._compositionValue === after.value && this._compositionChanges && applyTextChanges(before.value, this._compositionChanges) === after.value ? this._compositionChanges : null;
+      this._compositionChanges = null;
+      this._compositionValue = null;
+      this._sourceInputIntent = null;
       this._isComposing = false;
       this._compositionSnapshot = null;
       this._beforeInputSnapshot = null;
       this._beforeInputTarget = null;
-      if (before && before.value !== after.value) this.api._recordUndo(before, after, "composition");
+      if (before && before.value !== after.value) this.api._recordUndo(before, after, "composition", changes ? { changes } : void 0);
       if (before && before.value !== after.value) this._redoStack.length = 0;
       if (this.api._isLiveVisible() && this._liveDirty) {
         this.api._renderAll({
           restoreSelection: true,
           previousValue: before?.value ?? this._value,
-          changes: before ? diffTextChange(before.value, this._value) : null,
+          changes: changes ?? (before ? diffTextChange(before.value, this._value) : null),
           force: true
         });
       }
       this.api._scheduleCompletionUpdate();
+    }
+    _trackCompositionChanges(previousValue, nextValue, changes) {
+      if (!this._isComposing || !this._compositionSnapshot) return;
+      if (this._compositionChanges === null || this._compositionValue !== previousValue) {
+        this._compositionChanges = null;
+        this._compositionValue = nextValue;
+        return;
+      }
+      const composed = composeTextChanges(this._compositionSnapshot.value, this._compositionChanges, changes);
+      this._compositionChanges = applyTextChanges(this._compositionSnapshot.value, composed) === nextValue ? composed : null;
+      this._compositionValue = nextValue;
     }
     _onLiveBeforeInput(event) {
       if (this._isComposing || event?.isComposing) return;
@@ -3827,14 +5310,17 @@ ${content}${content.endsWith("\n") ? "" : "\n"}${fence}`);
           if (!this._isComposing) this.api._scheduleCompletionUpdate();
           return;
         }
-        if (before) this.api._recordUndo(before, after2, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+        const changes2 = diffTextChange(previousValue2, this._value);
+        if (composing) this._compositionChanges = null;
+        this._trackCompositionChanges(previousValue2, this._value, changes2);
+        if (before) this.api._recordUndo(before, after2, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward", changes: changes2 });
         this._redoStack.length = 0;
         this.api._afterValueChanged({
           source: "user",
           inputType: event?.inputType,
           restoreSelection: true,
           previousValue: previousValue2,
-          changes: diffTextChange(previousValue2, this._value),
+          changes: changes2,
           preserveLiveDom: this.api._isAppleWebKitRuntime()
         });
         if (!this._isComposing) this.api._scheduleCompletionUpdate();
@@ -3863,6 +5349,7 @@ ${raw}`;
       if (pendingFenceOpening) {
         editable.dataset.to = String(from + insert.length);
       }
+      const previousSelection = { ...this._selection };
       this._value = nextValue;
       this._selection = { start: cursor, end: cursor, direction: "none" };
       if (composing) editable.dataset.to = String(from + insert.length);
@@ -3872,14 +5359,18 @@ ${raw}`;
         if (!this._isComposing) this.api._scheduleCompletionUpdate();
         return;
       }
-      if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward" });
+      const inferred = inferSourceTextChanges(previousValue, this._value, inputTarget?.selection ?? previousSelection, event?.inputType || "", event?.data ?? null, this._selection);
+      const changes = inferred ?? [{ from, to, insert }];
+      if (composing && inferred === null) this._compositionChanges = null;
+      this._trackCompositionChanges(previousValue, this._value, changes);
+      if (before) this.api._recordUndo(before, after, this.api._undoGroupForInput(event?.inputType), { coalesce: event?.inputType === "insertText" || event?.inputType === "deleteContentBackward", changes });
       this._redoStack.length = 0;
       this.api._afterValueChanged({
         source: "user",
         inputType: event?.inputType,
         restoreSelection: true,
         previousValue,
-        changes: [{ from, to, insert }],
+        changes,
         preserveLiveDom: this.api._isAppleWebKitRuntime() || pendingFenceOpening
       });
       if (!this._isComposing) this.api._scheduleCompletionUpdate();
@@ -3911,7 +5402,9 @@ ${raw}`;
         if (!this._isComposing) this.api._scheduleCompletionUpdate();
         return;
       }
+      this._trackCompositionChanges(previousValue, this._value, pending.changes);
       this.api._recordUndo(before, after, this.api._undoGroupForInput(inputType), {
+        changes: pending.changes,
         coalesce: inputType === "deleteContentBackward" || inputType === "deleteContentForward"
       });
       this._redoStack.length = 0;
@@ -4028,7 +5521,9 @@ ${insert}`;
         this._selection.end,
         this._selection.direction
       );
+      this._trackCompositionChanges(previousValue, this._value, changes);
       this.api._recordUndo(before, after, this.api._undoGroupForInput(inputType), {
+        changes,
         coalesce: inputType === "insertText" || inputType === "deleteContentBackward" || inputType === "deleteContentForward"
       });
       this._redoStack.length = 0;
@@ -4053,6 +5548,17 @@ ${insert}`;
     static {
       __name(this, "DocumentState");
     }
+    _value = "";
+    revision = 0;
+    get value() {
+      return this._value;
+    }
+    set value(value) {
+      if (value !== this._value) {
+        this._value = value;
+        this.revision += 1;
+      }
+    }
     constructor() {
       this.value = "";
       this.defaultValue = "";
@@ -4072,29 +5578,32 @@ ${insert}`;
       this.maxEntries = maxEntries;
       this.clock = clock;
     }
-    record(before, after, group, { coalesce = false } = {}) {
+    record(before, after, group, { coalesce = false, changes } = {}) {
       if (!before || !after) return;
       if (before.value === after.value && sameSelection(before.selection, after.selection)) return;
+      const supplied = changes ? normalizeChanges([...changes]) : null;
+      const canonical = supplied && supplied.every((change, index) => Number.isSafeInteger(change.from) && Number.isSafeInteger(change.to) && change.from >= 0 && change.to >= change.from && change.to <= before.value.length && (!index || supplied[index - 1].to <= change.from)) && applyTextChanges(before.value, supplied) === after.value ? supplied : diffTextChanges(before.value, after.value);
       const latest = this.undoStack.at(-1);
       const timestamp = this.clock();
-      if (coalesce && latest && latest.group === group && timestamp - latest.timestamp < 900) {
+      if (coalesce && latest && latest.after.value === before.value && latest.group === group && timestamp - latest.timestamp < 900) {
+        latest.changes = composeTextChanges(latest.before.value, latest.changes ?? diffTextChanges(latest.before.value, latest.after.value), canonical);
         latest.after = after;
         latest.timestamp = timestamp;
         return;
       }
-      this.undoStack.push({ before, after, group, timestamp });
+      this.undoStack.push({ before, after, group, timestamp, changes: canonical });
       if (this.undoStack.length > this.maxEntries) this.undoStack.shift();
     }
     undo(current) {
       const entry = this.undoStack.pop();
       if (!entry) return null;
-      this.redoStack.push({ before: entry.before, after: current, group: entry.group, timestamp: this.clock() });
+      this.redoStack.push({ before: entry.before, after: current, group: entry.group, timestamp: this.clock(), changes: current.value === entry.after.value && entry.changes ? entry.changes : diffTextChanges(entry.before.value, current.value) });
       return entry.before;
     }
     redo(current) {
       const entry = this.redoStack.pop();
       if (!entry) return null;
-      this.undoStack.push({ before: current, after: entry.after, group: entry.group, timestamp: this.clock() });
+      this.undoStack.push({ before: current, after: entry.after, group: entry.group, timestamp: this.clock(), changes: current.value === entry.before.value && entry.changes ? entry.changes : diffTextChanges(current.value, entry.after.value) });
       return entry.after;
     }
   };
@@ -4402,6 +5911,7 @@ ${closing}` : opening;
       const item = this._completion.items[this._completion.activeIndex];
       if (!provider || !item || item.disabled) return fail("not-applicable");
       const ctx = this.api.getContext();
+      const sourceRevision = this.api.getRevision();
       let result;
       try {
         const currentMatch = provider.match(ctx);
@@ -4427,17 +5937,23 @@ ${closing}` : opening;
         return fail("provider-error", String(error instanceof Error ? error.message : error));
       }
       this._closeCompletion();
+      if (this.api.getRevision() !== sourceRevision) return fail("reentrant-change");
       if (result?.ok && result.transaction) {
         const before = this.api.snapshot();
-        this.api.applyTransaction({
+        const beforeRevision = this.api.getRevision();
+        const expectedRevision = beforeRevision + (applyTextChanges(before.value, result.transaction.changes) === before.value ? 0 : 1);
+        const applied = this.api.applyTransaction({
           ...result.transaction,
           source: source === "pointer" ? "pointer" : "keyboard",
-          actionId: "completion.accept"
+          actionId: "completion.accept",
+          origin: { kind: "completion", id: provider.id }
         }, {
           source: source === "pointer" ? "pointer" : "keyboard"
         });
+        if (!applied) return fail("change-canceled");
+        if (this.api.getRevision() !== expectedRevision) return okNoop();
         const after = this.api.snapshot();
-        this.api.dispatch("md-completion-accept", { providerId: provider.id, item, before, after });
+        this.api.dispatch("md-completion-accept", { providerId: provider.id, item, before, after, origin: { kind: "completion", id: provider.id }, beforeRevision, revision: expectedRevision });
         if (result.announcement) this.api.announce(result.announcement);
         return okNoop(result.announcement);
       }
@@ -4832,10 +6348,6 @@ ${marker}`;
     return { text, offsets };
   }
   __name(tableRowSourceParts, "tableRowSourceParts");
-  function escapeTableCellText(cell) {
-    return String(cell ?? "").replace(/\|/g, "\\|");
-  }
-  __name(escapeTableCellText, "escapeTableCellText");
   function tableBlockSourceWithOffsets(headerCells, delimiterCells, rows) {
     const parts = [
       tableRowSourceParts(headerCells),
@@ -4957,7 +6469,7 @@ ${marker}`;
   __name(installBuiltInActions, "installBuiltInActions");
 
   // src/component/styles.css
-  var styles_default = ':host {\n  color-scheme: light dark;\n  --md-editor-font:\n    system-ui,\n    -apple-system,\n    BlinkMacSystemFont,\n    "Segoe UI",\n    sans-serif;\n  --md-editor-mono-font:\n    ui-monospace,\n    SFMono-Regular,\n    Menlo,\n    Monaco,\n    Consolas,\n    "Liberation Mono",\n    monospace;\n  --md-editor-font-size: 15px;\n  --md-editor-line-height: 1.55;\n  --md-editor-bg: Canvas;\n  --md-editor-fg: CanvasText;\n  --md-editor-muted: color-mix(in srgb, CanvasText 55%, Canvas 45%);\n  --md-editor-token: color-mix(in srgb, CanvasText 42%, Canvas 58%);\n  --md-editor-border: color-mix(in srgb, CanvasText 22%, Canvas 78%);\n  --md-editor-border-focus: Highlight;\n  --md-editor-radius: 10px;\n  --md-editor-padding: 14px;\n  --md-editor-min-height: 220px;\n  --md-editor-max-height: none;\n  --md-editor-focus-ring: 0 0 0 3px color-mix(in srgb, Highlight 32%, transparent);\n  --md-editor-active-line-ring: none;\n  --md-editor-active-line-bg: transparent;\n  --md-editor-active-cell-ring: var(--md-editor-active-line-ring);\n  --md-editor-active-cell-bg: var(--md-editor-active-line-bg);\n  --md-editor-popup-bg: Canvas;\n  --md-editor-popup-fg: CanvasText;\n  --md-editor-popup-border: color-mix(in srgb, CanvasText 24%, Canvas 76%);\n  --md-editor-popup-shadow: 0 12px 30px rgb(0 0 0 / 0.16);\n  --md-editor-preview-bg: color-mix(in srgb, Canvas 96%, CanvasText 4%);\n  --md-editor-preview-fg: CanvasText;\n  --md-editor-code-bg: color-mix(in srgb, CanvasText 8%, Canvas 92%);\n  --md-editor-code-header-bg: color-mix(in srgb, CanvasText 5%, Canvas 95%);\n  --md-editor-code-accent: color-mix(in srgb, CanvasText 45%, Canvas 55%);\n  --md-editor-tag-bg: color-mix(in srgb, Highlight 14%, Canvas 86%);\n  --md-editor-tag-fg: color-mix(in srgb, Highlight 78%, CanvasText 22%);\n  --md-editor-tag-border: color-mix(in srgb, Highlight 28%, transparent);\n  --md-editor-danger: #b00020;\n  --md-editor-transition-duration: 140ms;\n  --md-editor-transition-ease: cubic-bezier(.2,.8,.2,1);\n  display: block;\n  font-family: var(--md-editor-font);\n  color: var(--md-editor-fg);\n}\n:host([hidden]) {\n  display: none;\n}\n.container {\n  display: grid;\n  gap: 8px;\n  font-size: var(--md-editor-font-size);\n}\n.label:empty {\n  display: none;\n}\n.label {\n  font-weight: 650;\n  color: var(--md-editor-fg);\n}\n.workspace {\n  display: grid;\n  gap: 10px;\n}\n:host([mode="split"]) .workspace,\n:host([preview="side"]) .workspace {\n  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);\n  align-items: stretch;\n}\n.editor-shell {\n  position: relative;\n  min-width: 0;\n}\n.live-editor,\ntextarea,\n.preview {\n  box-sizing: border-box;\n  inline-size: 100%;\n  min-block-size: var(--md-editor-min-height);\n  max-block-size: var(--md-editor-max-height);\n  border: 1px solid var(--md-editor-border);\n  border-radius: var(--md-editor-radius);\n  padding: var(--md-editor-padding);\n  background: var(--md-editor-bg);\n  color: var(--md-editor-fg);\n  line-height: var(--md-editor-line-height);\n  overflow: auto;\n  transition:\n    border-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.live-editor:focus,\n.live-editor:focus-within,\ntextarea:focus {\n  outline: none;\n  border-color: var(--md-editor-border-focus);\n  box-shadow: var(--md-editor-focus-ring);\n}\n.live-editor[aria-disabled=true],\ntextarea:disabled {\n  opacity: 0.62;\n  cursor: not-allowed;\n}\ntextarea {\n  display: none;\n  resize: vertical;\n  font-family: var(--md-editor-mono-font);\n  font-size: var(--md-editor-font-size);\n  tab-size: 2;\n}\n:host([mode="source"]) .live-editor {\n  display: none;\n}\n:host([mode="source"]) textarea {\n  display: block;\n}\n:host([mode="split"]) .live-editor {\n  display: none;\n}\n:host([mode="split"]) textarea {\n  display: block;\n}\n:host([mode="preview"]) .live-editor {\n  display: none;\n}\n:host([mode="preview"]) textarea {\n  display: none;\n}\n.preview {\n  display: none;\n  background: var(--md-editor-preview-bg);\n  color: var(--md-editor-preview-fg);\n}\n:host([mode="preview"]) .preview,\n:host([mode="split"]) .preview,\n:host([preview="below"]) .preview,\n:host([preview="side"]) .preview,\n:host([preview="inline-split"]) .preview {\n  display: block;\n}\n:host([preview="none"]):not([mode=split]):not([mode=preview]) .preview {\n  display: none;\n}\n.live-placeholder {\n  color: var(--md-editor-muted);\n  pointer-events: none;\n}\n.md-empty-placeholder::before {\n  content: attr(data-placeholder);\n  position: absolute;\n  color: var(--md-editor-muted);\n  pointer-events: none;\n}\n.md-virtual-spacer {\n  display: block;\n  pointer-events: none;\n  user-select: none;\n  inline-size: 1px;\n  min-block-size: 0;\n}\n.md-line {\n  position: relative;\n  min-block-size: 1.35em;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n  border-radius: 6px;\n  padding: 1px 2px;\n  outline: none;\n  transition: background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease), box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.md-line:focus,\n.md-task-source:focus,\n.md-code-line:focus {\n  box-shadow: var(--md-editor-active-line-ring);\n  background: var(--md-editor-active-line-bg);\n}\n.md-cell:focus {\n  box-shadow: var(--md-editor-active-cell-ring);\n  background: var(--md-editor-active-cell-bg);\n}\n.md-line + .md-line,\n.md-code-block + .md-line,\n.md-table-block + .md-line {\n  margin-block-start: 0.14rem;\n}\n.md-token {\n  color: var(--md-editor-token);\n  font-weight: 500;\n}\n.md-url {\n  color: var(--md-editor-muted);\n  text-decoration: underline;\n}\n.md-tag {\n  padding: 0.04em 0.28em;\n  border: 1px solid var(--md-editor-tag-border);\n  border-radius: 0.35em;\n  background: var(--md-editor-tag-bg);\n  color: var(--md-editor-tag-fg);\n}\n.preview .md-tag {\n  cursor: pointer;\n}\n.preview .md-tag:focus-visible {\n  outline: 2px solid var(--md-editor-border-focus);\n  outline-offset: 2px;\n}\n.md-heading {\n  font-family: var(--md-editor-font);\n  font-weight: 760;\n  line-height: 1.18;\n  margin-block: 0.22em;\n}\n.md-h1 {\n  font-size: 2.0em;\n}\n.md-h2 {\n  font-size: 1.6em;\n}\n.md-h3 {\n  font-size: 1.35em;\n}\n.md-h4 {\n  font-size: 1.18em;\n}\n.md-h5 {\n  font-size: 1.05em;\n}\n.md-h6 {\n  font-size: 1em;\n}\n.md-list {\n  padding-inline-start: calc(var(--md-list-depth, 0) * 1.4em + 2px);\n}\n.md-task-line {\n  display: flex;\n  align-items: baseline;\n  gap: 0.35em;\n}\n.md-task-line input {\n  transform: translateY(0.12em);\n}\n.md-task-source {\n  flex: 1;\n  min-width: 0;\n  white-space: pre-wrap;\n  outline: none;\n  border-radius: 6px;\n}\n.md-quote {\n  --md-quote-depth: 1;\n  border-radius: 0;\n  padding-inline-start: calc(var(--md-quote-depth) * 1em + 0.35em);\n  color: color-mix(in srgb, CanvasText 80%, Canvas 20%);\n  background-image:\n    repeating-linear-gradient(\n      to right,\n      var(--md-editor-border) 0 4px,\n      transparent 4px 1em);\n  background-position: left top;\n  background-repeat: no-repeat;\n  background-size: calc(var(--md-quote-depth) * 1em) 100%;\n}\n.md-quote:dir(rtl) {\n  background-image:\n    repeating-linear-gradient(\n      to left,\n      var(--md-editor-border) 0 4px,\n      transparent 4px 1em);\n  background-position: right top;\n}\n.md-quote-depth-2 {\n  --md-quote-depth: 2;\n}\n.md-quote-depth-3 {\n  --md-quote-depth: 3;\n}\n.md-quote-depth-4 {\n  --md-quote-depth: 4;\n}\n.md-quote-depth-5 {\n  --md-quote-depth: 5;\n}\n.md-quote-depth-6 {\n  --md-quote-depth: 6;\n}\n.md-quote-depth-7 {\n  --md-quote-depth: 7;\n}\n.md-quote-depth-8 {\n  --md-quote-depth: 8;\n}\n.md-quote-depth-9 {\n  --md-quote-depth: 9;\n}\n.md-quote-depth-10 {\n  --md-quote-depth: 10;\n}\n.md-quote-depth-11 {\n  --md-quote-depth: 11;\n}\n.md-quote-depth-12 {\n  --md-quote-depth: 12;\n}\n.md-quote-depth-13 {\n  --md-quote-depth: 13;\n}\n.md-quote-depth-14 {\n  --md-quote-depth: 14;\n}\n.md-quote-depth-15 {\n  --md-quote-depth: 15;\n}\n.md-quote-depth-16 {\n  --md-quote-depth: 16;\n}\n.md-quote + .md-quote {\n  margin-block-start: 0;\n}\n.md-hr-line {\n  display: block;\n  min-block-size: 1.35em;\n  padding-block: 0.55em;\n  color: var(--md-editor-token);\n  cursor: text;\n}\n.md-hr-line::after {\n  content: "";\n  display: block;\n  border-block-start: 1px solid var(--md-editor-border);\n}\n.md-hr-line .md-token {\n  display: none;\n}\n.md-code-block {\n  margin-block: 0.55em;\n  border: 1px solid var(--md-editor-border);\n  border-radius: var(--md-editor-radius);\n  background: var(--md-editor-code-bg);\n  overflow: hidden;\n  transition:\n    border-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.md-code-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n  min-block-size: 30px;\n  padding: 5px 10px;\n  border-block-end: 1px solid color-mix(in srgb, var(--md-editor-border) 82%, transparent);\n  background: var(--md-editor-code-header-bg);\n  color: var(--md-editor-code-accent);\n  font-family: var(--md-editor-mono-font);\n  font-size: 0.82em;\n  user-select: none;\n}\n.md-code-label {\n  text-transform: lowercase;\n  letter-spacing: 0.015em;\n}\n.md-code-language {\n  color: var(--md-editor-muted);\n}\n.md-code-lines {\n  padding: 10px 12px;\n  font-family: var(--md-editor-mono-font);\n  white-space: pre;\n  overflow-x: auto;\n}\n.md-code-line {\n  min-height: 1.35em;\n  outline: none;\n  white-space: pre;\n  border-radius: 5px;\n}\n.md-code-line:empty::before {\n  content: "\\200b";\n}\n.md-code-fence {\n  display: none;\n}\n.md-table-block {\n  overflow: auto;\n  margin-block: 0.5em;\n}\n.md-table {\n  border-collapse: collapse;\n  inline-size: 100%;\n  table-layout: fixed;\n}\n.md-table th,\n.md-table td {\n  border: 1px solid var(--md-editor-border);\n  padding: 6px 8px;\n  vertical-align: top;\n}\n.md-table th {\n  background: color-mix(in srgb, CanvasText 7%, Canvas 93%);\n  font-weight: 700;\n}\n.md-cell {\n  min-height: 1.35em;\n  outline: none;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n.preview :first-child {\n  margin-block-start: 0;\n}\n.preview :last-child {\n  margin-block-end: 0;\n}\n.preview pre {\n  overflow: auto;\n  padding: 10px;\n  border-radius: 6px;\n  background: var(--md-editor-code-bg);\n}\n.preview code {\n  font-family: var(--md-editor-mono-font);\n  font-size: 0.95em;\n}\n.preview :not(pre) > code {\n  padding: 0.1em 0.3em;\n  border-radius: 4px;\n  background: var(--md-editor-code-bg);\n}\n.preview blockquote {\n  border-inline-start: 4px solid var(--md-editor-border);\n  margin-inline-start: 0;\n  padding-inline-start: 1em;\n  color: var(--md-editor-muted);\n}\n.preview img {\n  max-inline-size: 100%;\n  block-size: auto;\n}\n.preview .md-table-wrap {\n  overflow: auto;\n}\n.preview table {\n  border-collapse: collapse;\n  inline-size: 100%;\n}\n.preview th,\n.preview td {\n  border: 1px solid var(--md-editor-border);\n  padding: 6px 8px;\n}\n.completion-popup {\n  position: absolute;\n  z-index: 20;\n  box-sizing: border-box;\n  min-inline-size: min(240px, calc(100vw - 16px));\n  max-inline-size: min(420px, calc(100vw - 16px));\n  max-block-size: min(320px, 50vh);\n  overflow: auto;\n  border: 1px solid var(--md-editor-popup-border);\n  border-radius: var(--md-editor-radius);\n  background: var(--md-editor-popup-bg);\n  color: var(--md-editor-popup-fg);\n  box-shadow: var(--md-editor-popup-shadow);\n  padding: 4px;\n}\n.completion-popup[hidden] {\n  display: none;\n}\n@keyframes md-editor-pop {\n  from {\n    opacity: 0;\n    transform: translateY(-3px) scale(.985);\n  }\n  to {\n    opacity: 1;\n    transform: translateY(0) scale(1);\n  }\n}\n.completion-item {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) auto;\n  gap: 4px 12px;\n  padding: 8px 10px;\n  border-radius: 6px;\n  cursor: pointer;\n}\n.completion-item[aria-selected=true] {\n  background: color-mix(in srgb, Highlight 18%, transparent);\n}\n.completion-item[aria-disabled=true] {\n  cursor: not-allowed;\n  opacity: 0.58;\n}\n.completion-label {\n  font-weight: 650;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n.completion-detail,\n.completion-description {\n  color: var(--md-editor-muted);\n  font-size: 0.9em;\n}\n.completion-description {\n  grid-column: 1 / -1;\n}\n.validation {\n  min-block-size: 1.2em;\n  color: var(--md-editor-danger);\n  font-size: 0.92em;\n}\n.validation:empty {\n  display: none;\n}\n.sr-only {\n  position: absolute;\n  inline-size: 1px;\n  block-size: 1px;\n  padding: 0;\n  margin: -1px;\n  overflow: hidden;\n  clip: rect(0, 0, 0, 0);\n  white-space: nowrap;\n  border: 0;\n}\n@media (max-width: 720px) {\n  :host([mode="split"]) .workspace,\n  :host([preview="side"]) .workspace {\n    grid-template-columns: 1fr;\n  }\n}\n@media (prefers-reduced-motion: reduce) {\n  *,\n  *::before,\n  *::after {\n    scroll-behavior: auto !important;\n    transition-duration: 0.001ms !important;\n    animation-duration: 0.001ms !important;\n  }\n}\n';
+  var styles_default = ':host {\n  color-scheme: light dark;\n  --md-editor-font:\n    system-ui,\n    -apple-system,\n    BlinkMacSystemFont,\n    "Segoe UI",\n    sans-serif;\n  --md-editor-mono-font:\n    ui-monospace,\n    SFMono-Regular,\n    Menlo,\n    Monaco,\n    Consolas,\n    "Liberation Mono",\n    monospace;\n  --md-editor-font-size: 15px;\n  --md-editor-line-height: 1.55;\n  --md-editor-bg: Canvas;\n  --md-editor-fg: CanvasText;\n  --md-editor-muted: color-mix(in srgb, CanvasText 55%, Canvas 45%);\n  --md-editor-token: color-mix(in srgb, CanvasText 42%, Canvas 58%);\n  --md-editor-border: color-mix(in srgb, CanvasText 22%, Canvas 78%);\n  --md-editor-border-focus: Highlight;\n  --md-editor-radius: 10px;\n  --md-editor-padding: 14px;\n  --md-editor-min-height: 220px;\n  --md-editor-max-height: none;\n  --md-editor-focus-ring: 0 0 0 3px color-mix(in srgb, Highlight 32%, transparent);\n  --md-editor-active-line-ring: none;\n  --md-editor-active-line-bg: transparent;\n  --md-editor-active-cell-ring: var(--md-editor-active-line-ring);\n  --md-editor-active-cell-bg: var(--md-editor-active-line-bg);\n  --md-editor-popup-bg: Canvas;\n  --md-editor-popup-fg: CanvasText;\n  --md-editor-popup-border: color-mix(in srgb, CanvasText 24%, Canvas 76%);\n  --md-editor-popup-shadow: 0 12px 30px rgb(0 0 0 / 0.16);\n  --md-editor-preview-bg: color-mix(in srgb, Canvas 96%, CanvasText 4%);\n  --md-editor-preview-fg: CanvasText;\n  --md-editor-code-bg: color-mix(in srgb, CanvasText 8%, Canvas 92%);\n  --md-editor-code-header-bg: color-mix(in srgb, CanvasText 5%, Canvas 95%);\n  --md-editor-code-accent: color-mix(in srgb, CanvasText 45%, Canvas 55%);\n  --md-editor-tag-bg: color-mix(in srgb, Highlight 14%, Canvas 86%);\n  --md-editor-tag-fg: color-mix(in srgb, Highlight 78%, CanvasText 22%);\n  --md-editor-tag-border: color-mix(in srgb, Highlight 28%, transparent);\n  --md-editor-danger: #b00020;\n  --md-editor-transition-duration: 140ms;\n  --md-editor-transition-ease: cubic-bezier(.2,.8,.2,1);\n  display: block;\n  font-family: var(--md-editor-font);\n  color: var(--md-editor-fg);\n}\n:host([hidden]) {\n  display: none;\n}\n.container {\n  display: grid;\n  gap: 8px;\n  font-size: var(--md-editor-font-size);\n}\n.label:empty {\n  display: none;\n}\n.label {\n  font-weight: 650;\n  color: var(--md-editor-fg);\n}\n.workspace {\n  display: grid;\n  gap: 10px;\n}\n:host([mode="split"]) .workspace,\n:host([preview="side"]) .workspace {\n  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);\n  align-items: stretch;\n}\n.editor-shell {\n  position: relative;\n  min-width: 0;\n}\n.live-editor,\ntextarea,\n.preview {\n  box-sizing: border-box;\n  inline-size: 100%;\n  min-block-size: var(--md-editor-min-height);\n  max-block-size: var(--md-editor-max-height);\n  border: 1px solid var(--md-editor-border);\n  border-radius: var(--md-editor-radius);\n  padding: var(--md-editor-padding);\n  background: var(--md-editor-bg);\n  color: var(--md-editor-fg);\n  line-height: var(--md-editor-line-height);\n  overflow: auto;\n  transition:\n    border-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.live-editor:focus,\n.live-editor:focus-within,\ntextarea:focus {\n  outline: none;\n  border-color: var(--md-editor-border-focus);\n  box-shadow: var(--md-editor-focus-ring);\n}\n.live-editor[aria-disabled=true],\ntextarea:disabled {\n  opacity: 0.62;\n  cursor: not-allowed;\n}\ntextarea {\n  display: none;\n  resize: vertical;\n  font-family: var(--md-editor-mono-font);\n  font-size: var(--md-editor-font-size);\n  tab-size: 2;\n}\n:host([mode="source"]) .live-editor {\n  display: none;\n}\n:host([mode="source"]) textarea {\n  display: block;\n}\n:host([mode="split"]) .live-editor {\n  display: none;\n}\n:host([mode="split"]) textarea {\n  display: block;\n}\n:host([mode="preview"]) .live-editor {\n  display: none;\n}\n:host([mode="preview"]) textarea {\n  display: none;\n}\n.preview {\n  display: none;\n  background: var(--md-editor-preview-bg);\n  color: var(--md-editor-preview-fg);\n}\n:host([mode="preview"]) .preview,\n:host([mode="split"]) .preview,\n:host([preview="below"]) .preview,\n:host([preview="side"]) .preview,\n:host([preview="inline-split"]) .preview {\n  display: block;\n}\n:host([preview="none"]):not([mode=split]):not([mode=preview]) .preview {\n  display: none;\n}\n.live-placeholder {\n  color: var(--md-editor-muted);\n  pointer-events: none;\n}\n.md-empty-placeholder::before {\n  content: attr(data-placeholder);\n  position: absolute;\n  color: var(--md-editor-muted);\n  pointer-events: none;\n}\n.md-virtual-spacer {\n  display: block;\n  pointer-events: none;\n  user-select: none;\n  inline-size: 1px;\n  min-block-size: 0;\n}\n.md-line {\n  position: relative;\n  min-block-size: 1.35em;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n  border-radius: 6px;\n  padding: 1px 2px;\n  outline: none;\n  transition: background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease), box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.md-line:focus,\n.md-task-source:focus,\n.md-code-line:focus {\n  box-shadow: var(--md-editor-active-line-ring);\n  background: var(--md-editor-active-line-bg);\n}\n.md-cell:focus {\n  box-shadow: var(--md-editor-active-cell-ring);\n  background: var(--md-editor-active-cell-bg);\n}\n.md-line + .md-line,\n.md-code-block + .md-line,\n.md-table-block + .md-line {\n  margin-block-start: 0.14rem;\n}\n.md-token {\n  color: var(--md-editor-token);\n  font-weight: 500;\n}\n.md-url {\n  color: var(--md-editor-muted);\n  text-decoration: underline;\n}\n.md-tag {\n  padding: 0.04em 0.28em;\n  border: 1px solid var(--md-editor-tag-border);\n  border-radius: 0.35em;\n  background: var(--md-editor-tag-bg);\n  color: var(--md-editor-tag-fg);\n}\n.preview .md-tag {\n  cursor: pointer;\n}\n.preview .md-tag:focus-visible {\n  outline: 2px solid var(--md-editor-border-focus);\n  outline-offset: 2px;\n}\n.md-heading {\n  font-family: var(--md-editor-font);\n  font-weight: 760;\n  line-height: 1.18;\n  margin-block: 0.22em;\n}\n.md-h1 {\n  font-size: 2.0em;\n}\n.md-h2 {\n  font-size: 1.6em;\n}\n.md-h3 {\n  font-size: 1.35em;\n}\n.md-h4 {\n  font-size: 1.18em;\n}\n.md-h5 {\n  font-size: 1.05em;\n}\n.md-h6 {\n  font-size: 1em;\n}\n.md-list {\n  padding-inline-start: calc(var(--md-list-depth, 0) * 1.4em + 2px);\n}\n.md-task-line {\n  display: flex;\n  align-items: baseline;\n  gap: 0.35em;\n}\n.md-task-line input {\n  transform: translateY(0.12em);\n}\n.md-task-source {\n  flex: 1;\n  min-width: 0;\n  white-space: pre-wrap;\n  outline: none;\n  border-radius: 6px;\n}\n.md-quote {\n  --md-quote-depth: 1;\n  border-radius: 0;\n  padding-inline-start: calc(var(--md-quote-depth) * 1em + 0.35em);\n  color: color-mix(in srgb, CanvasText 80%, Canvas 20%);\n  background-image:\n    repeating-linear-gradient(\n      to right,\n      var(--md-editor-border) 0 4px,\n      transparent 4px 1em);\n  background-position: left top;\n  background-repeat: no-repeat;\n  background-size: calc(var(--md-quote-depth) * 1em) 100%;\n}\n.md-quote:dir(rtl) {\n  background-image:\n    repeating-linear-gradient(\n      to left,\n      var(--md-editor-border) 0 4px,\n      transparent 4px 1em);\n  background-position: right top;\n}\n.md-quote-depth-2 {\n  --md-quote-depth: 2;\n}\n.md-quote-depth-3 {\n  --md-quote-depth: 3;\n}\n.md-quote-depth-4 {\n  --md-quote-depth: 4;\n}\n.md-quote-depth-5 {\n  --md-quote-depth: 5;\n}\n.md-quote-depth-6 {\n  --md-quote-depth: 6;\n}\n.md-quote-depth-7 {\n  --md-quote-depth: 7;\n}\n.md-quote-depth-8 {\n  --md-quote-depth: 8;\n}\n.md-quote-depth-9 {\n  --md-quote-depth: 9;\n}\n.md-quote-depth-10 {\n  --md-quote-depth: 10;\n}\n.md-quote-depth-11 {\n  --md-quote-depth: 11;\n}\n.md-quote-depth-12 {\n  --md-quote-depth: 12;\n}\n.md-quote-depth-13 {\n  --md-quote-depth: 13;\n}\n.md-quote-depth-14 {\n  --md-quote-depth: 14;\n}\n.md-quote-depth-15 {\n  --md-quote-depth: 15;\n}\n.md-quote-depth-16 {\n  --md-quote-depth: 16;\n}\n.md-quote + .md-quote {\n  margin-block-start: 0;\n}\n.md-hr-line {\n  display: block;\n  min-block-size: 1.35em;\n  padding-block: 0.55em;\n  color: var(--md-editor-token);\n  cursor: text;\n}\n.md-hr-line::after {\n  content: "";\n  display: block;\n  border-block-start: 1px solid var(--md-editor-border);\n}\n.md-hr-line .md-token {\n  display: none;\n}\n.md-code-block {\n  margin-block: 0.55em;\n  border: 1px solid var(--md-editor-border);\n  border-radius: var(--md-editor-radius);\n  background: var(--md-editor-code-bg);\n  overflow: hidden;\n  transition:\n    border-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    background-color var(--md-editor-transition-duration) var(--md-editor-transition-ease),\n    box-shadow var(--md-editor-transition-duration) var(--md-editor-transition-ease);\n}\n.md-code-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n  min-block-size: 30px;\n  padding: 5px 10px;\n  border-block-end: 1px solid color-mix(in srgb, var(--md-editor-border) 82%, transparent);\n  background: var(--md-editor-code-header-bg);\n  color: var(--md-editor-code-accent);\n  font-family: var(--md-editor-mono-font);\n  font-size: 0.82em;\n  user-select: none;\n}\n.md-code-label {\n  text-transform: lowercase;\n  letter-spacing: 0.015em;\n}\n.md-code-language {\n  color: var(--md-editor-muted);\n}\n.md-code-lines {\n  padding: 10px 12px;\n  font-family: var(--md-editor-mono-font);\n  white-space: pre;\n  overflow-x: auto;\n}\n.md-code-line {\n  min-height: 1.35em;\n  outline: none;\n  white-space: pre;\n  border-radius: 5px;\n}\n.md-code-line:empty::before {\n  content: "\\200b";\n}\n.md-code-fence {\n  display: none;\n}\n.md-table-block {\n  overflow: auto;\n  margin-block: 0.5em;\n}\n.md-table {\n  border-collapse: collapse;\n  inline-size: 100%;\n  table-layout: fixed;\n}\n.md-table th,\n.md-table td {\n  border: 1px solid var(--md-editor-border);\n  padding: 6px 8px;\n  vertical-align: top;\n}\n.md-table th {\n  background: color-mix(in srgb, CanvasText 7%, Canvas 93%);\n  font-weight: 700;\n}\n.md-cell {\n  min-height: 1.35em;\n  outline: none;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n.preview :first-child {\n  margin-block-start: 0;\n}\n.preview :last-child {\n  margin-block-end: 0;\n}\n.preview pre {\n  overflow: auto;\n  padding: 10px;\n  border-radius: 6px;\n  background: var(--md-editor-code-bg);\n}\n.preview code {\n  font-family: var(--md-editor-mono-font);\n  font-size: 0.95em;\n}\n.preview :not(pre) > code {\n  padding: 0.1em 0.3em;\n  border-radius: 4px;\n  background: var(--md-editor-code-bg);\n}\n.preview blockquote {\n  border-inline-start: 4px solid var(--md-editor-border);\n  margin-inline-start: 0;\n  padding-inline-start: 1em;\n  color: var(--md-editor-muted);\n}\n.preview img {\n  max-inline-size: 100%;\n  block-size: auto;\n}\n.preview .md-table-wrap {\n  overflow: auto;\n}\n.preview table {\n  border-collapse: collapse;\n  inline-size: 100%;\n}\n.preview th,\n.preview td {\n  border: 1px solid var(--md-editor-border);\n  padding: 6px 8px;\n}\n.completion-popup {\n  position: absolute;\n  z-index: 20;\n  box-sizing: border-box;\n  min-inline-size: min(240px, calc(100vw - 16px));\n  max-inline-size: min(420px, calc(100vw - 16px));\n  max-block-size: min(320px, 50vh);\n  overflow: auto;\n  border: 1px solid var(--md-editor-popup-border);\n  border-radius: var(--md-editor-radius);\n  background: var(--md-editor-popup-bg);\n  color: var(--md-editor-popup-fg);\n  box-shadow: var(--md-editor-popup-shadow);\n  padding: 4px;\n}\n.completion-popup[hidden] {\n  display: none;\n}\n.remote-presence {\n  z-index: 8;\n  user-select: none;\n  border-radius: var(--md-editor-radius);\n}\n.remote-presence-roster {\n  position: absolute;\n  inline-size: 1px;\n  block-size: 1px;\n  padding: 0;\n  margin: -1px;\n  overflow: hidden;\n  clip: rect(0, 0, 0, 0);\n  white-space: nowrap;\n  border: 0;\n}\n.remote-presence-cursor {\n  z-index: 2;\n}\n.remote-presence,\n.remote-presence-cursor,\n.remote-presence-caret,\n.remote-presence-selection {\n  transition: none !important;\n  animation: none !important;\n}\n.remote-presence-cursor[hidden] {\n  display: none;\n}\n.remote-presence-caret {\n  background: var(--remote-color);\n  border-radius: 1px;\n  box-shadow: 0 0 0 0.5px var(--md-editor-fg);\n}\n.remote-presence-caret::before {\n  content: "";\n  position: absolute;\n  inset-block-start: -2px;\n  inset-inline-start: -1px;\n  inline-size: 4px;\n  block-size: 3px;\n  border-radius: 2px;\n  background: var(--remote-color);\n}\n.remote-presence-selection {\n  border-radius: 2px;\n  background: var(--remote-selection-color);\n}\n.remote-presence-name {\n  box-sizing: border-box;\n  padding: 3px 6px;\n  border-radius: 4px 4px 4px 0;\n  background: var(--remote-color);\n  color: var(--remote-label-fg, #fff);\n  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);\n  font: 600 11px/1.25 var(--md-editor-font);\n  letter-spacing: 0;\n}\n@keyframes md-editor-pop {\n  from {\n    opacity: 0;\n    transform: translateY(-3px) scale(.985);\n  }\n  to {\n    opacity: 1;\n    transform: translateY(0) scale(1);\n  }\n}\n.completion-item {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) auto;\n  gap: 4px 12px;\n  padding: 8px 10px;\n  border-radius: 6px;\n  cursor: pointer;\n}\n.completion-item[aria-selected=true] {\n  background: color-mix(in srgb, Highlight 18%, transparent);\n}\n.completion-item[aria-disabled=true] {\n  cursor: not-allowed;\n  opacity: 0.58;\n}\n.completion-label {\n  font-weight: 650;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n.completion-detail,\n.completion-description {\n  color: var(--md-editor-muted);\n  font-size: 0.9em;\n}\n.completion-description {\n  grid-column: 1 / -1;\n}\n.validation {\n  min-block-size: 1.2em;\n  color: var(--md-editor-danger);\n  font-size: 0.92em;\n}\n.validation:empty {\n  display: none;\n}\n.sr-only {\n  position: absolute;\n  inline-size: 1px;\n  block-size: 1px;\n  padding: 0;\n  margin: -1px;\n  overflow: hidden;\n  clip: rect(0, 0, 0, 0);\n  white-space: nowrap;\n  border: 0;\n}\n@media (max-width: 720px) {\n  :host([mode="split"]) .workspace,\n  :host([preview="side"]) .workspace {\n    grid-template-columns: 1fr;\n  }\n}\n@media (prefers-reduced-motion: reduce) {\n  *,\n  *::before,\n  *::after {\n    scroll-behavior: auto !important;\n    transition-duration: 0.001ms !important;\n    animation-duration: 0.001ms !important;\n  }\n  .remote-presence-name {\n    transition: none !important;\n  }\n}\n';
 
   // src/component/template.ts
   function renderTemplate(ids) {
@@ -5027,8 +6539,7 @@ ${marker}`;
       const contentIndent = baseIndent + block.list.contentStart - block.list.indent.length;
       const item = {
         block,
-        paragraphs: [[block.list.content]],
-        children: []
+        content: [{ type: "paragraph", lines: [block.list.content] }]
       };
       index += 1;
       let pendingBlank = false;
@@ -5063,7 +6574,7 @@ ${marker}`;
             break;
           }
           const child = renderListFromBlocks(blocks, index, options);
-          item.children.push(child.html);
+          item.content.push({ type: "child", html: child.html });
           index = child.nextIndex;
           pendingBlank = false;
           continue;
@@ -5074,10 +6585,12 @@ ${marker}`;
               stopList = true;
               break;
             }
-            item.paragraphs.push([stripContinuationIndent(next.line.text, contentIndent)]);
+            item.content.push({ type: "paragraph", lines: [stripContinuationIndent(next.line.text, contentIndent)] });
             pendingBlank = false;
           } else {
-            item.paragraphs.at(-1)?.push(stripContinuationIndent(next.line.text, contentIndent));
+            const last = item.content.at(-1);
+            if (last?.type === "paragraph") last.lines.push(stripContinuationIndent(next.line.text, contentIndent));
+            else item.content.push({ type: "paragraph", lines: [stripContinuationIndent(next.line.text, contentIndent)] });
           }
           index += 1;
           continue;
@@ -5093,15 +6606,17 @@ ${marker}`;
     const startAttribute = tag === "ol" && Number.isFinite(startNumber) && startNumber !== 1 ? ` start="${startNumber}"` : "";
     const html = items.map((item) => {
       const checkbox = item.block.list.kind === "task-list-item" ? `<input type="checkbox" disabled${item.block.list.checked ? " checked" : ""}> ` : "";
-      const paragraphs = item.paragraphs.map((lines, paragraphIndex) => {
+      let paragraphIndex = 0;
+      const content = item.content.map((part, index2) => {
+        if (part.type === "child") return `
+${part.html}`;
         const prefix = paragraphIndex === 0 ? checkbox : "";
-        const content = `${prefix}${renderInlineMarkdown(lines.join("\n"), options)}`;
-        return loose || paragraphIndex > 0 ? `<p>${content}</p>` : content;
+        const text = `${prefix}${renderInlineMarkdown(part.lines.join("\n"), options)}`;
+        const paragraph = loose || paragraphIndex > 0 ? `<p>${text}</p>` : text;
+        paragraphIndex += 1;
+        return (item.content[index2 - 1]?.type === "child" ? "\n" : "") + paragraph;
       }).join("");
-      const children = item.children.length ? `
-${item.children.join("\n")}
-` : "";
-      return `<li>${paragraphs}${children}</li>`;
+      return `<li>${content}${item.content.at(-1)?.type === "child" ? "\n" : ""}</li>`;
     }).join("");
     return { html: `<${tag}${startAttribute}>${html}</${tag}>`, nextIndex: index };
   }
@@ -5174,6 +6689,12 @@ ${item.children.join("\n")}
     static {
       __name(this, "WritemarkEditorElement");
     }
+    _nativeTextareaBridge = null;
+    _presenceController = null;
+    _presenceMappedValue = "";
+    _presenceSnapshots = /* @__PURE__ */ new WeakMap();
+    _pendingPresenceAfter = null;
+    _pendingPresenceRestore = null;
     static formAssociated = true;
     static get observedAttributes() {
       return REFLECTED_ATTRIBUTES;
@@ -5372,6 +6893,7 @@ ${item.children.join("\n")}
         startPositionTracking: /* @__PURE__ */ __name((...args) => this._startCompletionPositionTracking(...args), "startPositionTracking"),
         isUnclosedFenceOpeningContext: /* @__PURE__ */ __name((...args) => this._isUnclosedFenceOpeningContext(...args), "isUnclosedFenceOpeningContext"),
         snapshot: /* @__PURE__ */ __name((...args) => this._snapshot(...args), "snapshot"),
+        getRevision: /* @__PURE__ */ __name(() => this.revision, "getRevision"),
         applyTransaction: /* @__PURE__ */ __name((...args) => this._applyTransaction(...args), "applyTransaction"),
         dispatch: this._dispatch.bind(this),
         announce: /* @__PURE__ */ __name((...args) => this._announce(...args), "announce"),
@@ -5631,13 +7153,15 @@ ${item.children.join("\n")}
         this._updateValidity();
       } else {
         this._syncAttributesToControls();
-        this._renderAll({ restoreSelection: true });
+        this._renderAll({ restoreSelection: this.matches(":focus-within") });
         this._updateFormValue();
         this._updateValidity();
       }
       if (this._completion.open) this._startCompletionPositionTracking();
+      this._presenceController?.connect();
     }
     disconnectedCallback() {
+      this._presenceController?.disconnect();
       this._selectionController.disconnect();
       this._completionController.disconnect();
       this._selectionRestoreRequest += 1;
@@ -5667,6 +7191,7 @@ ${item.children.join("\n")}
           const oldDirty = this._dirty;
           this._dirty = this._value !== this._defaultValue;
           if (oldDirty !== this._dirty) this._dispatch("md-dirty-change", { dirty: this._dirty });
+          this._dispatch("md-value-sync", { value: this._value, defaultValue: this._defaultValue, revision: this.revision });
         }
         return;
       }
@@ -5696,6 +7221,55 @@ ${item.children.join("\n")}
         this._updateValidity();
       }
       if (restoreFocus && !this.disabled) this._focusEditable();
+    }
+    get revision() {
+      return this._document.revision;
+    }
+    setRemoteCursors(cursors, options) {
+      return this._getPresenceController()?.set(cursors, options) ?? false;
+    }
+    updateRemoteCursors(update) {
+      return this._getPresenceController()?.update(update) ?? { ok: false, reason: "not-connected" };
+    }
+    _getPresenceController() {
+      if (!this._hasConnected || !this.isConnected) return null;
+      if (this._presenceController) return this._presenceController;
+      this._presenceMappedValue = this._value;
+      this._presenceController = new PresenceController({
+        host: this,
+        shell: this._requireControl(".editor-shell", HTMLElement),
+        source: this._sourceTextarea,
+        live: this._liveEditor,
+        getMode: /* @__PURE__ */ __name(() => this.mode, "getMode"),
+        getValue: /* @__PURE__ */ __name(() => this._value, "getValue"),
+        getRevision: /* @__PURE__ */ __name(() => this.revision, "getRevision"),
+        domPositionFromSource: /* @__PURE__ */ __name((offset) => this._virtualState.active && !this._isSourceOffsetRendered(offset) ? null : this._domPositionFromSource(offset), "domPositionFromSource")
+      });
+      return this._presenceController;
+    }
+    getRemoteCursors() {
+      return this._presenceController?.get() ?? [];
+    }
+    applyTransaction(request) {
+      const beforeRevision = this.revision;
+      let origin = { kind: "external" };
+      const reject = /* @__PURE__ */ __name((reason) => ({ ok: false, reason, beforeRevision, revision: this.revision, origin }), "reject");
+      const checked = validateTransactionRequest(this._value, request, beforeRevision);
+      if (this.revision !== beforeRevision) return reject("reentrant-change");
+      if (!checked.ok) return reject(checked.reason);
+      origin = Object.freeze({ ...checked.request.origin ?? origin });
+      if (checked.request.baseRevision !== beforeRevision) return reject("stale-revision");
+      if (this.disabled) return reject("disabled");
+      if (this.readonly) return reject("readonly");
+      if (this._isComposing) return reject("composition-active");
+      const selection = checked.request.selectionAfter ?? mapTransactionSelection(this._getCurrentSelection(), checked.changes);
+      if (checked.value === this._value) {
+        if (checked.request.selectionAfter) this._setSelectionRangeWithoutFocus(selection.start, selection.end, selection.direction);
+        return { ok: true, changed: false, beforeRevision, revision: this.revision, origin, selection: { ...this._getCurrentSelection() } };
+      }
+      const transaction = { changes: checked.changes, selectionAfter: { ...selection }, origin, source: "api", undoGroup: "external" };
+      if (!this._applyTransaction(transaction, { restoreSelection: this._isSourceActive() || this.matches(":focus-within") })) return reject(this.revision !== beforeRevision ? "reentrant-change" : this.disabled ? "disabled" : this.readonly ? "readonly" : this._isComposing ? "composition-active" : "change-canceled");
+      return { ok: true, changed: true, beforeRevision, revision: this.revision, origin, selection: { ...this._selection } };
     }
     get value() {
       return this._value;
@@ -5866,12 +7440,19 @@ ${item.children.join("\n")}
       this.setSelectionRange(0, this._value.length);
     }
     setSelectionRange(start, end, direction = "none") {
+      this._setSelectionRange(start, end, direction, true);
+    }
+    _setSelectionRangeWithoutFocus(start, end, direction = "none") {
+      if (!this.matches(":focus-within") && this._selection.start === clamp(Number(start) || 0, 0, this._value.length) && this._selection.end === clamp(Number(end) || 0, 0, this._value.length) && this._selection.direction === direction) return;
+      this._setSelectionRange(start, end, direction, this.matches(":focus-within"));
+    }
+    _setSelectionRange(start, end, direction, restoreLive) {
       const s = clamp(Number(start) || 0, 0, this._value.length);
       const e = clamp(Number(end) || 0, 0, this._value.length);
       this._selection = { start: s, end: e, direction };
       this._structuredSelection = !this._isSourceActive() && s !== e ? { start: s, end: e, direction, label: "selection" } : null;
       if (this._sourceTextarea && this._isSourceActive()) this._sourceTextarea.setSelectionRange(s, e, direction);
-      if (this._liveEditor && !this._isSourceActive()) {
+      if (restoreLive && this._liveEditor && !this._isSourceActive()) {
         this._ignoreSelectionChangeCount = 2;
         this._restoreLiveSelection(this._selection);
       }
@@ -5954,15 +7535,25 @@ ${item.children.join("\n")}
       return this._replaceText(query, replacement, { ...options, all: true });
     }
     commit() {
-      const old = this._dirty;
-      this._defaultValue = this._value;
+      const oldDirty = this._dirty;
+      const revision = this.revision;
+      const value = this._value;
+      this._defaultValue = value;
       this._dirty = false;
-      this._dispatch("md-change", { value: this._value });
-      if (old) this._dispatch("md-dirty-change", { dirty: false });
+      this._dispatch("md-value-sync", { value, defaultValue: value, revision });
+      if (this.revision !== revision || this._defaultValue !== value) return;
+      this._dispatch("md-change", { value, origin: { kind: "api" }, beforeRevision: revision, revision });
+      if (this.revision !== revision || this._defaultValue !== value) return;
+      if (oldDirty) this._dispatch("md-dirty-change", { dirty: false });
     }
     reset() {
-      this._setValueInternal(this._defaultValue, { source: "api", recordUndo: true });
+      this._nativeTextareaBridge?.valueChanged("reset");
+      const defaultValue = this._defaultValue;
+      const expectedRevision = this.revision + (this._value === defaultValue ? 0 : 1);
+      this._setValueInternal(defaultValue, { source: "api", recordUndo: true });
+      if (this.revision !== expectedRevision || this._defaultValue !== defaultValue) return;
       this.setSelectionRange(0, 0);
+      if (this.revision !== expectedRevision || this._defaultValue !== defaultValue) return;
       this._dirty = false;
       this._dispatch("md-dirty-change", { dirty: false });
     }
@@ -6007,9 +7598,12 @@ ${item.children.join("\n")}
       this._status = this._requireControl(".sr-only", HTMLElement);
     }
     _bindEvents() {
+      this.addEventListener("focus", (event) => {
+        if (this._nativeTextareaBridge && event.composedPath()[0] === this && !this._shadow.activeElement) this._focusEditable({ preventScroll: true });
+      });
       this._sourceTextarea.addEventListener("beforeinput", (event) => this._onSourceBeforeInput(event));
       this._sourceTextarea.addEventListener("input", (event) => this._onSourceInput(event));
-      this._sourceTextarea.addEventListener("change", () => this._dispatch("md-change", { value: this._value }));
+      this._sourceTextarea.addEventListener("change", () => this._dispatch("md-change", { value: this._value, origin: { kind: "user" }, beforeRevision: this.revision, revision: this.revision }));
       this._sourceTextarea.addEventListener("keydown", (event) => this._onKeyDown(event));
       this._sourceTextarea.addEventListener("keyup", (event) => this._onNavigationKey(event));
       this._sourceTextarea.addEventListener("click", () => this._onSelectionChanged());
@@ -6074,7 +7668,11 @@ ${item.children.join("\n")}
     }
     _syncAttributesToControls() {
       if (!this._sourceTextarea) return;
-      if (this.disabled) {
+      if (this._nativeTextareaBridge) {
+        const tabIndex2 = this.disabled ? -1 : this._nativeTextareaBridge.tabIndex();
+        if (this.tabIndex !== tabIndex2 || !this.hasAttribute("tabindex")) this.tabIndex = tabIndex2;
+        this._hostTabIndexBeforeDisable = void 0;
+      } else if (this.disabled) {
         if (this._hostTabIndexBeforeDisable === void 0) {
           this._hostTabIndexBeforeDisable = this.getAttribute("tabindex");
         }
@@ -6096,8 +7694,10 @@ ${item.children.join("\n")}
       this._liveEditor.setAttribute("aria-disabled", this.disabled ? "true" : "false");
       this._liveEditor.contentEditable = this._liveSelectionAPI === false ? "false" : this._lineEditable();
       this._syncLiveEditingHosts();
-      this._liveEditor.tabIndex = this.disabled ? -1 : 0;
-      this._preview.tabIndex = this.disabled ? -1 : this.mode === "preview" ? 0 : -1;
+      const tabIndex = this._nativeTextareaBridge?.tabIndex() ?? 0;
+      this._sourceTextarea.tabIndex = this.disabled ? -1 : tabIndex;
+      this._liveEditor.tabIndex = this.disabled ? -1 : tabIndex;
+      this._preview.tabIndex = this.disabled ? -1 : this.mode === "preview" ? tabIndex : -1;
       const maxLength = parseLengthConstraint(this.getAttribute("maxlength"));
       const minLength = parseLengthConstraint(this.getAttribute("minlength"));
       maxLength != null ? this._sourceTextarea.maxLength = maxLength : this._sourceTextarea.removeAttribute("maxlength");
@@ -6233,6 +7833,8 @@ ${item.children.join("\n")}
       };
     }
     _setValueInternal(next, opts = {}) {
+      const previousOrigin = this._activeOrigin;
+      this._activeOrigin = { kind: "api" };
       const previousValue = this._value;
       const value = normalizeLineEndings(next ?? "");
       const before = this._snapshot();
@@ -6242,9 +7844,29 @@ ${item.children.join("\n")}
       if (this._sourceTextarea && this._sourceTextarea.value !== value) this._sourceTextarea.value = value;
       if (!opts.preserveSelection) this._selection = { start: clamp(this._selection.start, 0, value.length), end: clamp(this._selection.end, 0, value.length), direction: "none" };
       if (opts.recordUndo && changed) this._recordUndo(before, this._snapshot(), opts.undoGroup || opts.source || "api", { coalesce: false });
-      if (changed || opts.force || !this._hasRenderedOnce) this._afterValueChanged({ source: opts.source || "api", silent: opts.silent, restoreSelection: opts.preserveSelection !== false, previousValue, changes: changed ? diffTextChange(previousValue, value) : [] });
+      if (changed || opts.force || !this._hasRenderedOnce) this._afterValueChanged({ source: opts.source || "api", silent: opts.silent, restoreSelection: opts.preserveSelection !== false && (this._isSourceActive() || this.matches(":focus-within")), previousValue, changes: changed ? opts.changes && applyTextChanges(previousValue, opts.changes) === value ? opts.changes : diffTextChanges(previousValue, value) : [] });
+      this._activeOrigin = previousOrigin;
     }
+    _lastChangeBeforeRevision = 0;
+    _activeOrigin = null;
     _afterValueChanged({ source = "api", inputType = null, silent = false, restoreSelection = true, previousValue = null, changes = null, preserveLiveDom = false } = {}) {
+      const revision = this.revision;
+      const origin = this._activeOrigin ?? { kind: source === "user" ? "user" : source === "paste" ? "paste" : "api" };
+      const beforeRevision = previousValue !== this._value ? Math.max(0, revision - 1) : revision;
+      this._lastChangeBeforeRevision = beforeRevision;
+      if (previousValue !== this._value) this._nativeTextareaBridge?.valueChanged(source);
+      const restore = this._pendingPresenceRestore;
+      this._pendingPresenceRestore = null;
+      if (previousValue !== null && previousValue !== this._value) {
+        this._presenceController?.mapChanges(changes ?? diffTextChanges(previousValue, this._value));
+        this._presenceMappedValue = this._value;
+        if (restore) this._presenceController?.restoreAnchors(restore);
+        const after = this._pendingPresenceAfter;
+        this._pendingPresenceAfter = null;
+        if (after?.value === this._value) this._rememberPresenceSnapshot(after, true);
+      }
+      this._dispatch("md-value-sync", { value: this._value, defaultValue: this._defaultValue, revision });
+      if (this.revision !== revision) return;
       this._selectAllLevel = 0;
       this._structuredSelection = null;
       const tagChange = this._refreshTagIndex();
@@ -6259,11 +7881,14 @@ ${item.children.join("\n")}
       } else {
         this._renderAll({ restoreSelection, previousValue, changes });
       }
+      if (this.revision !== revision) return;
       const oldDirty = this._dirty;
       this._dirty = this._value !== this._defaultValue;
       if (oldDirty !== this._dirty) this._dispatch("md-dirty-change", { dirty: this._dirty });
+      if (this.revision !== revision) return;
       if (!silent) {
-        this._dispatch("md-input", { value: this._value, source, inputType });
+        this._dispatch("md-input", { value: this._value, source, inputType, origin, beforeRevision, revision });
+        if (this.revision !== revision) return;
         if (tagChange) this._dispatch("md-tags-change", { ...tagChange, source, inputType });
       }
     }
@@ -6281,7 +7906,9 @@ ${item.children.join("\n")}
       };
     }
     _renderAll(...args) {
-      return this._liveRenderer._renderAll(...args);
+      const result = this._liveRenderer._renderAll(...args);
+      this._presenceController?.refresh(false);
+      return result;
     }
     _isLiveVisible(...args) {
       return this._liveRenderer._isLiveVisible(...args);
@@ -6761,9 +8388,30 @@ ${item.children.join("\n")}
     _snapshot() {
       const sel = this._getCurrentSelection();
       this._selection = sel;
-      return makeSnapshot(this._value, sel.start, sel.end, sel.direction || "none");
+      const snapshot = makeSnapshot(this._value, sel.start, sel.end, sel.direction || "none");
+      this._rememberPresenceSnapshot(snapshot);
+      return snapshot;
+    }
+    _rememberPresenceSnapshot(snapshot, overwrite = false) {
+      if (!this._presenceController || !overwrite && this._presenceSnapshots.has(snapshot)) return;
+      let anchors = this._presenceController.captureAnchors();
+      if (this._presenceMappedValue !== snapshot.value) {
+        const changes = diffTextChanges(this._presenceMappedValue, snapshot.value);
+        anchors = anchors.map((anchor) => {
+          const backward = anchor.anchor > anchor.head;
+          const selection = mapTransactionSelection({ start: Math.min(anchor.anchor, anchor.head), end: Math.max(anchor.anchor, anchor.head) }, changes);
+          const start = clamp(selection.start, 0, snapshot.value.length);
+          const end = clamp(selection.end, 0, snapshot.value.length);
+          return { ...anchor, anchor: backward ? end : start, head: backward ? start : end };
+        });
+      }
+      this._presenceSnapshots.set(snapshot, anchors);
     }
     _recordUndo(...args) {
+      const [before, after] = args;
+      this._rememberPresenceSnapshot(before, this._presenceMappedValue === before.value);
+      this._rememberPresenceSnapshot(after, true);
+      if (this._presenceController && this._presenceMappedValue !== after.value) this._pendingPresenceAfter = after;
       this._history.record(...args);
     }
     _undoGroupForInput(inputType) {
@@ -6773,26 +8421,36 @@ ${item.children.join("\n")}
     }
     _undo({ source = "keyboard", inputType = null } = {}) {
       const current = this._snapshot();
+      const beforeRevision = this.revision;
+      const entry = this._undoStack.at(-1);
+      const changes = entry?.changes && entry.after.value === current.value ? invertTextChanges(entry.before.value, entry.changes) : void 0;
       const target = this._history.undo(current);
       if (!target) return false;
-      this._restoreSnapshot(target, "undo", inputType);
-      this._dispatch("md-action", { actionId: "history.undo", source, before: current, after: this._snapshot() });
+      this._restoreSnapshot(target, "undo", inputType, changes);
+      if (this.revision === beforeRevision + 1) this._dispatch("md-action", { actionId: "history.undo", source, before: current, after: this._snapshot(), beforeRevision, revision: this.revision, origin: { kind: "action", id: "history.undo" } });
       return true;
     }
     _redo({ source = "keyboard", inputType = null } = {}) {
       const current = this._snapshot();
+      const beforeRevision = this.revision;
+      const entry = this._redoStack.at(-1);
+      const changes = entry?.changes && entry.before.value === current.value ? entry.changes : void 0;
       const target = this._history.redo(current);
       if (!target) return false;
-      this._restoreSnapshot(target, "redo", inputType);
-      this._dispatch("md-action", { actionId: "history.redo", source, before: current, after: this._snapshot() });
+      this._restoreSnapshot(target, "redo", inputType, changes);
+      if (this.revision === beforeRevision + 1) this._dispatch("md-action", { actionId: "history.redo", source, before: current, after: this._snapshot(), beforeRevision, revision: this.revision, origin: { kind: "action", id: "history.redo" } });
       return true;
     }
-    _restoreSnapshot(snapshot, source, inputType = null) {
+    _restoreSnapshot(snapshot, source, inputType = null, changes) {
+      const previousOrigin = this._activeOrigin;
+      this._activeOrigin = { kind: "action", id: `history.${source}` };
       const previousValue = this._value;
       this._value = snapshot.value;
       this._selection = { ...snapshot.selection };
       this._redoStack = this._redoStack;
-      this._afterValueChanged({ source, inputType, restoreSelection: true, previousValue, changes: diffTextChange(previousValue, this._value) });
+      this._pendingPresenceRestore = this._presenceSnapshots.get(snapshot) ?? null;
+      this._afterValueChanged({ source, inputType, restoreSelection: true, previousValue, changes: changes ?? diffTextChanges(previousValue, this._value) });
+      this._activeOrigin = previousOrigin;
     }
     _onKeyDown(event) {
       if (this._isComposing || event?.isComposing || event?.keyCode === 229) return;
@@ -7158,6 +8816,19 @@ ${item.children.join("\n")}
     _tableCellInputEdit(cell, raw, displayCursor = null) {
       const info = this._tableInfoForCell(cell);
       if (!info) return null;
+      const range = this._editableSourceRange(cell);
+      if (range && (info.row < 0 || info.row < info.block.rows.length)) {
+        const source = this._value.slice(range.from, range.to);
+        const edited = editTableCellDisplay(source, raw, displayCursor ?? raw.length);
+        return {
+          blockFrom: info.block.from,
+          blockTo: info.block.to + edited.text.length - source.length,
+          cellFrom: range.from,
+          cellTo: range.from + edited.text.length,
+          nextValue: this._value.slice(0, range.from) + edited.text + this._value.slice(range.to),
+          cursor: range.from + edited.cursor
+        };
+      }
       const cols = info.cols;
       const header = this._tableCellTexts(info.block.header, cols);
       const delimiter = this._tableCellTexts(info.block.delimiter, cols);
@@ -7364,8 +9035,10 @@ ${item.children.join("\n")}
       this._writeMarkdownClipboard(event, markdown);
       const ctx = this._getContext();
       const result = ok(tx(ctx, "editor.deleteSelection", [{ from: range.start, to: range.end, insert: "" }], { start: range.start, end: range.start, direction: "none" }, "cut"), "Cut.");
-      this._applyActionResult("editor.deleteSelection", result, { source: "keyboard" });
-      this._dispatch("md-cut", { markdown, start: range.start, end: range.end });
+      const beforeRevision = this.revision;
+      const applied = this._applyActionResult("editor.deleteSelection", result, { source: "keyboard" });
+      if (!applied.ok || this.revision !== beforeRevision + 1) return;
+      this._dispatch("md-cut", { markdown, start: range.start, end: range.end, origin: { kind: "user", id: "clipboard.cut" }, beforeRevision, revision: this.revision });
     }
     _serializeTableBlock(...args) {
       return serializeTableBlock(...args);
@@ -7399,8 +9072,10 @@ ${item.children.join("\n")}
     _insertPastedMarkdown(markdown, kind = "text") {
       const prepared = this._preparePastedMarkdown(markdown, kind);
       if (!prepared) return false;
-      this._runAction("editor.insertText", { text: prepared }, { source: "paste", apply: true });
-      this._dispatch("md-paste", { markdown: prepared, kind });
+      const beforeRevision = this.revision;
+      const result = this._runAction("editor.insertText", { text: prepared }, { source: "paste", apply: true });
+      if (!result.ok) return false;
+      if (this.revision <= beforeRevision + 1) this._dispatch("md-paste", { markdown: prepared, kind, beforeRevision, revision: this.revision, origin: { kind: "paste" } });
       return true;
     }
     _onPaste(event) {
@@ -7421,7 +9096,10 @@ ${item.children.join("\n")}
         return;
       }
       const { markdown, kind } = markdownFromClipboardData(clipboard);
-      if (!markdown) return;
+      if (!markdown) {
+        if (["text/html", "text/markdown", "text/x-markdown", "text/plain"].some((type) => safeClipboardGet(clipboard, type).length > 0)) event.preventDefault();
+        return;
+      }
       event.preventDefault();
       this._insertPastedMarkdown(markdown, kind);
     }
@@ -7476,32 +9154,43 @@ ${item.children.join("\n")}
         return result;
       }
       if (result.transaction) {
+        const beforeRevision = this.revision;
         const t = { ...result.transaction, source: options.source || result.transaction.source || "api", actionId, timestamp: now() };
+        const origin = t.origin ?? { kind: t.source === "paste" ? "paste" : t.source === "user" ? "user" : actionId === "completion.accept" ? "completion" : "action", id: actionId };
+        t.origin = origin;
+        const expectedRevision = beforeRevision + (applyTextChanges(before.value, t.changes) === before.value ? 0 : 1);
         if (!this._applyTransaction(t, { source: t.source, inputType: options.inputType })) return fail("change-canceled", "Change blocked.");
-        const after = this._snapshot();
-        this._dispatch("md-action", { actionId, args: t.args, source: t.source, before, after });
+        if (this.revision === expectedRevision) this._dispatch("md-action", { actionId, args: t.args, source: t.source, before, after: this._snapshot(), origin, beforeRevision, revision: this.revision });
       } else this._dispatch("md-action", { actionId, source: options.source || "api", before, after: this._snapshot() });
       if (result.announcement) this._announce(result.announcement);
       return result;
     }
     _applyTransaction(transaction, options = {}) {
       const before = this._snapshot();
+      const beforeRevision = this.revision;
       const nextValue = applyTextChanges(this._value, transaction.changes);
-      const proposedSelection = transaction.selectionAfter || { start: nextValue.length, end: nextValue.length, direction: "none" };
-      const beforeEvent = this._dispatch("md-before-change", { transaction, before, nextValue, selectionAfter: proposedSelection, source: options.source || transaction.source || "api" }, { cancelable: true });
+      const proposedSelection = { ...transaction.selectionAfter || { start: nextValue.length, end: nextValue.length, direction: "none" } };
+      const eventTransaction = Object.freeze({ ...transaction, changes: Object.freeze(transaction.changes.map((change) => Object.freeze({ ...change }))), ...transaction.origin ? { origin: Object.freeze({ ...transaction.origin }) } : {} });
+      const beforeEvent = this._dispatch("md-before-change", { transaction: eventTransaction, before: { value: before.value, selection: { ...before.selection } }, nextValue, selectionAfter: { ...proposedSelection }, source: options.source || transaction.source || "api" }, { cancelable: true });
+      if (this.revision !== beforeRevision) return false;
+      if (this.disabled || this.readonly || this._isComposing) return false;
       if (beforeEvent.defaultPrevented) {
         this._announce("Change blocked.");
         return false;
       }
+      if (nextValue === this._value) return true;
       this._value = nextValue;
       this._pendingFenceOpening = null;
       const sel = proposedSelection;
       this._selection = { start: clamp(sel.start, 0, nextValue.length), end: clamp(sel.end, 0, nextValue.length), direction: sel.direction || "none" };
       this._structuredSelection = null;
       const after = makeSnapshot(this._value, this._selection.start, this._selection.end, this._selection.direction);
-      this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false });
+      this._recordUndo(before, after, transaction.undoGroup || transaction.actionId, { coalesce: false, changes: transaction.changes });
       this._redoStack.length = 0;
-      this._afterValueChanged({ source: options.source || transaction.source || "api", inputType: options.inputType, restoreSelection: true, previousValue: before.value, changes: transaction.changes });
+      const previousOrigin = this._activeOrigin;
+      this._activeOrigin = transaction.origin ?? { kind: transaction.source === "paste" ? "paste" : transaction.actionId === "completion.accept" ? "completion" : transaction.actionId ? "action" : "api", ...transaction.actionId ? { id: transaction.actionId } : {} };
+      this._afterValueChanged({ source: options.source || transaction.source || "api", inputType: options.inputType, restoreSelection: options.restoreSelection ?? true, previousValue: before.value, changes: transaction.changes });
+      this._activeOrigin = previousOrigin;
       this._scheduleCompletionUpdate();
       return true;
     }
@@ -7878,11 +9567,16 @@ ${quote.markerText}`;
       return { valid: Object.keys(flags).length === 0, valueMissing: Boolean(flags.valueMissing), tooShort: Boolean(flags.tooShort), tooLong: Boolean(flags.tooLong), customError: Boolean(flags.customError) };
     }
     _computeValidityFlags() {
+      if (this._nativeTextareaBridge) {
+        const flags2 = { ...this._nativeTextareaBridge.validity(this._value).flags };
+        if (this._customValidityMessage) flags2.customError = true;
+        return flags2;
+      }
       const flags = {};
       const value = this._value;
       if (this._customValidityMessage) flags.customError = true;
       if (this.required) {
-        const empty = DEFAULTS.emptyRequiredTrim ? value.trim().length === 0 : value.length === 0;
+        const empty = !this.hasAttribute("data-writemark-textarea") && DEFAULTS.emptyRequiredTrim ? value.trim().length === 0 : value.length === 0;
         if (empty) flags.valueMissing = true;
       }
       const min = parseLengthConstraint(this.getAttribute("minlength"));
@@ -7896,7 +9590,7 @@ ${quote.markerText}`;
       const flags = this._computeValidityFlags();
       const min = parseLengthConstraint(this.getAttribute("minlength"));
       const max = parseLengthConstraint(this.getAttribute("maxlength"));
-      let message = this._customValidityMessage || "";
+      let message = this._customValidityMessage || this._nativeTextareaBridge?.validity(this._value).message || "";
       if (!message) {
         if (flags.valueMissing) message = "Please fill out this field.";
         else if (flags.tooShort) message = `Please lengthen this text to at least ${min} characters.`;
@@ -7938,7 +9632,16 @@ ${quote.markerText}`;
       return event;
     }
     _dispatch(name, detail, options = {}) {
-      const event = new CustomEvent(name, { detail, bubbles: options.bubbles ?? true, composed: options.composed ?? true, cancelable: options.cancelable ?? false });
+      let payload = detail;
+      if (["md-before-change", "md-input", "md-change", "md-action", "md-completion-accept", "md-paste", "md-cut"].includes(name)) {
+        const data = detail;
+        const transaction = data.transaction;
+        const source = typeof data.source === "string" ? data.source : "api";
+        const kind = name === "md-completion-accept" ? "completion" : source === "paste" || name === "md-paste" ? "paste" : source === "user" ? "user" : data.actionId || transaction?.actionId ? "action" : "api";
+        const origin = data.origin ?? transaction?.origin ?? this._activeOrigin ?? { kind, ...typeof data.actionId === "string" ? { id: data.actionId } : typeof data.providerId === "string" ? { id: data.providerId } : {} };
+        payload = { beforeRevision: name === "md-before-change" || name === "md-change" ? this.revision : this._lastChangeBeforeRevision, revision: this.revision, ...data, origin: Object.freeze({ ...origin }) };
+      }
+      const event = new CustomEvent(name, { detail: payload, bubbles: options.bubbles ?? true, composed: options.composed ?? true, cancelable: options.cancelable ?? false });
       this.dispatchEvent(event);
       return event;
     }
@@ -7978,6 +9681,506 @@ ${quote.markerText}`;
   var MdLiveEditorElement2 = registry?.get(LEGACY_TAG_NAME) || LegacyEditor;
   if (registry && !registry.get(LEGACY_TAG_NAME)) registry.define(LEGACY_TAG_NAME, MdLiveEditorElement2);
 
+  // src/browser/enhance.ts
+  var handleKey = /* @__PURE__ */ Symbol.for("writemark.textarea-enhancement");
+  function enhanceTextarea(textarea) {
+    if (textarea.localName !== "textarea") throw new TypeError("Expected a textarea.");
+    const target = textarea;
+    if (target[handleKey]) return target[handleKey];
+    if (!textarea.parentNode) throw new Error("The textarea needs a parent.");
+    const doc = textarea.ownerDocument;
+    const view = doc.defaultView;
+    if (!view) throw new Error("The textarea needs a window.");
+    const editor = doc.createElement("writemark-editor");
+    if (typeof editor.setMarkdown !== "function" || typeof editor.applyTransaction !== "function" || typeof editor._setValueInternal !== "function" || typeof editor._setSelectionRangeWithoutFocus !== "function" || !("_nativeTextareaBridge" in editor) || !Number.isSafeInteger(editor.revision)) throw new Error("The editor does not support textarea synchronization.");
+    editor.setAttribute("data-writemark-textarea", "");
+    const oldHidden = textarea.hidden;
+    const oldDisplay = textarea.style.getPropertyValue("display");
+    const oldDisplayPriority = textarea.style.getPropertyPriority("display");
+    const hadFocus = doc.activeElement === textarea;
+    const oldFocus = Object.getOwnPropertyDescriptor(textarea, "focus");
+    const oldSelectionRange = Object.getOwnPropertyDescriptor(textarea, "setSelectionRange");
+    const oldRangeText = Object.getOwnPropertyDescriptor(textarea, "setRangeText");
+    const nativeRangeText = textarea.setRangeText.bind(textarea);
+    const nativeSelectionRange = textarea.setSelectionRange.bind(textarea);
+    const oldValue = Object.getOwnPropertyDescriptor(textarea, "value");
+    const oldDefaultValue = Object.getOwnPropertyDescriptor(textarea, "defaultValue");
+    const oldValidity = Object.getOwnPropertyDescriptor(textarea, "setCustomValidity");
+    const descriptor = Object.getOwnPropertyDescriptor(view.HTMLTextAreaElement.prototype, "value");
+    const defaultDescriptor = Object.getOwnPropertyDescriptor(view.HTMLTextAreaElement.prototype, "defaultValue");
+    if (!descriptor?.get || !descriptor.set || oldValue || !defaultDescriptor?.get || !defaultDescriptor.set || oldDefaultValue) throw new Error("The textarea value property cannot be replaced.");
+    const read = /* @__PURE__ */ __name(() => String(descriptor.get.call(textarea)), "read");
+    const initialValue = read();
+    const initialDefault = textarea.defaultValue;
+    const initialSelection = [textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection];
+    const write = /* @__PURE__ */ __name((value) => {
+      descriptor.set.call(textarea, value);
+    }, "write");
+    let unregisterLifecycle = null;
+    let initialized = false;
+    let lengthValidation = "native";
+    let stopped = false;
+    let syncing = false;
+    let selectionDirection = textarea.selectionDirection;
+    let lastChangeValue = initialValue;
+    let userChanged = false;
+    let focusWithin = false;
+    let customMessage = textarea.validity.customError ? textarea.validationMessage : "";
+    const nativeValidity = textarea.setCustomValidity.bind(textarea);
+    editor._nativeTextareaBridge = {
+      tabIndex: /* @__PURE__ */ __name(() => textarea.tabIndex, "tabIndex"),
+      valueChanged(source) {
+        if (!initialized) return;
+        lengthValidation = ["user", "keyboard", "paste", "pointer", "undo", "redo"].includes(source) ? "user" : "programmatic";
+        if (source === "reset" && (textarea.validity.tooShort || textarea.validity.tooLong)) {
+          const value = read();
+          write(value + " ");
+          write(value);
+        }
+      },
+      validity(value) {
+        const native = textarea.validity;
+        const user = lengthValidation === "user" && textarea.willValidate;
+        const tooShort = user ? value.length > 0 && textarea.minLength >= 0 && value.length < textarea.minLength : lengthValidation === "native" && native.tooShort;
+        const tooLong = user ? textarea.maxLength >= 0 && value.length > textarea.maxLength : lengthValidation === "native" && native.tooLong;
+        const flags = {};
+        if (native.valueMissing) flags.valueMissing = true;
+        if (native.customError) flags.customError = true;
+        if (tooShort) flags.tooShort = true;
+        if (tooLong) flags.tooLong = true;
+        return { flags, message: textarea.validationMessage };
+      }
+    };
+    editor.tabIndex = textarea.tabIndex;
+    const listeners = [];
+    const listen = /* @__PURE__ */ __name((node, type, callback, capture = false) => {
+      node.addEventListener(type, callback, capture);
+      listeners.push(() => node.removeEventListener(type, callback, capture));
+    }, "listen");
+    const copySelection = /* @__PURE__ */ __name(() => {
+      if (syncing) return;
+      if (textarea.selectionStart !== editor.selectionStart || textarea.selectionEnd !== editor.selectionEnd || textarea.selectionDirection !== selectionDirection) {
+        nativeSelectionRange(editor.selectionStart, editor.selectionEnd, selectionDirection);
+      }
+    }, "copySelection");
+    const syncValue = /* @__PURE__ */ __name(() => {
+      if (syncing || stopped) return;
+      syncing = true;
+      if (read() !== editor.value) write(editor.value);
+      if (textarea.defaultValue !== editor.defaultValue) textarea.defaultValue = editor.defaultValue;
+      syncing = false;
+      copySelection();
+    }, "syncValue");
+    const forwardChange = /* @__PURE__ */ __name(() => {
+      syncValue();
+      const changed = userChanged && editor.value !== lastChangeValue;
+      lastChangeValue = editor.value;
+      userChanged = false;
+      if (changed) textarea.dispatchEvent(new view.Event("change", { bubbles: true }));
+    }, "forwardChange");
+    let boundForm = null;
+    const onReset = /* @__PURE__ */ __name((event) => {
+      editor.defaultValue = textarea.defaultValue;
+      view.queueMicrotask(() => {
+        if (!stopped && !event.defaultPrevented) {
+          lengthValidation = "native";
+          fromTextarea();
+          userChanged = false;
+          lastChangeValue = editor.value;
+        }
+      });
+    }, "onReset");
+    const bindForm = /* @__PURE__ */ __name(() => {
+      if (boundForm === textarea.form) return;
+      boundForm?.removeEventListener("reset", onReset, true);
+      boundForm = textarea.form;
+      boundForm?.addEventListener("reset", onReset, true);
+    }, "bindForm");
+    const syncLabels = /* @__PURE__ */ __name(() => {
+      if (editor.label) editor.label = "";
+      if (textarea.hasAttribute("aria-label") || textarea.hasAttribute("aria-labelledby")) return;
+      const candidates = new Set(Array.from(textarea.labels || []));
+      const scope = textarea.getRootNode();
+      if (textarea.id) {
+        for (const label of scope.querySelectorAll(`label[for="${view.CSS.escape(textarea.id)}"]`)) candidates.add(label);
+      }
+      for (let parent = textarea.parentElement; parent; parent = parent.parentElement) {
+        if (parent instanceof view.HTMLLabelElement) candidates.add(parent);
+      }
+      const labels = Array.from(candidates).filter((label) => label.control === textarea).map((label) => {
+        const text = [];
+        const walker = doc.createTreeWalker(label, view.NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          if (!walker.currentNode.parentElement?.closest("textarea,input,select,button,writemark-editor,md-live-editor,script,style")) text.push(walker.currentNode.textContent || "");
+        }
+        return text.join("").replace(/\s+/g, " ").trim();
+      }).filter(Boolean).join(" ");
+      if (editor.getAttribute("aria-label") !== labels) editor.setAttribute("aria-label", labels);
+    }, "syncLabels");
+    const syncAttributes = /* @__PURE__ */ __name(() => {
+      if (stopped) return;
+      for (const name of ["placeholder", "required", "readonly", "minlength", "maxlength", "dir", "spellcheck", "title", "form", "aria-describedby", "aria-label", "aria-labelledby"]) {
+        const value = textarea.getAttribute(name);
+        if (value === null) editor.removeAttribute(name);
+        else editor.setAttribute(name, value);
+      }
+      editor.disabled = textarea.matches(":disabled");
+      editor.setCustomValidity(customMessage);
+      syncLabels();
+      editor._syncAttributesToControls();
+      const mode = textarea.getAttribute("data-writemark-mode");
+      if (mode === "live" || mode === "source" || mode === "split" || mode === "preview") editor.mode = mode;
+      editor.defaultValue = textarea.defaultValue;
+      bindForm();
+    }, "syncAttributes");
+    const fromTextarea = /* @__PURE__ */ __name((changes) => {
+      if (stopped || syncing) return;
+      const wanted = read();
+      const selection = [textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection];
+      const revision = editor.revision;
+      syncing = true;
+      try {
+        if (wanted !== editor.value) editor._setValueInternal(wanted, { source: "api", preserveSelection: editor.matches(":focus-within"), ...changes ? { changes } : {} });
+        if (editor.value === wanted && editor.revision <= revision + 1) editor._setSelectionRangeWithoutFocus(...selection);
+      } finally {
+        syncing = false;
+      }
+      syncValue();
+      editor._updateValidity();
+    }, "fromTextarea");
+    const focus = /* @__PURE__ */ __name((options) => {
+      syncAttributes();
+      if (!editor.disabled) editor.focus(options);
+    }, "focus");
+    const restore = /* @__PURE__ */ __name((name, saved) => {
+      if (saved) Object.defineProperty(textarea, name, saved);
+      else Reflect.deleteProperty(textarea, name);
+    }, "restore");
+    let observedParent = null;
+    let labelRoot = null;
+    let observedAncestors = [];
+    const labelClick = /* @__PURE__ */ __name((event) => {
+      const path = event.composedPath();
+      const label = path.find((node) => node instanceof view.HTMLLabelElement);
+      if (label?.control === textarea && !path.some((node) => node instanceof view.HTMLElement && node !== label && /^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(node.tagName))) {
+        event.preventDefault();
+        focus();
+      }
+    }, "labelClick");
+    const refreshOwnership = /* @__PURE__ */ __name(() => {
+      const root = textarea.getRootNode();
+      const ancestors = [];
+      for (let ancestor = textarea.parentElement; ancestor; ancestor = ancestor.parentElement) ancestors.push(ancestor);
+      const fieldsets = ancestors.filter((ancestor) => ancestor.localName === "fieldset");
+      const changed = root !== labelRoot || textarea.parentNode !== observedParent || ancestors.length !== observedAncestors.length || ancestors.some((ancestor, index) => ancestor !== observedAncestors[index]);
+      if (!changed) return false;
+      if (root !== labelRoot) {
+        labelRoot?.removeEventListener("click", labelClick);
+        labelRoot = root;
+        labelRoot.addEventListener("click", labelClick);
+      }
+      observedParent = textarea.parentNode;
+      observedAncestors = ancestors;
+      observer.disconnect();
+      observer.observe(textarea, { attributes: true, childList: true, characterData: true, subtree: true });
+      if (observedParent) observer.observe(observedParent, { childList: true });
+      for (const fieldset of fieldsets) observer.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
+      return true;
+    }, "refreshOwnership");
+    const refreshLifecycle = /* @__PURE__ */ __name(() => {
+      if (stopped) return;
+      if (editor.parentNode !== textarea.parentNode || !editor.parentNode) {
+        handle.destroy();
+        return;
+      }
+      if (refreshOwnership()) syncAttributes();
+      else syncLabels();
+    }, "refreshLifecycle");
+    const observer = new view.MutationObserver(() => {
+      refreshLifecycle();
+      if (stopped) return;
+      syncAttributes();
+      fromTextarea();
+    });
+    const handle = {
+      editor,
+      textarea,
+      destroy() {
+        if (stopped) return;
+        const restoreFocus = editor.matches(":focus-within");
+        syncValue();
+        stopped = true;
+        editor._nativeTextareaBridge = null;
+        observer.disconnect();
+        labelRoot?.removeEventListener("click", labelClick);
+        unregisterLifecycle?.();
+        boundForm?.removeEventListener("reset", onReset, true);
+        listeners.forEach((remove) => remove());
+        restore("value", oldValue);
+        restore("defaultValue", oldDefaultValue);
+        restore("focus", oldFocus);
+        restore("setSelectionRange", oldSelectionRange);
+        restore("setRangeText", oldRangeText);
+        restore("setCustomValidity", oldValidity);
+        textarea.hidden = oldHidden;
+        if (oldDisplay) textarea.style.setProperty("display", oldDisplay, oldDisplayPriority);
+        else textarea.style.removeProperty("display");
+        editor.remove();
+        delete target[handleKey];
+        nativeValidity(customMessage);
+        if (restoreFocus && !oldHidden) textarea.focus();
+      }
+    };
+    try {
+      syncAttributes();
+      editor._setValueInternal(initialValue, { source: "api", preserveSelection: false });
+      textarea.after(editor);
+      editor.defaultValue = initialDefault;
+      editor._setValueInternal(initialValue, { source: "api", preserveSelection: false });
+      editor._setSelectionRangeWithoutFocus(...initialSelection);
+      Object.defineProperty(textarea, "value", {
+        configurable: true,
+        enumerable: descriptor.enumerable ?? true,
+        get: read,
+        set(value) {
+          const before = read();
+          write(value);
+          if (read() !== before) lengthValidation = "programmatic";
+          fromTextarea();
+        }
+      });
+      Object.defineProperty(textarea, "defaultValue", {
+        configurable: true,
+        enumerable: defaultDescriptor.enumerable ?? true,
+        get() {
+          return String(defaultDescriptor.get.call(textarea));
+        },
+        set(value) {
+          defaultDescriptor.set.call(textarea, value);
+          if (syncing || stopped) return;
+          const beforeRevision = editor.revision;
+          const oldEditorValue = editor.value;
+          const clean = !editor.dirty;
+          syncing = true;
+          try {
+            editor.defaultValue = textarea.defaultValue;
+          } finally {
+            syncing = false;
+          }
+          const expectedRevision = beforeRevision + (clean && editor.defaultValue !== oldEditorValue ? 1 : 0);
+          if (editor.revision > expectedRevision) syncValue();
+          else fromTextarea();
+        }
+      });
+      Object.defineProperty(textarea, "setSelectionRange", {
+        configurable: true,
+        value(start, end, direction) {
+          nativeSelectionRange(start, end, direction);
+          if (!syncing && !stopped) editor._setSelectionRangeWithoutFocus(textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection);
+        }
+      });
+      Object.defineProperty(textarea, "setRangeText", {
+        configurable: true,
+        value(...args) {
+          const before = read();
+          const revision = editor.revision;
+          const beforeStart = textarea.selectionStart;
+          const beforeEnd = textarea.selectionEnd;
+          Reflect.apply(nativeRangeText, textarea, args);
+          const after = read();
+          if (after !== before) lengthValidation = "programmatic";
+          const unsigned = /* @__PURE__ */ __name((value) => Number.isFinite(value) ? (Math.trunc(value) % 4294967296 + 4294967296) % 4294967296 : 0, "unsigned");
+          const from = args.length === 1 ? beforeStart : typeof args[1] === "number" ? Math.min(before.length, unsigned(args[1])) : null;
+          const to = args.length === 1 ? beforeEnd : typeof args[2] === "number" ? Math.min(before.length, unsigned(args[2])) : null;
+          let changes;
+          if (from !== null && to !== null && editor.revision === revision && editor.value === before) {
+            const insertedLength = after.length - before.length + to - from;
+            const insert = after.slice(from, from + insertedLength);
+            if (insertedLength >= 0 && before.slice(0, from) + insert + before.slice(to) === after) changes = [{ from, to, insert }];
+          }
+          fromTextarea(changes);
+        }
+      });
+      Object.defineProperty(textarea, "focus", { configurable: true, value: focus });
+      Object.defineProperty(textarea, "setCustomValidity", {
+        configurable: true,
+        value(message) {
+          customMessage = String(message);
+          nativeValidity(customMessage);
+          editor.setCustomValidity(customMessage);
+        }
+      });
+      listen(editor, "md-value-sync", syncValue);
+      listen(editor, "md-input", ((event) => {
+        syncValue();
+        if (["user", "keyboard", "paste", "pointer", "undo", "redo"].includes(event.detail.source)) {
+          userChanged = editor.value !== lastChangeValue;
+          textarea.dispatchEvent(new view.Event("input", { bubbles: true, composed: true }));
+        } else if (!userChanged) lastChangeValue = editor.value;
+      }));
+      listen(editor, "md-change", ((event) => {
+        if (event.detail.origin.kind === "user") forwardChange();
+        else syncValue();
+      }));
+      if (editor.shadowRoot) {
+        listen(editor.shadowRoot, "input", (event) => event.stopPropagation());
+        listen(editor.shadowRoot, "change", (event) => event.stopPropagation());
+      }
+      listen(editor, "focusin", () => {
+        if (focusWithin) return;
+        focusWithin = true;
+        lastChangeValue = editor.value;
+        userChanged = false;
+      });
+      listen(editor, "focusout", () => {
+        view.queueMicrotask(() => {
+          if (stopped || editor.matches(":focus-within")) return;
+          focusWithin = false;
+          forwardChange();
+        });
+      });
+      listen(editor, "md-selection-change", ((event) => {
+        selectionDirection = event.detail.selectionDirection;
+        copySelection();
+      }));
+      listen(textarea, "input", () => fromTextarea());
+      listen(textarea, "change", () => fromTextarea());
+      listen(textarea, "select", () => {
+        if (!syncing) editor._setSelectionRangeWithoutFocus(textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection);
+      });
+      listen(textarea, "invalid", (event) => {
+        event.preventDefault();
+        focus();
+        editor.reportValidity();
+      });
+      refreshOwnership();
+      textarea.hidden = true;
+      textarea.style.setProperty("display", "none", "important");
+      target[handleKey] = handle;
+      unregisterLifecycle = managerFor(doc).add(handle, refreshLifecycle);
+      initialized = true;
+      editor._updateValidity();
+      if (hadFocus) focus();
+      return handle;
+    } catch (error) {
+      handle.destroy();
+      defaultDescriptor.set.call(textarea, initialDefault);
+      write(initialValue);
+      textarea.setSelectionRange(...initialSelection);
+      throw error;
+    }
+  }
+  __name(enhanceTextarea, "enhanceTextarea");
+  function enhanceTextareas(root = document) {
+    const node = root;
+    if (node.nodeType === 11 && "host" in root && node.ownerDocument) managerFor(node.ownerDocument).watch(root);
+    const nodes = Array.from(root.querySelectorAll("textarea[data-writemark]"));
+    if (root.nodeType === 1 && root.matches("textarea[data-writemark]")) nodes.unshift(root);
+    const handles = [];
+    for (const textarea of nodes) {
+      try {
+        handles.push(enhanceTextarea(textarea));
+      } catch {
+      }
+    }
+    return handles;
+  }
+  __name(enhanceTextareas, "enhanceTextareas");
+  var managerKey = /* @__PURE__ */ Symbol.for("writemark.textarea-manager");
+  function managerFor(doc) {
+    const managed = doc;
+    const existing = managed[managerKey];
+    if (existing) return existing;
+    const view = doc.defaultView;
+    if (!view) throw new Error("The document needs a window.");
+    const handles = /* @__PURE__ */ new Set();
+    const roots = /* @__PURE__ */ new Map();
+    const refreshers = /* @__PURE__ */ new WeakMap();
+    let automatic = false;
+    const cleanup = /* @__PURE__ */ __name(() => {
+      for (const record of handles) {
+        const handle = record.reference.deref();
+        if (!handle) {
+          handles.delete(record);
+          continue;
+        }
+        if (handle.textarea.isConnected && handle.textarea.ownerDocument === doc) {
+          record.connected = true;
+          refreshers.get(handle)?.();
+          const root = handle.textarea.getRootNode();
+          if (root instanceof view.ShadowRoot) observeShadow(root);
+        } else if (record.connected) handle.destroy();
+      }
+      for (const [root, observer2] of roots) {
+        if (!root.host.isConnected || root.host.ownerDocument !== doc) {
+          observer2.disconnect();
+          roots.delete(root);
+        }
+      }
+    }, "cleanup");
+    const scan = /* @__PURE__ */ __name((root) => {
+      if (root.nodeType === 1 && /^(writemark-editor|md-live-editor)$/.test(root.localName)) return;
+      enhanceTextareas(root);
+      const elements = root.nodeType === 1 ? [root, ...root.querySelectorAll("*")] : Array.from(root.querySelectorAll("*"));
+      for (const element of elements) {
+        if (element.shadowRoot && !/^(writemark-editor|md-live-editor)$/.test(element.localName)) {
+          observeShadow(element.shadowRoot);
+          scan(element.shadowRoot);
+        }
+      }
+    }, "scan");
+    const mutations = /* @__PURE__ */ __name((records) => {
+      cleanup();
+      if (!automatic) return;
+      for (const record of records) {
+        if (record.type === "attributes") {
+          const target = record.target;
+          if (target.matches("textarea[data-writemark]")) enhanceTextareas(target);
+        } else {
+          for (const added of record.addedNodes) {
+            if (added.isConnected && added.nodeType === 1) scan(added);
+          }
+        }
+      }
+    }, "mutations");
+    const observeShadow = /* @__PURE__ */ __name((root) => {
+      if (!root.host.isConnected || roots.has(root)) return;
+      const observer2 = new view.MutationObserver(mutations);
+      observer2.observe(root, { childList: true, subtree: true, attributes: true, characterData: true, attributeFilter: ["data-writemark", "for", "id"] });
+      roots.set(root, observer2);
+    }, "observeShadow");
+    const observer = new view.MutationObserver(mutations);
+    observer.observe(doc, { childList: true, subtree: true, attributes: true, characterData: true, attributeFilter: ["data-writemark", "for", "id"] });
+    const manager = {
+      watch: observeShadow,
+      add(handle, refresh) {
+        refreshers.set(handle, refresh);
+        const record = { reference: new WeakRef(handle), connected: handle.textarea.isConnected };
+        handles.add(record);
+        const root = handle.textarea.getRootNode();
+        if (root instanceof view.ShadowRoot) observeShadow(root);
+        return () => {
+          handles.delete(record);
+          refreshers.delete(handle);
+        };
+      },
+      start() {
+        if (automatic) return;
+        automatic = true;
+        scan(doc);
+      }
+    };
+    managed[managerKey] = manager;
+    return manager;
+  }
+  __name(managerFor, "managerFor");
+  function startTextareaEnhancement() {
+    if (typeof document === "undefined") return;
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => managerFor(document).start(), { once: true });
+    else managerFor(document).start();
+  }
+  __name(startTextareaEnhancement, "startTextareaEnhancement");
+
   // src/writemark-editor.ts
   var WritemarkEditorElement3 = WritemarkEditorElement2;
   var MdLiveEditorElement3 = MdLiveEditorElement2;
@@ -7990,6 +10193,9 @@ ${quote.markerText}`;
   var parseBlockquote3 = parseBlockquote;
   var htmlToMarkdown2 = htmlToMarkdown;
   var tsvToMarkdownTable2 = tsvToMarkdownTable;
+  var enhanceTextarea2 = enhanceTextarea;
+  var enhanceTextareas2 = enhanceTextareas;
+  startTextareaEnhancement();
   return __toCommonJS(writemark_editor_exports);
 })();
 globalThis.WritemarkEditor = Object.freeze(__writemark);

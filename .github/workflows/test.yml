@@ -61,7 +61,7 @@ jobs:
         run: npx playwright install webkit
 
       - name: Run desktop and mobile WebKit contracts
-        run: npx playwright test --project=webkit --project=mobile-safari
+        run: npm run test:browser:ci -- --project=webkit --project=mobile-safari
 
       - name: Upload WebKit Playwright report
         if: ${{ !cancelled() }}
