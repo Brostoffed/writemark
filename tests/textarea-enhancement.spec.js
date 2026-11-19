@@ -861,33 +861,42 @@ test("updates associated label text, target, and wrapping label content", async 
 
 for (const mode of ["source", "live", "split"]) {
   test(`${mode} preserves native tabindex and one keyboard focus stop`, async ({ page }) => {
-    await page.evaluate(async mode => {
-      const { enhanceTextarea } = await import("/dist/writemark-editor.js");
+    await page.evaluate(() => {
       const parent = document.createElement("section");
-      const before = document.createElement("button");
+      const before = document.createElement("input");
       before.id = "native-tab-before";
-      before.textContent = "Before native";
+      before.setAttribute("aria-label", "Before native");
       const textarea = document.createElement("textarea");
       textarea.id = "native-tab-control";
       textarea.tabIndex = -1;
-      const after = document.createElement("button");
+      const after = document.createElement("input");
       after.id = "native-tab-after";
-      after.textContent = "After native";
+      after.setAttribute("aria-label", "After native");
       parent.append(before, textarea, after);
       document.body.append(parent);
+    });
+    const before = page.locator("#native-tab-before");
+    const after = page.locator("#native-tab-after");
+    const native = page.locator("#native-tab-control");
+    await before.focus();
+    await page.keyboard.press("Tab");
+    await expect(after).toBeFocused();
+
+    await native.evaluate(async (textarea, mode) => {
+      const { enhanceTextarea } = await import("/dist/writemark-editor.js");
       enhanceTextarea(textarea).editor.mode = mode;
     }, mode);
-    await page.locator("#native-tab-before").focus();
+    await before.focus();
     await page.keyboard.press("Tab");
-    await expect(page.locator("#native-tab-after")).toBeFocused();
-    await page.locator("#native-tab-control").evaluate(textarea => { textarea.tabIndex = 0; });
+    await expect(after).toBeFocused();
+    await native.evaluate(textarea => { textarea.tabIndex = 0; });
     await expect(page.locator("#native-tab-control + writemark-editor")).toHaveJSProperty("tabIndex", 0);
-    await page.locator("#native-tab-before").focus();
+    await before.focus();
     await page.keyboard.press("Tab");
     expect(await page.locator("#native-tab-control + writemark-editor").evaluate(editor => editor.matches(":focus-within") && Boolean(editor.shadowRoot.activeElement))).toBe(true);
     await page.keyboard.press("Tab");
-    await expect(page.locator("#native-tab-after")).toBeFocused();
-    await page.locator("#native-tab-control").evaluate(textarea => { textarea.tabIndex = 3; });
+    await expect(after).toBeFocused();
+    await native.evaluate(textarea => { textarea.tabIndex = 3; });
     await expect(page.locator("#native-tab-control + writemark-editor")).toHaveJSProperty("tabIndex", 3);
     const indices = await page.locator("#native-tab-control + writemark-editor").evaluate(editor => ({ source: editor.shadowRoot.querySelector("textarea").tabIndex, live: editor.shadowRoot.querySelector(".live-editor").tabIndex }));
     expect(indices).toEqual({ source: 3, live: 3 });

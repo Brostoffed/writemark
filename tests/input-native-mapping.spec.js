@@ -4,6 +4,7 @@ const peer = (id, anchor, head = anchor) => ({ id, name: `Sample ${id}`, color: 
 
 test("coalesced native repeated deletions map a later peer through the actual deleted span", async ({ editor, page }) => {
   await editor.reset({ value: "aaaa", attributes: { mode: "source" } });
+  await page.clock.setFixedTime(new Date("2026-10-27T12:00:00Z"));
   await editor.setSelection(2);
   await page.keyboard.press("Backspace");
   await expect.poll(() => editor.value()).toBe("aaa");
